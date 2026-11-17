@@ -1,8 +1,8 @@
 import Link from 'next/link';
 import {notFound} from 'next/navigation';
-import {requireChatGPTUser} from '../../chatgpt-auth';
-import {instrumentByLabel} from '../../../lib/instruments';
-import {TradingViewWidget} from '../../../components/research/tradingview-widget';
+import {requireChatGPTUser} from '../../../backend/auth/chatgpt-auth';
+import {instrumentByLabel} from '../../../backend/services/market-data/instruments';
+import {TradingViewWidget} from '../../../frontend/components/tradingview-widget';
 export const dynamic='force-dynamic';
 export default async function AssetPage({params}:{params:Promise<{label:string}>}){
  const {label}=await params,instrument=instrumentByLabel(label);if(!instrument)notFound();

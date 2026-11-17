@@ -1,0 +1,13 @@
+import {readFileSync,writeFileSync} from 'node:fs';
+import ts from 'typescript';
+const compile=file=>ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
+const asModule=source=>'data:text/javascript;base64,'+Buffer.from(source).toString('base64');
+const research=asModule(compile('backend/services/legacy/research.ts'));
+const {INSTRUMENTS}=await import(asModule(compile('backend/services/market-data/instruments.ts').replace("'../legacy/research'",JSON.stringify(research))));
+const intro='# Original instrument coverage — 14 November 2026\n\nAll 28 identities and their original order are preserved. Identity documentation is not evidence of public-widget availability. No numeric provider or entitlement exists: every custom price, source event time, delay, tick size, multiplier, expiry/roll rule and official trading-session schedule remains null/unverified. Venue timezones are conventional identifiers, not a holiday/DST/session calendar implementation. No continuous future is replaced with a spot, index, expiry or different exchange. Crypto original venues are unspecified. BTCUSDT offers an explicitly labelled Binance spot display; this does not resolve the original venue or supply numeric rights.\n\n';
+const columns='| Original | Asset class | Documented chart candidate / venue | Contract | Currency / unit / timezone | Widget observation | Identity evidence |\n|---|---|---|---|---|---|---|\n';
+const rows=INSTRUMENTS.map(i=>'| '+[i.label,i.assetClass,i.vendorSymbol?i.vendorSymbol+' / '+i.venue:'UNVERIFIED',i.contractType,[i.currency??'not monetary/unknown',i.unit??'unverified',i.timeZone??'unverified'].join(' / '),i.widgetSupport,'[Official source]('+i.sourceUrl+')'].join(' | ')+' |').join('\n');
+const footer='\n\nAll numeric quote statuses: NOT_CONFIGURED; live numeric provider: none; rights: none established. Documented identities: '+INSTRUMENTS.filter(i=>i.vendorSymbol).length+'/28. Live/delayed widget support must be observed separately for each symbol on the target host. See SOURCE_HEALTH.md and the final delivery browser report for actual tested displays and unsupported cases.\n';
+writeFileSync('operations/docs/archive/pre-x1/INSTRUMENT_COVERAGE.md',intro+columns+rows+footer);
+writeFileSync('operations/docs/archive/pre-x1/instrument-registry.json',JSON.stringify(INSTRUMENTS,null,2)+'\n');
+console.log('Exported '+INSTRUMENTS.length+' original instrument identities.');

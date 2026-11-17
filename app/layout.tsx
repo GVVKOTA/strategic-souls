@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
-import "./globals.css";
-import "./v3.css";
-import "./x1.css";
-import "../components/x1/globe-visual.css";
-import "../components/x1/motion.css";
-import "../community/social.css";
-import "../global/data.css";
-import "../strategy/research.css";
-import "./x2.css";
+import "../frontend/styles/globals.css";
+import "../frontend/styles/v3.css";
+import "../frontend/styles/x1.css";
+import "../frontend/components/workspace/globe-visual.css";
+import "../frontend/components/workspace/motion.css";
+import "../frontend/features/community/social.css";
+import "../frontend/features/global/data.css";
+import "../frontend/features/strategy/research.css";
+import "../frontend/styles/x2.css";
 export const metadata: Metadata = {
   title: "Strategic Souls · Market intelligence that remembers",
   description:

@@ -1,7 +1,7 @@
 import Link from 'next/link';
-import {documents,officialSources,releaseGates,LEGAL_VERSION} from "../../../lib/content";
+import {documents,officialSources,releaseGates,LEGAL_VERSION} from "../../../backend/services/legacy/content";
 import {notFound} from "next/navigation";
-import {V3_LEGAL} from '../../../lib/v3/legal';
+import {V3_LEGAL} from '../../../backend/services/v3/legal';
 export const dynamic="force-dynamic";
 export default async function LegalPage({params}:{params:Promise<{slug:string}>}){
  const {slug}=await params;const doc=V3_LEGAL[slug]??documents[slug];if(!doc&&slug!=="compliance")notFound();

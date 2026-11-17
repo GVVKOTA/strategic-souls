@@ -1,5 +1,5 @@
-import {getChatGPTUser} from '../../../chatgpt-auth';
-import {marketSnapshot} from '../../../../lib/x1/market-data';
+import {getChatGPTUser} from '../../../../backend/auth/chatgpt-auth';
+import {marketSnapshot} from '../../../../backend/services/market-data/market-data';
 export const dynamic='force-dynamic';
 export async function GET(){
   const user=await getChatGPTUser();

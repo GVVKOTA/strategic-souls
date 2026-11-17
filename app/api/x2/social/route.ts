@@ -1,7 +1,7 @@
-import { getChatGPTUser } from "../../../chatgpt-auth";
-import { rate } from "../../../../lib/repository";
-import { body, HttpError, protectMutation } from "../../../../lib/security";
-import { getSocial, mutateSocial } from "../../../../lib/x2/social";
+import { getChatGPTUser } from "../../../../backend/auth/chatgpt-auth";
+import { rate } from "../../../../database/queries/repository";
+import { body, HttpError, protectMutation } from "../../../../backend/middleware/security";
+import { getSocial, mutateSocial } from "../../../../backend/services/community/social";
 export const dynamic = "force-dynamic";
 const json = (value: unknown, status = 200) =>
   Response.json(value, {

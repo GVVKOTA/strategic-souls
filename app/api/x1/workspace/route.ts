@@ -1,17 +1,17 @@
-import { getChatGPTUser } from "../../../chatgpt-auth";
-import { account, rate } from "../../../../lib/repository";
+import { getChatGPTUser } from "../../../../backend/auth/chatgpt-auth";
+import { account, rate } from "../../../../database/queries/repository";
 import {
   HttpError,
   protectMutation,
   body,
   assertAdultConsent,
-} from "../../../../lib/security";
+} from "../../../../backend/middleware/security";
 import {
   workspaceState,
   workspaceScanSnapshot,
   mutateWorkspace,
   researchEvidence,
-} from "../../../../lib/x1/workspace";
+} from "../../../../backend/services/research/workspace";
 export const dynamic = "force-dynamic";
 async function handle(request: Request) {
   try {

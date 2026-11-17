@@ -1,11 +1,11 @@
-import { getChatGPTUser } from "../../../chatgpt-auth";
-import { HttpError, body, protectMutation } from "../../../../lib/security";
+import { getChatGPTUser } from "../../../../backend/auth/chatgpt-auth";
+import { HttpError, body, protectMutation } from "../../../../backend/middleware/security";
 import {
   configureProvider,
   isDataOwner,
   providerSettings,
   testProvider,
-} from "../../../../lib/x2/data-service";
+} from "../../../../backend/services/market-data/data-service";
 export const dynamic = "force-dynamic";
 async function handle(request: Request) {
   const headers = { "Cache-Control": "private, no-store" };

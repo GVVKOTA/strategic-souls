@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { HttpError, protectMutation, body } from "../../../../lib/security";
+import { HttpError, protectMutation, body } from "../../../../backend/middleware/security";
 import {
   config,
   requiredConfig,
@@ -10,7 +10,7 @@ import {
   cookie,
   cookies,
   sessionHeaders,
-} from "../../../../lib/v3/supabase";
+} from "../../../../backend/services/v3/supabase";
 import {
   object,
   text,
@@ -21,10 +21,10 @@ import {
   moderate,
   handle as validHandle,
   sha256,
-} from "../../../../lib/v3/model";
-import { timestamp, sourceUrl } from "../../../../lib/notebook";
-import { validateHolding } from "../../../../lib/research";
-import { getChatGPTUser } from "../../../chatgpt-auth";
+} from "../../../../backend/services/v3/model";
+import { timestamp, sourceUrl } from "../../../../backend/services/legacy/notebook";
+import { validateHolding } from "../../../../backend/services/legacy/research";
+import { getChatGPTUser } from "../../../../backend/auth/chatgpt-auth";
 export const dynamic = "force-dynamic";
 const json = (data: unknown, status = 200, headers?: Headers) => {
   const h = headers ?? new Headers();

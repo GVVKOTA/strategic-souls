@@ -46,17 +46,17 @@ yarn-error.log*
 !.env.example
 
 # Private V3 data and managed local state
-/quant/.venv/
-/quant/.data/
-/quant/**/__pycache__/
-/quant/.pytest_cache/
+/backend/quant/.venv/
+/backend/quant/.data/
+/backend/quant/**/__pycache__/
+/backend/quant/.pytest_cache/
 /supabase/.temp/
 /supabase/.branches/
 *.pyc
 
 # Private export and reproducible local-only artifacts
-/docs/evidence/
-/docs/v3/evidence/
+/operations/docs/archive/pre-x1/evidence/
+/operations/docs/v3/evidence/
 /private-recovery/
 /private-backup/
 /backups/
