@@ -7,10 +7,12 @@ const origin=process.env.V3_TEST_ORIGIN??'http://127.0.0.1:5173';
 const mailbox=process.env.V3_TEST_MAILPIT??'http://127.0.0.1:54324';
 for(const address of [origin,mailbox]){const u=new URL(address);assert.ok(u.protocol==='http:'&&['localhost','127.0.0.1'].includes(u.hostname),'Loopback tests only.');}
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
+let lastResponse;
 class Client{
  jar=new Map();
  async call(path,payload){
  const response=await fetch(origin+'/api/v3/'+path,{method:payload===undefined?'GET':'POST',headers:{Origin:origin,'Content-Type':'application/json',Cookie:[...this.jar].map(([k,v])=>k+'='+v).join('; ')},body:payload===undefined?undefined:JSON.stringify(payload),redirect:'manual'});
+ lastResponse = { endpoint: path.split("?")[0], status: response.status };
  for(const value of response.headers.getSetCookie()){const first=value.split(';')[0],i=first.indexOf('=');const name=first.slice(0,i),v=first.slice(i+1);if(value.includes('Max-Age=0'))this.jar.delete(name);else this.jar.set(name,v);}
  const data=await response.json();return {status:response.status,data};
  }
@@ -18,7 +20,9 @@ class Client{
  assert.equal((await this.call('auth/email-code',{email:address})).status,200);
  let code;
  for(let n=0;n<40&&!code;n++){
- const response=await fetch(mailbox+'/api/v1/messages');assert.equal(response.status,200);
+ const response=await fetch(mailbox+'/api/v1/messages');
+ lastResponse = { endpoint: 'mailpit/messages', status: response.status };
+ assert.equal(response.status,200);
  const box=await response.json();const msg=box.messages?.find(m=>m.To?.some(to=>to.Address.toLowerCase()===address));
  if(msg){const data=await (await fetch(mailbox+'/api/v1/message/'+encodeURIComponent(msg.ID))).json();code=(data.Text??data.HTML??'').match(/\b\d{6}\b/)?.[0];}
  if(!code)await pause(500);
@@ -56,4 +60,4 @@ try{
  assert.equal((await other.call('auth/logout',{})).status,200);assert.equal((await other.call('session')).data.authenticated,false);
  console.log(JSON.stringify({result:'PASS',scope:'Real loopback Auth OTP, Mailpit delivery, handle collision, private persistence/idempotency/IDOR, Teams, immediate revocation, export and logout',google:'NOT RUN - real OAuth credentials/user journey required',fixturesRetained:true}));
  }
-}catch(e){console.error(JSON.stringify({result:'FAIL',message:e.message,scope:'Real local integration only; tokens and OTPs withheld'}));process.exitCode=1;}
+}catch(e){console.error(JSON.stringify({result:'FAIL',lastResponse,message:e.message,scope:'Real local integration only; tokens and OTPs withheld'}));process.exitCode=1;}

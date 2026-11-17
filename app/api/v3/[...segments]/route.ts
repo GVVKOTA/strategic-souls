@@ -281,7 +281,7 @@ async function handler(request: Request): Promise<Response> {
           conf.url + "/storage/v1/object/authenticated/v3-private/" + path,
           {
             headers: { apikey: conf.key, Authorization: "Bearer " + who.token },
-            redirect: "error",
+            redirect: "manual",
             signal: AbortSignal.timeout(10000),
           },
         );

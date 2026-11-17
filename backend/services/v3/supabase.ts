@@ -74,7 +74,8 @@ export async function backend(
   try {
     response = await fetch(c.url + path, {
       ...init,
-      redirect: "error",
+      // Workers accepts "manual"; reject upstream redirects before reading a body.
+      redirect: "manual",
       signal: AbortSignal.timeout(12000),
       headers: {
         apikey: c.key,
@@ -90,6 +91,8 @@ export async function backend(
       "Research backend is unavailable. No successful save is implied.",
     );
   }
+  if (response.status >= 300 && response.status < 400)
+    throw new HttpError(503, "The research backend returned an unexpected redirect.");
   const data = await response.json().catch(() => null);
   if (!response.ok) {
     const code = (data as { code?: string })?.code;

@@ -28,15 +28,15 @@ The moves update relative imports, component aliases, stylesheet imports, test f
 
 ## Verification
 
-- Windows Node 22.16.0 and pnpm 11.25.0 accepted the frozen lockfile. Type checking, application lint and all 244 Node tests passed. Lint reported four existing image optimization warnings.
-- The production Worker built. The official packaging helper included the Worker, the original hosting manifest and all seven D1 SQL migrations.
+- Windows Node 22.16.0 and pnpm 11.25.0 accepted the frozen lockfile. Type checking, application lint and the original 244 Node tests passed. Lint reported four existing image optimization warnings.
+- The production Worker built. The official packaging helper included the Worker, the original hosting manifest and all seven D1 SQL migrations. Wrangler applied all seven to a fresh local database.
 - The optional Python frozen environment and all 29 tests passed. Its test scratch path was adjusted after moving the project.
 - In the loopback browser, the fictional account completed onboarding, saved a named Soul Scan draft, reloaded, and reopened it. ECB coverage returned eligible observations, and running the scan saved a source snapshot. Graveyard and Community opened. Session, workspace, data, social and V3 health endpoints responded after onboarding. Legacy loaded.
 - Global, Strategy and Community each rendered inside a 390 px browser frame (375 px usable width) without document-level horizontal overflow.
 - The owner-private live homepage loaded from Sites version 12. The refactor was validated in local development and packaging. Hosted login, hosted writes and commercial providers remain outside the verified scope.
-- Both revisions built with the same Windows Node and locked dependencies. There were 35 JavaScript and three CSS files in the static build on each revision. Total JavaScript dispatch size changed by one byte when individually gzipped (245,756 to 245,757 bytes). CSS and the 219,660-byte Worker entry were unchanged in size. Runtime latency was not measured.
+- The original and layout-only revisions built with the same Windows Node and locked dependencies. There were 35 JavaScript and three CSS files in the static build on each revision. Combined gzip size of the JavaScript assets changed by one byte when individually gzipped (245,756 to 245,757 bytes). CSS and the 219,660-byte Worker entry were unchanged in size. Runtime latency was not measured.
 
-- GitHub's core push and pull request checks passed. An optional V3 run passed source, build and Python verification and exposed a pre-existing Supabase CLI template-path error during container startup. The config now resolves its existing email template from the repository root. The real OTP journey requires successful local container startup.
+- GitHub's core push and pull request checks passed. An optional V3 run passed source, build and Python verification and exposed a pre-existing Supabase CLI template-path error during container startup. The config now resolves its existing email template from the repository root. The rerun started Supabase and applied its migrations, but email-code requests returned 503. A loopback Worker probe traced this to an unsupported fetch redirect mode. Supabase requests now use manual redirect handling and reject upstream redirects before reading the response, preserving the credential boundary. A rebuilt Worker reached the isolated test endpoint successfully. A regression test verifies that no redirect is followed and no session cookie is issued.
 - The source pattern scan found no matching credentials. The 18 November pnpm audit reported two moderate advisories and one high advisory in the build dependency picomatch, with no patched version listed in the audit response. The dependency lockfiles were preserved.
 
 ## Branch and release

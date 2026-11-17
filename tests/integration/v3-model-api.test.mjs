@@ -9,7 +9,8 @@ import { resolve, dirname } from "node:path";
 import { webcrypto, randomUUID } from "node:crypto";
 const settings = {};
 let transportCalls = [],
-  verified = true;
+  verified = true,
+  redirectOtp = false;
 const userId = "7a045420-37ca-4c26-9051-5e86a457162e";
 const transport = async (url, init = {}) => {
   transportCalls.push({ url, init });
@@ -25,6 +26,8 @@ const transport = async (url, init = {}) => {
       refresh_token: "TEST_REFRESH_NOT_REAL",
       expires_in: 3600,
     });
+  if (redirectOtp && url.endsWith("/auth/v1/otp"))
+    return Response.redirect("https://redirect.example.invalid/", 307);
   if (url.endsWith("/auth/v1/otp") || url.includes("/auth/v1/logout"))
     return Response.json({});
   if (
@@ -302,6 +305,19 @@ test("mock Auth OTP protocol, browser-bound pending email and cookie security fl
   assert.ok(verified.headers.get("set-cookie").includes("SameSite=Lax"));
   assert.equal(verified.data.access_token, undefined);
 });
+test("Supabase upstream redirects fail closed without forwarding the request", async () => {
+  const before = transportCalls.length;
+  redirectOtp = true;
+  try {
+    const result = await call("auth/email-code", { email: "fixture@example.com" });
+    assert.equal(result.status, 503);
+    assert.equal(result.headers.get("set-cookie"), null);
+    assert.equal(transportCalls.length, before + 1);
+    assert.equal(transportCalls.at(-1).init.redirect, "manual");
+  } finally {
+    redirectOtp = false;
+  }
+});
 test("Google is gated, callback state required and PKCE includes a server-only verifier", async () => {
   assert.equal((await call("auth/google")).status, 503);
   settings.V3_GOOGLE_ENABLED = "1";
@@ -330,7 +346,8 @@ test("verified backend user required; invalid URLs, byte limits, and publish/run
     ).status,
     401,
   );
-  verified = true;
+  verified = true,
+  redirectOtp = false;
   assert.equal(
     (await call("publish", {}, { cookie: "ss_access=TEST_ACCESS_NOT_REAL" }))
       .status,
