@@ -421,6 +421,11 @@ enabled = true
 # and column/key alignment. Set to "null" to emit raw, unformatted SQL.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":180,\"commaStyle\":\"trailing\"}"
 
+# An OTP request for a new account uses the signup confirmation template.
+[auth.email.template.confirmation]
+subject = "Confirm your Strategic Souls email address"
+content_path = "./supabase/templates/code.html"
+
 [auth.email.template.magic_link]
 subject = "Your Strategic Souls sign-in code"
 content_path = "./supabase/templates/code.html"

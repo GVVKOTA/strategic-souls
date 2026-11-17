@@ -19,15 +19,18 @@ class Client{
  async signIn(address){
  assert.equal((await this.call('auth/email-code',{email:address})).status,200);
  let code;
+ let matchedMessage = false;
  for(let n=0;n<40&&!code;n++){
  const response=await fetch(mailbox+'/api/v1/messages');
  lastResponse = { endpoint: 'mailpit/messages', status: response.status };
  assert.equal(response.status,200);
  const box=await response.json();const msg=box.messages?.find(m=>m.To?.some(to=>to.Address.toLowerCase()===address));
- if(msg){const data=await (await fetch(mailbox+'/api/v1/message/'+encodeURIComponent(msg.ID))).json();code=(data.Text??data.HTML??'').match(/\b\d{6}\b/)?.[0];}
+ if(msg){matchedMessage = true;const data=await (await fetch(mailbox+'/api/v1/message/'+encodeURIComponent(msg.ID))).json();code=(data.Text??data.HTML??'').match(/\b\d{6}\b/)?.[0];}
  if(!code)await pause(500);
  }
- assert.ok(code,'A real local OTP message must exist; no fixture code is accepted.');
+ assert.ok(code, matchedMessage
+   ? 'The local email arrived but did not contain a six-digit verification code.'
+   : 'No local email arrived for the test account.');
  assert.equal((await this.call('auth/verify',{email:address,code})).status,200);
  assert.equal((await this.call('session')).data.authenticated,true);
  }
