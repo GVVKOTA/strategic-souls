@@ -423,7 +423,7 @@ enabled = true
 
 [auth.email.template.magic_link]
 subject = "Your Strategic Souls sign-in code"
-content_path = "./templates/code.html"
+content_path = "./supabase/templates/code.html"
 
 [auth.external.google]
 enabled = false
