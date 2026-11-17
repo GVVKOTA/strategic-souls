@@ -17,9 +17,9 @@ jobs:
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: python -m pip install uv==0.12.23
-      - run: uv sync --project quant --frozen
+      - run: uv sync --project backend/quant --frozen
       - run: npm run verify
-      - run: uv run --project quant pytest quant/tests -q
+      - run: uv run --project backend/quant pytest backend/quant/tests -q
       - run: npm run build
   real-local-stack:
     runs-on: ubuntu-latest
@@ -34,12 +34,12 @@ jobs:
         run: |
           corepack pnpm exec supabase start > "$RUNNER_TEMP/supabase-start.log" 2>&1
           corepack pnpm exec supabase migration up --local
-          corepack pnpm exec supabase status --output json 2>/dev/null | node scripts/write-local-env.mjs
+          corepack pnpm exec supabase status --output json 2>/dev/null | node operations/scripts/write-local-env.mjs
       - name: Start local app and run real OTP/persistence journey
         run: |
-          npm run dev > "$RUNNER_TEMP/v3-dev.log" 2>&1 &
+          npm run dev:hmr > "$RUNNER_TEMP/v3-dev.log" 2>&1 &
           node --input-type=module -e 'for(let i=0;i<90;i++){try{if((await fetch("http://127.0.0.1:5173/api/v3/health")).ok)process.exit(0)}catch{}await new Promise(r=>setTimeout(r,500))}process.exit(1)'
-          node scripts/test-supabase-local.mjs
+          node operations/scripts/test-supabase-local.mjs
       - if: always()
         run: corepack pnpm exec supabase stop
 # Manual verification only. No Site deployment, source push or public-access step.

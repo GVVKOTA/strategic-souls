@@ -1,19 +1,19 @@
-import { getChatGPTUser } from "../../../chatgpt-auth";
-import { account, rate } from "../../../../lib/repository";
+import { getChatGPTUser } from "../../../../backend/auth/chatgpt-auth";
+import { account, rate } from "../../../../database/queries/repository";
 import {
   HttpError,
   assertAdultConsent,
   body,
   protectMutation,
-} from "../../../../lib/security";
+} from "../../../../backend/middleware/security";
 import {
   assetResearch,
   chartLayout,
   instrumentRegistry,
   saveChartLayout,
   loadExtendedMarketData,
-} from "../../../../lib/x2/data-service";
-import type { Interval } from "../../../../lib/x2/data-types";
+} from "../../../../backend/services/market-data/data-service";
+import type { Interval } from "../../../../backend/services/market-data/data-types";
 export const dynamic = "force-dynamic";
 async function handle(request: Request) {
   const headers = { "Cache-Control": "private, no-store" };

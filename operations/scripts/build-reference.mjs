@@ -1,0 +1,13 @@
+import {readFileSync,writeFileSync,mkdirSync,globSync} from 'node:fs';
+import {pathToFileURL} from 'node:url';
+import {resolve} from 'node:path';
+const esbuildPath=globSync('node_modules/.pnpm/esbuild@*/node_modules/esbuild/lib/main.js')[0];
+if(!esbuildPath)throw new Error('Install the locked dependencies first.');
+const {build}=await import(pathToFileURL(resolve(esbuildPath)).href);
+mkdirSync('public/downloads',{recursive:true});
+const result=await build({stdin:{contents:"import React from 'react';import{createRoot}from'react-dom/client';import Workspace from './frontend/features/legacy/workspace';window.GVV_REFERENCE=true;createRoot(document.getElementById('root')).render(<Workspace/>);",resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,format:'iife',jsx:'automatic',minify:false,legalComments:'inline',define:{'process.env.NODE_ENV':'"production"'}});
+const js=result.outputFiles[0].text.replace(/<\/script/gi,'<\\/script');
+const css=readFileSync('frontend/styles/globals.css','utf8');
+const html='<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="Self-contained browser-local reference, not the secure hosted product."><title>Strategic Souls · One-file reference</title><style>'+css+'</style></head><body><div id="root"></div><script>'+js+'</script></body></html>';
+writeFileSync('public/downloads/Strategic_Souls_GVV_One_File_Reference.html',html);
+console.log('Created self-contained reference: '+Buffer.byteLength(html)+' bytes. No external assets or data feeds.');

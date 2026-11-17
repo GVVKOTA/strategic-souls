@@ -1,8 +1,8 @@
-import { getChatGPTUser } from '../../../chatgpt-auth';
-import { rate } from '../../../../lib/repository';
-import { body, HttpError, protectMutation } from '../../../../lib/security';
-import { getCommunity, mutateCommunity } from '../../../../lib/x1/community';
-import { COMMUNITY_LIMITS } from '../../../../lib/x1/community-model';
+import { getChatGPTUser } from '../../../../backend/auth/chatgpt-auth';
+import { rate } from '../../../../database/queries/repository';
+import { body, HttpError, protectMutation } from '../../../../backend/middleware/security';
+import { getCommunity, mutateCommunity } from '../../../../backend/services/community/community';
+import { COMMUNITY_LIMITS } from '../../../../backend/services/community/community-model';
 
 export const dynamic = 'force-dynamic';
 const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });

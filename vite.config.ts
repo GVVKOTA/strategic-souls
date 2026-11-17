@@ -1,10 +1,10 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
-import { readExecutionProfile } from "./scripts/execution-profile.mjs";
-import { configureToolEnvironment } from "./scripts/tool-environment.mjs";
-import { sites } from "./scripts/vite/sites-vite-plugin";
-import { connectorPreview } from "./scripts/vite/connector-preview-plugin.mjs";
+import { readExecutionProfile } from "./operations/scripts/execution-profile.mjs";
+import { configureToolEnvironment } from "./operations/scripts/tool-environment.mjs";
+import { sites } from "./operations/scripts/vite/sites-vite-plugin";
+import { connectorPreview } from "./operations/scripts/vite/connector-preview-plugin.mjs";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
@@ -16,7 +16,7 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const managedLinux = readExecutionProfile() === "managed-linux";
 
 const localBindingConfig = {
-  main: "./worker/index.ts",
+  main: "./backend/middleware/index.ts",
   compatibility_flags: ["nodejs_compat"],
   d1_databases: d1
     ? [
@@ -79,7 +79,7 @@ export default defineConfig(async ({ command }) => {
                 {
                   config: {
                     name: "sites-connector-preview",
-                    main: "./scripts/connector-preview/worker.mjs",
+                    main: "./operations/scripts/connector-preview/worker.mjs",
                     compatibility_date: "2026-05-15",
                   },
                 },

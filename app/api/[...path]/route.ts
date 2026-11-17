@@ -1,30 +1,30 @@
-import { getChatGPTUser } from "../../chatgpt-auth";
-import { database, account, history, rate } from "../../../lib/repository";
+import { getChatGPTUser } from "../../../backend/auth/chatgpt-auth";
+import { database, account, history, rate } from "../../../database/queries/repository";
 import {
   HttpError,
   protectMutation,
   body,
   assertAdultConsent,
   DISABLED_FEATURES,
-} from "../../../lib/security";
+} from "../../../backend/middleware/security";
 import {
   parseFormula,
   validateHolding,
   holdingKey,
   TIMEFRAMES,
-} from "../../../lib/research";
-import { RELEASE_GATES } from "../../../lib/gates";
+} from "../../../backend/services/legacy/research";
+import { RELEASE_GATES } from "../../../backend/services/legacy/gates";
 import {
   notebookArchive,
   createNotebook,
   appendNotebookEvent,
-} from "../../../lib/notebook-repository";
-import { workspaceState } from "../../../lib/x1/workspace";
+} from "../../../database/queries/notebook-repository";
+import { workspaceState } from "../../../backend/services/research/workspace";
 import {
   exportCommunityData,
   communityPrivacyStatements,
-} from "../../../lib/x1/community";
-import { exportSocial, socialEraseStatements } from "../../../lib/x2/social";
+} from "../../../backend/services/community/community";
+import { exportSocial, socialEraseStatements } from "../../../backend/services/community/social";
 export const dynamic = "force-dynamic";
 const VERSION = "2026-11-14-v4";
 const json = (data: unknown, status = 200) =>

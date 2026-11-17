@@ -2,7 +2,7 @@
 
 ## Mission and code map
 
-Maintain the real X2 research application for Global Vertex Vectors. Exactly three dashboards: `global/` for markets/watchlists/manual portfolios/charts; `strategy/` for named research/rules/history/Graveyard/Radar/Formula Lab; `community/` for Bodies, DMs, groups and collaborative Souls. `public/` contains approved assets; `db/` defines typed schema. Keep framework routing in `app/`, request security in `worker/`, shared identity/persistence/engines in `lib/`, chronological migrations in `drizzle/`, and existing shared components/tests/tooling. Do not duplicate canonical algorithms, provider adapters or ACLs in dashboards.
+Maintain the X2 research application for Global Vertex Vectors. The three dashboards live under [frontend/features](frontend/features). Put identity, canonical engines, provider adapters and application logic under [backend](backend). Routes remain in [app](app), and database definitions and access helpers belong in [database](database). Keep ordered D1 migrations in [drizzle](drizzle) and public assets in [public](public). Never duplicate canonical algorithms, provider adapters or access checks in dashboards.
 
 Tested Node 22.16.0, pnpm 11.25.0; React/TypeScript, Next conventions through Vinext/Vite on Workers/D1. Preserve `pnpm-lock.yaml`; no unnecessary upgrades or second Node lockfile. Read README/SOURCE_PROVENANCE before assuming a deployed/source state.
 
@@ -18,7 +18,7 @@ Tested Node 22.16.0, pnpm 11.25.0; React/TypeScript, Next conventions through Vi
 
 Use small branches from current `main`; agree on shared-file ownership. Inspect diffs, stage exact files, commit clearly and open a PR. No force pushes, overwriting contributions or cosmetic mass moves. Co-locate new behavioral tests when useful; retain existing backend suites in `tests/`. Do not weaken assertions to make checks green.
 
-Use `pnpm install --frozen-lockfile` after dependency changes; `npm run verify:x2` for types/full application lint/Node tests; `npm run build` for the real Worker. Individual commands: `npm run typecheck`, `npm run lint:app`, `npm test`. Report actual results, warnings and untested limits. Remote Actions success is separate. Windows: build → `npm run local:setup` → `npm run local:serve`; original upstream dev failure is documented. Local mode is loopback-only fictional identity plus isolated local D1, never production auth/data. Stop owned QA helpers afterward.
+Use `pnpm install --frozen-lockfile` after dependency changes; `npm run verify:x2` for types/full application lint/Node tests; `npm run build` for the real Worker. Individual commands: `npm run typecheck`, `npm run lint:app`, `npm test`. Report actual results, warnings and untested limits. Remote Actions success is separate. Windows: use npm run dev for the compiled Worker preview. The upstream HMR issue is documented in the developer guide. Local mode is loopback-only fictional identity plus isolated local D1, never production auth/data. Stop owned QA helpers afterward.
 
 ## Security, teamwork and releases
 
