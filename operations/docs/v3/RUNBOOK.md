@@ -2,29 +2,29 @@
 All commands run inside the actual nested .sites-checkout repository. Do not run application/Git commands from its parent or edit sibling daycraft. The existing Site stays unchanged.
 
 ## Preview the implemented interface
-Double-click START_V3_LOCAL.bat, or run:
+Double-click operations/scripts/START_V3_LOCAL.bat, or run:
 ~~~powershell
-npm run dev
+npm run dev:hmr
 ~~~
 Open the printed URL (observed here: http://127.0.0.1:5173/). Without a real configured backend, independent sign-in and persistence correctly remain unavailable. /legacy retains the existing owner application and requires genuine Sites authentication; local mock-owner injection is disabled.
 
 ## Complete the accepted Windows prerequisite path
 The current installation attempt failed with 0x80072ee2, and a non-admin session cannot complete Windows optional-feature setup. From Administrator PowerShell, after resolving the package/network failure:
 ~~~powershell
-.\scripts\setup-windows-v3.ps1 -Install
+.\operations\scripts\setup-windows-v3.ps1 -Install
 ~~~
 The script uses official winget packages, WSL2 and Rancher Desktop Moby with Kubernetes disabled. It does not reboot. If Windows reports a required restart, the user must restart manually and rerun the script. It neither changes security policy nor switches to an unsupported substitute stack.
 
 After docker info confirms the engine:
 ~~~powershell
-.\scripts\start-v3-local.ps1 -StartSupabase
+.\operations\scripts\start-v3-local.ps1 -StartSupabase
 ~~~
 This starts the distinct local Supabase project, obtains its local status without printing key values, merges loopback settings into ignored .dev.vars and starts the frontend. Existing environment contents are backed up privately before replacement. Never archive .dev.vars, .env, local status output or tokens.
 
 Local APIs: Supabase http://127.0.0.1:54321; Studio :54323; Mailpit :54324. These are configured local ports, not proof that services currently run. Migrations:
 ~~~powershell
 pnpm exec supabase migration up --local
-node scripts/test-supabase-local.mjs
+node operations/scripts/test-supabase-local.mjs
 ~~~
 The integration script only permits loopback targets, uses real local email OTPs from Mailpit, creates uniquely named disposable local accounts, and refuses to pass when the stack is missing. It retains its local fixtures for investigation. It does not test Google or human onboarding speed.
 
@@ -37,7 +37,7 @@ HTTPS deployments set Secure HttpOnly SameSite=Lax cookies; loopback HTTP develo
 ~~~powershell
 uv sync --project quant --frozen
 uv run --project quant souls-quant health
-uv run --project quant pytest quant/tests -q
+uv run --project backend/quant pytest backend/quant/tests -q
 ~~~
 Ingestion requires an operator-reviewed JSON containing bars, a rights record, complete source sessions, dated memberships and a complete corporate-action manifest. No real dataset is included. Example command syntax:
 ~~~text
@@ -54,7 +54,7 @@ The queue currently supports cached SCREEN jobs. The walk-forward evaluator is a
 ~~~powershell
 npm run verify
 npm run build
-uv run --project quant pytest quant/tests -q
+uv run --project backend/quant pytest backend/quant/tests -q
 pnpm audit
 ~~~
 The embedded PostgreSQL tests verify actual migrations/RLS with a test Auth/Storage schema. The HTTP tests explicitly mock the Auth transport. Neither replaces the real local integration script.

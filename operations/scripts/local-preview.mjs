@@ -100,6 +100,6 @@ worker.once('exit', code => { if (!stopping) stop(code || 1); });
 server.on('error', error => { console.error(error.message); stop(1); });
 server.listen(publicPort, '127.0.0.1', () => {
   console.log(`LOCAL DEVELOPMENT ONLY: http://127.0.0.1:${publicPort}`);
-  console.log('Fictional local identity; empty isolated D1. No ChatGPT production login, records or secrets are copied.');
+  console.log('Fictional local identity; persistent, isolated local D1. No ChatGPT production login, records or secrets are copied.');
   console.log('Complete local onboarding yourself. Stop both owned processes with Ctrl+C.');
 });

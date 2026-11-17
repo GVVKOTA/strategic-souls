@@ -24,7 +24,7 @@ The original snapshot had 366 tracked files, 65 directly in the root. Of those, 
 
 The framework still discovers pages and API handlers in app and served assets in public. The required roots for D1 migration history, Supabase, CI, Sites identity and the Sites installer were preserved. No SQL migration was added or reordered. Source provenance remains the immutable record of the earlier export. Historical guides retain their original context and link to the new starting guide.
 
-The moves update relative imports, component aliases, stylesheet imports, test fixture paths, lint and test discovery, Vite’s Worker entry, Drizzle’s schema path, ignore patterns and the optional V3 workflow. The Windows default launch now builds and starts the compiled Worker after applying local D1 migrations. The original hot-reload route remains available as npm run dev:hmr.
+The moves update relative imports, component aliases, stylesheet imports, test fixture paths, lint and test discovery, Vite’s Worker entry, Drizzle’s schema path, ignore patterns and the optional V3 workflow. The Windows default launch now builds and starts the compiled Worker after applying local D1 migrations. The original hot-reload route remains available as npm run dev:hmr. Managed shell entry points retain LF line endings and Linux executable permissions.
 
 ## Verification
 
@@ -38,4 +38,4 @@ The moves update relative imports, component aliases, stylesheet imports, test f
 
 ## Branch and release
 
-Base: ec4b45a3ee1cf000519fa0596139952ba1d30f16. Review branch: codex/strategic-souls-restructure. See the [GitHub comparison](https://github.com/GVVKOTA/strategic-souls/compare/main...codex%2Fstrategic-souls-restructure) for the current commits and file changes. Review before merging. Any production release is a separate step through the original Site after GitHub approval and a fresh source, access and recovery check.
+Base: ec4b45a3ee1cf000519fa0596139952ba1d30f16. Review branch: codex/strategic-souls-restructure. Implementation commit: 112a4518ce990cc4a299b3b81e17840b8a35b041. See [pull request #1](https://github.com/GVVKOTA/strategic-souls/pull/1) for the full set of commits and current GitHub checks. Review before merging. Any production release is a separate step through the original Site after GitHub approval and a fresh source, access and recovery check.
