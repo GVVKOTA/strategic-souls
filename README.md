@@ -1,43 +1,69 @@
-# Strategic Souls
+Strategic Souls (SS)
 
-<img src="public/gvv-approved.jpg" width="104" alt="Global Vertex Vectors GVV eclipse logo" />
+A Smarter Future for Trading and Investing
 
-Strategic Souls is Global Vertex Vectors’ private financial research workspace. Use **Global** to explore sourced market data, charts, watchlists and manual portfolios. Use **Strategy** to define a Soul Scan, save drafts, inspect execution history and review research in the Graveyard. Use **Community** to collaborate through research profiles, messages and groups.
+About Strategic Souls
 
-The X2 app uses React and TypeScript, with Next.js routing through Vinext and Vite. A Cloudflare Worker serves the app and stores research in D1. The optional V3 integration uses Supabase and a Python research worker.
+Strategic Souls is an intelligent fintech platform developed under Global Vertex Vectors (GVV).
 
-| Folder | What belongs here |
-| --- | --- |
-| [frontend/](frontend/) | Screens, components, hooks and styles |
-| [backend/](backend/) | Identity, research engines, application services, provider adapters and request middleware |
-| [database/](database/) | D1 table definitions and access helpers |
-| [tests/](tests/) | Unit tests and integration tests |
-| [operations/](operations/) | Developer guides, build and maintenance scripts, examples and historical reports |
+It aims to combine market research, stock screening, technical analysis, fundamental analysis, strategy building, and financial intelligence into one easy-to-use website.
 
-Framework entry points stay in app/. Served assets stay in public/. The deployment tooling reads drizzle/ for D1 migrations, supabase/ for the optional Supabase project, .openai/ for Site identity and .github/workflows/ for GitHub checks. The managed Sites installer enters through scripts/install-pnpm.sh.
+Our Goal
 
-## Run locally
+To create an affordable, all-in-one financial platform where beginners and experienced traders can analyze markets, develop strategies, and make informed investment decisions.
 
-Use Git, Node.js **22.16.0** and pnpm **11.25.0**, the versions verified for the Windows workflow. From the project folder in a VS Code terminal:
+How Strategic Souls Works
 
-~~~powershell
-pnpm install --frozen-lockfile
-npm run dev
-~~~
+1. Market Dashboard
 
-Open [the local workspace](http://127.0.0.1:5173) when Wrangler reports it is ready. Press Ctrl+C to stop. The command builds the Worker, applies D1 migrations to the local database and supplies a fictional developer identity on loopback. Complete local onboarding before saving. Restart the command after code changes.
+Users can explore financial markets, monitor price movements, follow market trends, and access important trading information.
 
-~~~powershell
-npm run verify:x2    # Type check, application lint and Node tests
-npm test             # Unit and integration tests only
-npm run build        # Production Worker
-npm run test:quant   # Optional Python tests, requires uv
-~~~
+2. Soul Scan — Our Core Feature
 
-The core preview needs no credentials. See [.env.example](.env.example) for settings, [provider setup](operations/docs/setup/X2_DATA_SETUP.md) for data access, and the [architecture](operations/docs/ARCHITECTURE.md) for how the parts fit together. Use eligible, licensed inputs for financial research. Unsupported computations show unavailable or insufficient evidence.
+Soul Scan is designed to let users create personalized market scanners called Souls.
 
-## Contribute
+It is designed for three experience levels:
 
-Branch from the current reviewed base. Change the smallest relevant feature, run verification and the build, then open a pull request against main. Retain license notices. Keep real credentials, user records and backups outside Git. See [engineering rules](AGENTS.md) and the [developer guide](operations/docs/DEVELOPER_GUIDE.md).
+- Beginner: Ready-made scanning strategies requiring minimal configuration.
+- Intermediate: Customizable scanners using simple drag-and-drop conditions.
+- Advanced: Fully customizable scanning rules combining technical indicators, fundamentals, formulas, and pattern recognition.
 
-The owner-private ChatGPT Site has a separate publishing workflow. See [export provenance](SOURCE_PROVENANCE.json), the [documentation index](operations/docs/README.md) and the [restructuring report](operations/docs/RESTRUCTURING_REPORT.md).
+3. Strategy Building
+
+Users can define conditions such as RSI, moving averages, volume, price movements, and financial ratios to identify assets matching their trading strategies.
+
+4. Souls and Graveyard
+
+Users can save and manage their scanning strategies. The Graveyard concept helps retain previous Souls for review, comparison, and future improvements.
+
+5. Market Research and Analysis
+
+The platform aims to combine technical analysis, fundamental data, market trends, and AI-assisted insights to support research and decision-making.
+
+6. Trading Intelligence
+
+Future capabilities will include advanced backtesting, strategy performance tracking, intelligent alerts, portfolio analytics, and automation.
+
+Our Vision
+
+To make Strategic Souls a daily-use financial intelligence hub for traders, investors, researchers, and market enthusiasts worldwide.
+
+We envision a platform where users can move from market discovery → research → strategy creation → scanning → evaluation → improvement in one ecosystem.
+
+Business Model
+
+- Free Tier: Essential tools supported by advertisements.
+- Premium Tier: Affordable subscriptions offering advanced analysis, customization, and professional features.
+- Future Expansion: AI-powered financial assistants, algorithmic research tools, and advanced financial analytics.
+
+Our Mission
+
+Democratize financial intelligence by making powerful market research and trading tools accessible, affordable, and easy to use.
+
+Strategic Souls is designed to assist financial decision-making, not promise guaranteed profits.
+
+---
+
+Strategic Souls — Analyze Smarter. Trade Strategically. Grow Intelligently.
+
+Built under Global Vertex Vectors (GVV).
