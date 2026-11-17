@@ -1,0 +1,9 @@
+# Accessibility and motion
+
+The interface preserves a skip link, named navigation/search/form controls, native keyboard-operable disclosures, labelled dialogs with close/focus handling, visible pending/error states and scroll controls for compact tabs. Core body is 16px, metadata minimum 12px outside locked original brand typography; approved logo is an image. Silver body tokens and blue heading tokens replace dim normal text. Static palette tests report minimum locked normal-token contrast 6.901:1; this is not a full rendered WCAG audit of every state/image.
+
+Chart source tables provide a non-pointer alternative to SVG. Simple rule reorder has up/down controls as well as drag. Status feedback is visible and announced; a timeout produces a meaningful retryable error and does not automatically duplicate a mutation. All-UNKNOWN preflight blocks run. Reduced-motion and forced-color CSS remain; intro is session-bounded and skippable. Globe exposes pause/zoom/list access and a fallback rather than claiming hardware acceleration is universal.
+
+The screenshot audit and final browser receipt record actual viewports/font/zoom and reduced-motion observations. Physical Android TalkBack, VoiceOver, real device pinch, touch FPS, WebGL loss on multiple GPUs and field p75 INP are not certified. Browser emulation and passing DOM tests do not establish those results. Keep outstanding verification distinct from implemented accessibility affordances.
+
+Runtime observation: matchMedia prefers-reduced-motion: reduce was true in the actual QA browser, with no active animated main elements. Thirty requested actual CSS viewport views had no document overflow. This does not certify the opposite motion setting, forced WebGL context loss, physical screen readers, 200% browser zoom or 90/125% font changes, which remain unverified.

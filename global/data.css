@@ -1,0 +1,378 @@
+.x2-terminal,
+.x2-data-control {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--x1-text-primary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+.x2-terminal h2,
+.x2-data-control h2 {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: clamp(19px, 2.5vw, 27px);
+  line-height: 1.25;
+  color: var(--x1-title-blue);
+  margin: 0 0 5px;
+}
+.x2-terminal h3 {
+  font-size: 18px;
+  color: var(--x1-title-blue);
+}
+.x2-terminal-head,
+.x2-data-control > header {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.x2-terminal-head span,
+.x2-source-line,
+.x2-chart-readout {
+  color: var(--x1-text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.x2-terminal button,
+.x2-data-control button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 9px 13px;
+  border: 1px solid var(--x1-divider-strong);
+  border-radius: 7px;
+  background: var(--x1-surface-2);
+  color: var(--x1-text-primary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.x2-terminal button:disabled,
+.x2-data-control button:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+.x2-terminal button[aria-pressed="true"] {
+  border-color: var(--x1-text-secondary);
+  background: var(--x1-surface-3);
+}
+.x2-terminal button:focus-visible,
+.x2-terminal input:focus-visible,
+.x2-terminal select:focus-visible,
+.x2-data-control button:focus-visible,
+.x2-data-control input:focus-visible,
+.x2-data-control textarea:focus-visible {
+  outline: 2px solid var(--x1-text-primary);
+  outline-offset: 3px;
+}
+.x2-terminal button:active,
+.x2-data-control button:active {
+  transform: scale(0.98);
+}
+.x2-terminal-actions,
+.x2-chart-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+}
+.x2-research-tabs {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  max-width: 100%;
+  padding: 6px 0 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--x1-divider-strong) var(--x1-bg);
+}
+.x2-research-tabs button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.x2-chart-toolbar,
+.x2-drawing-form,
+.x2-provider-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 14px 0;
+}
+.x2-terminal label,
+.x2-data-control label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  color: var(--x1-text-secondary);
+  font-size: 12px;
+}
+.x2-terminal input,
+.x2-terminal select,
+.x2-data-control input,
+.x2-data-control select,
+.x2-data-control textarea {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  background: var(--x1-bg);
+  border: 1px solid var(--x1-divider-strong);
+  border-radius: 6px;
+  color: var(--x1-text-primary);
+  font: inherit;
+  font-size: 14px;
+}
+.x2-data-control textarea {
+  width: 100%;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+.x2-price-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-height: 380px;
+  touch-action: pan-y;
+}
+.x2-price-chart text {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  fill: var(--x1-text-secondary);
+}
+.x2-series {
+  fill: none;
+  stroke: var(--x1-text-primary);
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
+}
+.x2-indicator-line {
+  stroke: var(--x1-text-tertiary);
+  stroke-width: 1.2;
+}
+.x2-chart-grid {
+  stroke: var(--x1-divider);
+  stroke-width: 0.7;
+}
+.x2-candle-up {
+  fill: var(--x1-surface-1);
+  stroke: var(--x1-text-primary);
+  stroke-width: 1;
+}
+.x2-candle-down {
+  fill: var(--x1-text-secondary);
+  stroke: var(--x1-text-primary);
+  stroke-width: 1;
+}
+.x2-crosshair {
+  stroke: var(--x1-text-secondary);
+  stroke-width: 0.7;
+  stroke-dasharray: 3 5;
+}
+.x2-drawing-line {
+  stroke: var(--x1-text-tertiary);
+  stroke-width: 1;
+  stroke-dasharray: 5 4;
+}
+.x2-indicator-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  border: 1px solid var(--x1-divider);
+  padding: 12px;
+  margin: 18px 0;
+}
+.x2-indicator-picker label,
+.x2-data-control label.x2-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+.x2-indicator-picker input,
+.x2-data-control .x2-checkbox input {
+  min-height: 20px;
+  width: 20px;
+  accent-color: var(--x1-text-secondary);
+}
+.x2-indicator-panel {
+  border: 1px solid var(--x1-divider);
+  padding: 10px 12px;
+  margin: 12px 0;
+}
+.x2-indicator-panel strong {
+  font-size: 12px;
+  color: var(--x1-text-secondary);
+}
+.x2-indicator-panel svg {
+  width: 100%;
+  max-height: 115px;
+  display: block;
+}
+.x2-table-scroll {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--x1-divider);
+  margin: 16px 0;
+  max-height: 420px;
+}
+.x2-table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.x2-table-scroll th,
+.x2-table-scroll td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--x1-divider);
+  white-space: nowrap;
+}
+.x2-table-scroll th {
+  position: sticky;
+  top: 0;
+  background: var(--x1-surface-1);
+  font-weight: 500;
+}
+.x2-table-scroll caption {
+  padding: 10px;
+  text-align: left;
+  color: var(--x1-text-secondary);
+}
+.x2-terminal details,
+.x2-data-control details {
+  margin: 16px 0;
+  border-top: 1px solid var(--x1-divider);
+  padding-top: 12px;
+}
+.x2-terminal summary,
+.x2-data-control summary {
+  cursor: pointer;
+  color: var(--x1-text-secondary);
+  min-height: 44px;
+  line-height: 24px;
+  padding: 10px 0;
+}
+.x2-inline-help {
+  position: relative;
+  border: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.x2-inline-help summary {
+  list-style: none;
+  padding: 10px !important;
+  min-width: 44px;
+  min-height: 44px;
+}
+.x2-inline-help p {
+  max-width: 340px;
+  padding: 12px;
+  border: 1px solid var(--x1-divider);
+  background: var(--x1-surface-2);
+  font-size: 13px;
+}
+.x2-terminal dl {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
+  gap: 10px;
+}
+.x2-terminal dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.x2-terminal article {
+  border-bottom: 1px solid var(--x1-divider);
+  padding: 14px 0;
+}
+.x2-terminal article span {
+  display: block;
+  color: var(--x1-text-tertiary);
+  font-size: 12px;
+}
+.x2-terminal a,
+.x2-data-control a {
+  color: var(--x1-text-secondary);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+.x2-error {
+  border: 1px solid var(--x1-divider-strong);
+  padding: 12px;
+  color: var(--x1-text-primary);
+}
+.x2-empty {
+  padding: 24px 0;
+  color: var(--x1-text-secondary);
+}
+.x2-provider-status {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--x1-divider);
+  margin: 18px 0;
+  font-size: 12px;
+}
+.x2-provider-status strong,
+.x2-provider-status p {
+  grid-column: 1/-1;
+}
+.x2-data-control code {
+  font-family: "IBM Plex Mono", monospace;
+  overflow-wrap: anywhere;
+}
+.x2-terminal p,
+.x2-data-control p {
+  overflow-wrap: anywhere;
+}
+.x2-terminal [role="status"],
+.x2-data-control [role="status"] {
+  color: var(--x1-text-secondary);
+}
+@media (max-width: 600px) {
+  .x2-terminal,
+  .x2-data-control {
+    font-size: 13px;
+  }
+  .x2-chart-toolbar,
+  .x2-drawing-form,
+  .x2-provider-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .x2-provider-status {
+    grid-template-columns: 1fr;
+  }
+  .x2-terminal-head {
+    gap: 8px;
+  }
+  .x2-terminal-head h2 {
+    font-size: 20px;
+  }
+  .x2-chart-readout {
+    min-height: 36px;
+  }
+  .x2-terminal dl {
+    grid-template-columns: 1fr;
+  }
+  .x2-price-chart {
+    min-height: 200px;
+  }
+  .x2-terminal-actions button {
+    flex: 1 1 auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .x2-terminal button:active,
+  .x2-data-control button:active {
+    transform: none;
+  }
+}
+
+.x2-volume-bar {
+  fill: var(--x1-text-secondary);
+}

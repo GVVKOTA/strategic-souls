@@ -1,0 +1,18 @@
+[project]
+name = "strategic-souls-quant"
+version = "3.0.0"
+description = "Offline, provenance-gated research evaluator; never executes trades."
+requires-python = ">=3.11"
+dependencies = ["duckdb>=1.4,<2", "numpy>=2.2,<3", "pyarrow>=20,<24"]
+[dependency-groups]
+dev = ["pytest>=8,<10"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+[project.scripts]
+souls-quant = "souls_quant.cli:main"
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[tool.hatch.build.targets.wheel]
+packages = ["souls_quant"]

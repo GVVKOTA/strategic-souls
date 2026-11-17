@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1793109912583,
+      "tag": "0000_bent_reptil",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793110623770,
+      "tag": "0001_early_hawkeye",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793552007897,
+      "tag": "0002_aberrant_nighthawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793990783950,
+      "tag": "0003_peaceful_smasher",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794924211105,
+      "tag": "0004_thankful_talisman",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1794924549939,
+      "tag": "0005_x1_immutability",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794936249812,
+      "tag": "0006_low_norrin_radd",
+      "breakpoints": true
+    }
+  ]
+}

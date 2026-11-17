@@ -1,0 +1,584 @@
+import type {
+  Candle,
+  Fundamental,
+  Instrument,
+  ProviderConfig,
+  ProviderHealth,
+  ProviderId,
+  Rights,
+  Statement,
+  ResearchEvent,
+} from "./data-types";
+export const PROVIDERS = {
+  EODHD: {
+    label: "EODHD · EOD & fundamentals",
+    secret: "X2_EODHD_API_TOKEN",
+    docs: "https://eodhd.com/financial-apis/api-for-historical-data-and-volumes",
+    rightsUrl:
+      "https://eodhd.com/financial-apis/commercial-vs-personal-license-use",
+    markets: ["NSE", "BSE", "GLOBAL"],
+    datasets: ["candles", "fundamentals", "news"],
+    status: "Implemented, contract/key required",
+  },
+  TRUEDATA: {
+    label: "TrueData · India history",
+    secret: "X2_TRUEDATA_BEARER_TOKEN",
+    docs: "https://truedataapi.readme.io/reference/getbardata",
+    rightsUrl: "https://www.truedata.in/",
+    markets: ["NSE", "BSE", "MCX"],
+    datasets: ["candles"],
+    status: "Implemented EOD history, contract/token required",
+  },
+} as const;
+export const EMPTY_HEALTH: ProviderHealth = {
+  state: "NOT_CONFIGURED",
+  checkedAt: null,
+  lastEventAt: null,
+  message: "Configure an approved server secret and verified dataset rights.",
+  accepted: [],
+  rejected: [],
+  callsToday: 0,
+  quotaRemaining: 0,
+  latencyMs: null,
+};
+const string = (v: unknown, min: number, max: number) => {
+  if (typeof v !== "string" || v.trim().length < min || v.trim().length > max)
+    throw new Error(`Enter ${min}–${max} characters.`);
+  return v.trim();
+};
+const finite = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+export function providerId(v: unknown): ProviderId {
+  if (v !== "EODHD" && v !== "TRUEDATA")
+    throw new Error("Choose an implemented provider.");
+  return v;
+}
+export function validateInstrument(
+  value: unknown,
+  provider: ProviderId,
+): Instrument {
+  const v = value as Instrument;
+  if (!v || typeof v !== "object")
+    throw new Error("Instrument mapping required.");
+  const id = string(v.id, 3, 80),
+    symbol = string(v.providerSymbol, 1, 60);
+  if (!/^[A-Z0-9^._:-]+$/.test(id) || !/^[A-Z0-9^._-]+$/.test(symbol))
+    throw new Error("Use exact source identifiers, not a URL or expression.");
+  if (!(PROVIDERS[provider].markets as readonly string[]).includes(v.market))
+    throw new Error("This adapter does not support the selected market.");
+  if (
+    !["EQUITY", "INDEX", "FUTURE"].includes(v.type) ||
+    !id.startsWith(v.market + ":") ||
+    !/^[A-Z0-9]{4}$/.test(v.mic) ||
+    !/^[A-Z]{3}$/.test(v.currency)
+  )
+    throw new Error("Verify instrument market, MIC, type and currency.");
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: v.timezone }).format();
+  } catch {
+    throw new Error("Use a valid IANA timezone.");
+  }
+  if (
+    v.type === "FUTURE" &&
+    (!v.expiry ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(v.expiry) ||
+      !finite(v.lotSize) ||
+      v.lotSize! <= 0 ||
+      !finite(v.tickSize) ||
+      v.tickSize! <= 0)
+  )
+    throw new Error(
+      "Futures need the exact expiry, lot and tick size; continuous contracts are not execution contracts.",
+    );
+  return {
+    id,
+    name: string(v.name, 1, 120),
+    symbol: string(v.symbol, 1, 60),
+    providerSymbol: symbol,
+    market: v.market,
+    mic: v.mic,
+    type: v.type,
+    currency: v.currency,
+    unit: string(v.unit, 1, 80),
+    timezone: v.timezone,
+    ...(v.type === "FUTURE"
+      ? { expiry: v.expiry, lotSize: v.lotSize, tickSize: v.tickSize }
+      : {}),
+  };
+}
+export function validateConfig(value: unknown): ProviderConfig {
+  const v = value as ProviderConfig;
+  if (!v || typeof v !== "object")
+    throw new Error("Provider configuration required.");
+  const p = providerId(v.provider);
+  const r = v.rights as Rights;
+  if (
+    !r ||
+    typeof r !== "object" ||
+    ["display", "analysis", "storage", "redistribution", "verified"].some(
+      (k) => typeof r[k as keyof Rights] !== "boolean",
+    ) ||
+    !Number.isInteger(r.cacheSeconds) ||
+    (r.derivedDisplay !== undefined && typeof r.derivedDisplay !== "boolean") ||
+    r.cacheSeconds < 0 ||
+    r.cacheSeconds > 900 ||
+    !/^\d{4}-\d{2}-\d{2}T/.test(r.expiresAt) ||
+    !Number.isFinite(Date.parse(r.expiresAt))
+  )
+    throw new Error(
+      "Record explicit rights, expiry and a 0–900 second cache allowance.",
+    );
+  const contractReference = string(r.contractReference, 3, 200);
+  if (
+    !Array.isArray(v.instruments) ||
+    v.instruments.length < 1 ||
+    v.instruments.length > 50
+  )
+    throw new Error("Map 1–50 exact licensed instruments.");
+  const instruments = v.instruments.map((i) => validateInstrument(i, p));
+  if (new Set(instruments.map((i) => i.id)).size !== instruments.length)
+    throw new Error("Duplicate instrument mapping.");
+  if (
+    !Array.isArray(v.datasets) ||
+    !v.datasets.length ||
+    v.datasets.some(
+      (d) => !(PROVIDERS[p].datasets as readonly string[]).includes(d),
+    )
+  )
+    throw new Error("Dataset unsupported by this adapter.");
+  if (
+    !Number.isInteger(v.dailyCallLimit) ||
+    v.dailyCallLimit < 1 ||
+    v.dailyCallLimit > 1000 ||
+    !Number.isInteger(v.priority) ||
+    v.priority < 1 ||
+    v.priority > 10 ||
+    typeof v.enabled !== "boolean"
+  )
+    throw new Error("Use a 1–1000 daily call cap and priority 1–10.");
+  return {
+    provider: p,
+    enabled: v.enabled,
+    priority: v.priority,
+    version: Number.isInteger(v.version) && v.version >= 0 ? v.version : 0,
+    rights: {
+      display: r.display,
+      analysis: r.analysis,
+      storage: r.storage,
+      redistribution: r.redistribution,
+      derivedDisplay: r.derivedDisplay === true,
+      verified: r.verified,
+      cacheSeconds: r.cacheSeconds,
+      expiresAt: r.expiresAt,
+      contractReference,
+    },
+    instruments,
+    datasets: [...new Set(v.datasets)],
+    dailyCallLimit: v.dailyCallLimit,
+    lastWrite: string(v.lastWrite, 16, 80),
+  };
+}
+export function rightsActive(
+  config: ProviderConfig,
+  need: "display" | "analysis" | "storage",
+  now = Date.now(),
+) {
+  return (
+    config.enabled &&
+    config.rights.verified &&
+    config.rights[need] &&
+    Date.parse(config.rights.expiresAt) > now
+  );
+}
+export function secretFrom(
+  provider: ProviderId,
+  environment: Record<string, unknown>,
+): string | null {
+  const value = environment[PROVIDERS[provider].secret];
+  return typeof value === "string" &&
+    value !== "demo" &&
+    /^\S{8,2048}$/.test(value)
+    ? value
+    : null;
+}
+export class ProviderFailure extends Error {
+  constructor(
+    public code:
+      "AUTH_FAILED" | "RATE_LIMITED" | "PROVIDER_DOWN" | "INVALID_DATA",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+export async function fetchProviderJson(
+  url: URL,
+  headers: Record<string, string>,
+  fetcher: typeof fetch = fetch,
+) {
+  if (
+    !["eodhd.com", "history.truedata.in"].includes(url.hostname) ||
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.port
+  )
+    throw new ProviderFailure(
+      "INVALID_DATA",
+      "Provider address is not permitted.",
+    );
+  const controller = new AbortController(),
+    timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetcher(url.toString(), {
+      headers: { Accept: "application/json", ...headers },
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    if (response.status === 401 || response.status === 403)
+      throw new ProviderFailure(
+        "AUTH_FAILED",
+        "Provider rejected authentication or the dataset entitlement.",
+      );
+    if (response.status === 429)
+      throw new ProviderFailure(
+        "RATE_LIMITED",
+        "Provider request quota reached.",
+      );
+    if (
+      !response.ok ||
+      response.redirected ||
+      response.status >= 300 ||
+      (response.url && new URL(response.url).href !== url.href)
+    )
+      throw new ProviderFailure(
+        "PROVIDER_DOWN",
+        "Provider is unavailable or changed its address.",
+      );
+    if (Number(response.headers.get("content-length") || 0) > 800000)
+      throw new ProviderFailure(
+        "INVALID_DATA",
+        "Provider response exceeds the data budget.",
+      );
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > 800000) {
+        await reader.cancel();
+        throw new Error();
+      }
+      chunks.push(value);
+    }
+    const all = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      all.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return JSON.parse(new TextDecoder("utf8", { fatal: true }).decode(all));
+  } catch (e) {
+    if (e instanceof ProviderFailure) throw e;
+    throw new ProviderFailure(
+      "PROVIDER_DOWN",
+      "Provider response could not be verified. Retry later.",
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function date(v: unknown, now: number): string {
+  if (
+    typeof v !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(v) ||
+    !Number.isFinite(Date.parse(v)) ||
+    new Date(v).toISOString().slice(0, 10) !== v ||
+    Date.parse(v) > now
+  )
+    throw new ProviderFailure("INVALID_DATA", "Invalid or future source date.");
+  return v;
+}
+export function normalizeEod(value: unknown, now = Date.now()): Candle[] {
+  if (!Array.isArray(value) || value.length > 1500)
+    throw new ProviderFailure("INVALID_DATA", "Invalid EOD history response.");
+  const rows = value
+    .map((v) => {
+      if (
+        !v ||
+        !["open", "high", "low", "close"].every(
+          (k) => finite(v[k]) && v[k] > 0,
+        ) ||
+        v.high < Math.max(v.open, v.close) ||
+        v.low > Math.min(v.open, v.close) ||
+        v.low > v.high ||
+        (v.volume != null && (!finite(v.volume) || v.volume < 0)) ||
+        (v.adjusted_close != null &&
+          (!finite(v.adjusted_close) || v.adjusted_close <= 0))
+      )
+        throw new ProviderFailure(
+          "INVALID_DATA",
+          "Invalid OHLC, volume or adjustment.",
+        );
+      return {
+        date: date(v.date, now),
+        open: v.open,
+        high: v.high,
+        low: v.low,
+        close: v.close,
+        volume: v.volume ?? null,
+        adjustedClose: v.adjusted_close ?? null,
+        openInterest: null,
+        knownAt: new Date(now).toISOString(),
+        adjustment: "RAW_OHLC_ADJUSTED_CLOSE" as const,
+        provider: "EODHD",
+      };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (new Set(rows.map((r) => r.date)).size !== rows.length)
+    throw new ProviderFailure("INVALID_DATA", "Duplicate source date.");
+  return rows;
+}
+export function normalizeTrueData(value: unknown, now = Date.now()): Candle[] {
+  const v = value as { status?: unknown; records?: unknown[][] };
+  if (
+    !v ||
+    v.status !== "Success" ||
+    !Array.isArray(v.records) ||
+    v.records.length > 1501
+  )
+    throw new ProviderFailure(
+      "INVALID_DATA",
+      "TrueData did not return a successful bounded history.",
+    );
+  const rows = v.records.slice(1).map((r) => {
+    if (!Array.isArray(r) || r.length < 6 || typeof r[0] !== "string")
+      throw new ProviderFailure("INVALID_DATA", "Invalid TrueData record.");
+    return {
+      date: r[0].slice(0, 10),
+      open: r[1],
+      high: r[2],
+      low: r[3],
+      close: r[4],
+      volume: r[5],
+      oi: r[6],
+    };
+  });
+  const out = normalizeEod(rows, now);
+  return out.map((r) => {
+    const oi = rows.find((v) => v.date === r.date)?.oi;
+    if (
+      oi != null &&
+      (typeof oi !== "number" || !Number.isFinite(oi) || oi < 0)
+    )
+      throw new ProviderFailure("INVALID_DATA", "Invalid open interest.");
+    return {
+      ...r,
+      adjustment: "RAW",
+      openInterest: typeof oi === "number" ? oi : null,
+      provider: "TrueData",
+    };
+  });
+}
+export async function providerCandles(
+  config: ProviderConfig,
+  instrument: Instrument,
+  secret: string,
+  fetcher: typeof fetch = fetch,
+  now = Date.now(),
+) {
+  if (instrument.expiry && Date.parse(instrument.expiry + "T23:59:59Z") < now)
+    throw new ProviderFailure(
+      "INVALID_DATA",
+      "Expired contract; select a verified current contract.",
+    );
+  const to = new Date(now).toISOString().slice(0, 10),
+    from = new Date(now - 370 * 86400000).toISOString().slice(0, 10);
+  let url: URL,
+    headers: Record<string, string> = {};
+  if (config.provider === "EODHD") {
+    url = new URL(
+      "https://eodhd.com/api/eod/" +
+        encodeURIComponent(instrument.providerSymbol),
+    );
+    url.search = new URLSearchParams({
+      api_token: secret,
+      fmt: "json",
+      period: "d",
+      order: "a",
+      from,
+      to,
+    }).toString();
+  } else {
+    url = new URL("https://history.truedata.in/getbars");
+    const td = (v: string, end: boolean) =>
+      v.replaceAll("-", "").slice(2) + (end ? "T23:59:59" : "T00:00:00");
+    url.search = new URLSearchParams({
+      symbol: instrument.providerSymbol,
+      from: td(from, false),
+      to: td(to, true),
+      interval: "eod",
+      response: "json",
+    }).toString();
+    headers = { Authorization: "Bearer " + secret };
+  }
+  const data = await fetchProviderJson(url, headers, fetcher);
+  return config.provider === "EODHD"
+    ? normalizeEod(data, now)
+    : normalizeTrueData(data, now);
+}
+export async function providerFundamentals(
+  instrument: Instrument,
+  secret: string,
+  fetcher: typeof fetch = fetch,
+) {
+  const url = new URL(
+    "https://eodhd.com/api/v1.1/fundamentals/" +
+      encodeURIComponent(instrument.providerSymbol),
+  );
+  url.search = new URLSearchParams({
+    api_token: secret,
+    fmt: "json",
+    filter: "Financials",
+  }).toString();
+  const value = (await fetchProviderJson(url, {}, fetcher)) as Record<
+    string,
+    unknown
+  >;
+  return normalizeStatements(value, instrument.currency);
+}
+export function normalizeStatements(
+  value: unknown,
+  currency: string,
+): Statement[] {
+  if (!value || typeof value !== "object")
+    throw new ProviderFailure("INVALID_DATA", "Invalid financial statements.");
+  const v = value as Record<string, unknown>,
+    root = (v.Financials ?? v) as Record<string, unknown>;
+  const out: Statement[] = [];
+  for (const [key, kind] of [
+    ["Income_Statement", "Income"],
+    ["Balance_Sheet", "Balance sheet"],
+    ["Cash_Flow", "Cash flow"],
+  ] as const) {
+    const section = root[key] as Record<string, unknown> | undefined;
+    if (!section) continue;
+    for (const frequency of ["quarterly", "yearly"]) {
+      const periods = section[frequency];
+      if (!periods || typeof periods !== "object") continue;
+      for (const [period, raw] of Object.entries(periods).slice(0, 12)) {
+        if (
+          !/^\d{4}-\d{2}-\d{2}$/.test(period) ||
+          !Number.isFinite(Date.parse(period)) ||
+          new Date(period).toISOString().slice(0, 10) !== period ||
+          Date.parse(period) > Date.now() ||
+          !raw ||
+          typeof raw !== "object"
+        )
+          continue;
+        const r = raw as Record<string, unknown>,
+          values: Record<string, number | null> = {};
+        for (const field of [
+          "totalRevenue",
+          "netIncome",
+          "grossProfit",
+          "operatingIncome",
+          "totalAssets",
+          "totalLiab",
+          "totalStockholderEquity",
+          "shortLongTermDebtTotal",
+          "totalCashFromOperatingActivities",
+          "capitalExpenditures",
+          "freeCashFlow",
+        ]) {
+          const n = r[field];
+          if (n !== undefined)
+            values[field] =
+              (typeof n === "number" ||
+                (typeof n === "string" && n.trim() !== "")) &&
+              Number.isFinite(Number(n))
+                ? Number(n)
+                : null;
+        }
+        out.push({
+          kind,
+          period: period + " · " + frequency,
+          currency:
+            typeof r.currency_symbol === "string" &&
+            /^[A-Z]{3}$/.test(r.currency_symbol)
+              ? r.currency_symbol
+              : "UNKNOWN",
+          basis: "Unspecified provider basis",
+          qualityNotes: [
+            "Standalone/consolidated basis not supplied; do not infer comparability.",
+            "Filing date may be unavailable; missing/invalid/future publication dates are null and cannot support point-in-time use.",
+          ],
+          knownAt:
+            typeof r.filing_date === "string" &&
+            /^\d{4}-\d{2}-\d{2}$/.test(r.filing_date) &&
+            Number.isFinite(Date.parse(r.filing_date)) &&
+            new Date(r.filing_date).toISOString().slice(0, 10) ===
+              r.filing_date &&
+            Date.parse(r.filing_date) <= Date.now() &&
+            r.filing_date >= period
+              ? r.filing_date
+              : null,
+          values,
+        });
+      }
+    }
+  }
+  void currency;
+  return out.sort((a, b) => b.period.localeCompare(a.period));
+}
+export function statementMetrics(statements: Statement[]): Fundamental[] {
+  const income = statements.find((s) => s.kind === "Income");
+  return income
+    ? Object.entries(income.values).map(([metric, value]) => ({
+        metric,
+        value,
+        unit: income.currency,
+        period: income.period,
+        knownAt: income.knownAt,
+        basis: income.basis,
+      }))
+    : [];
+}
+export async function providerNews(
+  instrument: Instrument,
+  secret: string,
+  fetcher: typeof fetch = fetch,
+): Promise<ResearchEvent[]> {
+  const url = new URL("https://eodhd.com/api/news");
+  url.search = new URLSearchParams({
+    api_token: secret,
+    fmt: "json",
+    s: instrument.providerSymbol,
+    limit: "20",
+  }).toString();
+  const value = await fetchProviderJson(url, {}, fetcher);
+  if (!Array.isArray(value) || value.length > 20)
+    throw new ProviderFailure("INVALID_DATA", "Invalid news response.");
+  return value.flatMap((v) => {
+    try {
+      const link = new URL(v.link);
+      if (
+        link.protocol !== "https:" ||
+        typeof v.title !== "string" ||
+        !Number.isFinite(Date.parse(v.date))
+      )
+        return [];
+      return [
+        {
+          title: v.title.slice(0, 240),
+          date: v.date,
+          sourceUrl: link.href,
+          type: "Provider news · publisher link",
+        },
+      ];
+    } catch {
+      return [];
+    }
+  });
+}

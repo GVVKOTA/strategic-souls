@@ -1,0 +1,354 @@
+/* X1 presentation only. Color values belong to the canonical theme token map. */
+.x1-eclipse-intro {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: max(24px, env(safe-area-inset-top)) 20px
+    max(24px, env(safe-area-inset-bottom));
+  overflow: hidden;
+  isolation: isolate;
+  pointer-events: none;
+  visibility: hidden;
+  background: var(--x1-bg);
+  color: var(--x1-text-primary);
+  contain: layout paint;
+}
+
+/* A pre-paint head guard sets this attribute for a session already seen. */
+html[data-x1-intro-seen] .x1-eclipse-intro:not([data-preview="true"]) {
+  display: none;
+}
+
+/* Without CSS animation support the optional screen stays hidden. If React fails,
+   this one-shot lifetime still removes the black screen within 1.1 seconds. */
+@supports (animation-name: x1-intro-lifetime) {
+  .x1-eclipse-intro {
+    visibility: visible;
+    animation: x1-intro-lifetime 1100ms linear both;
+  }
+  .x1-eclipse-intro[data-phase="exit"] {
+    animation: x1-intro-exit 90ms ease-out both;
+  }
+}
+
+.x1-eclipse-skip {
+  position: absolute;
+  top: max(16px, env(safe-area-inset-top));
+  right: max(16px, env(safe-area-inset-right));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--x1-divider-strong);
+  border-radius: 8px;
+  background: var(--x1-bg);
+  color: var(--x1-text-secondary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.x1-eclipse-skip:focus-visible {
+  outline: 3px double var(--x1-text-primary);
+  outline-offset: 4px;
+}
+.x1-eclipse-scene {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  width: min(100%, 520px);
+  transform: translateY(-8px);
+}
+.x1-eclipse-disc {
+  flex: none;
+  width: 128px;
+  height: 128px;
+  overflow: visible;
+}
+.x1-eclipse-corona {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1px;
+  opacity: 0.2;
+  transform-origin: 80px 80px;
+  animation: x1-eclipse-corona-enter 480ms ease-out both;
+}
+.x1-eclipse-corona-outer {
+  stroke-width: 0.7px;
+  opacity: 0.08;
+}
+.x1-eclipse-limb {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4px;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  transform: rotate(-90deg);
+  transform-origin: 80px 80px;
+  animation: x1-eclipse-limb-enter 500ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+.x1-eclipse-shadow {
+  fill: var(--x1-bg);
+}
+.x1-eclipse-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 55px;
+  color: var(--x1-text-primary);
+  animation: x1-intro-copy-enter 180ms ease-out 500ms both;
+}
+/* These proportions and text are retained from the existing approved V3 wordmark. */
+.x1-eclipse-existing-mark {
+  width: 41px;
+  flex: 0 0 41px;
+  font:
+    44px/1 "Space Grotesk",
+    sans-serif;
+  letter-spacing: -6px;
+}
+.x1-eclipse-existing-mark span {
+  color: inherit;
+}
+.x1-eclipse-brand-stack small {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--x1-text-secondary);
+  font-size: 7px;
+  line-height: 1.4;
+  letter-spacing: 1.3px;
+  white-space: nowrap;
+}
+.x1-eclipse-brand-stack b {
+  display: block;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 21px;
+  font-weight: 500;
+  line-height: 1.08;
+  letter-spacing: 1.2px;
+}
+.x1-eclipse-brand-stack b span {
+  margin-left: 4px;
+  font-size: 14px;
+}
+h1.x1-eclipse-title {
+  margin: 2px 0 0;
+  color: var(--x1-title-blue);
+  font-family: "Space Grotesk", sans-serif;
+  font-size: clamp(20px, 4.4vw, 30px);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  text-align: center;
+  overflow-wrap: anywhere;
+  animation: x1-intro-copy-enter 180ms ease-out 700ms both;
+}
+.x1-eclipse-title span {
+  white-space: nowrap;
+}
+
+/* Opt-in, mount-time presentation classes; never assign them to updating prices. */
+.x1-dashboard {
+  animation: x1-dashboard-enter 220ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+.x1-tab-panel {
+  animation: x1-tab-enter 150ms ease-out backwards;
+}
+.x1-card-enter {
+  --x1-stagger: 0ms;
+  animation: x1-card-enter 210ms ease-out backwards;
+  animation-delay: clamp(0ms, var(--x1-stagger), 100ms);
+}
+.x1-card-enter:nth-child(2) {
+  --x1-stagger: 30ms;
+}
+.x1-card-enter:nth-child(3) {
+  --x1-stagger: 60ms;
+}
+.x1-card-enter:nth-child(4) {
+  --x1-stagger: 90ms;
+}
+.x1-card-enter:nth-child(n + 5) {
+  --x1-stagger: 100ms;
+}
+.x1-modal-enter {
+  animation: x1-modal-enter 180ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+.x1-motion-button {
+  transition: transform 120ms ease-out;
+}
+.x1-motion-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.x1-save-confirmed .x1-save-check-line {
+  fill: none;
+  stroke: var(--x1-text-primary);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: x1-save-check 460ms ease-out both;
+}
+.x1-super-confirmed {
+  display: inline-flex;
+  animation: x1-super-pop 300ms ease-out both;
+}
+.x1-super-cleared {
+  display: inline-flex;
+  animation: x1-super-clear 220ms ease-out both;
+}
+
+@keyframes x1-intro-lifetime {
+  0%,
+  90% {
+    opacity: 1;
+    visibility: visible;
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+@keyframes x1-intro-exit {
+  from {
+    opacity: 1;
+    visibility: visible;
+  }
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+@keyframes x1-eclipse-corona-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+@keyframes x1-eclipse-limb-enter {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes x1-intro-copy-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes x1-dashboard-enter {
+  from {
+    opacity: 0.3;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes x1-tab-enter {
+  from {
+    opacity: 0.65;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes x1-card-enter {
+  from {
+    opacity: 0.4;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes x1-modal-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes x1-save-check {
+  0%,
+  15% {
+    stroke-dashoffset: 1;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes x1-super-pop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.18);
+  }
+  75% {
+    transform: scale(0.97);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes x1-super-clear {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(0.9);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (max-width: 360px) {
+  .x1-eclipse-scene {
+    gap: 24px;
+  }
+  h1.x1-eclipse-title {
+    font-size: 20px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .x1-eclipse-intro {
+    display: none !important;
+  }
+  .x1-app *,
+  .x1-app *::before,
+  .x1-app *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+  .x1-dashboard,
+  .x1-tab-panel,
+  .x1-card-enter,
+  .x1-modal-enter,
+  .x1-super-confirmed,
+  .x1-super-cleared {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .x1-save-confirmed .x1-save-check-line {
+    stroke-dashoffset: 0 !important;
+  }
+}

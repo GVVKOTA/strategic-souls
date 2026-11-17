@@ -1,0 +1,400 @@
+/* X2 layout only; canonical colour values remain in globals.css. */
+.x1-app {
+  font-size: 0.9375rem;
+  color: var(--x1-text-primary);
+  overflow-wrap: anywhere;
+}
+.x1-app *,
+.x1-app *::before,
+.x1-app *::after {
+  min-width: 0;
+}
+.x1-app .x1-topbar {
+  height: 68px;
+  min-height: 68px;
+  display: flex;
+  gap: 16px;
+  padding: 10px 30px;
+  align-items: center;
+}
+.x2-header-logo {
+  display: flex;
+  flex: 0 0 40px;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+}
+.x2-header-logo img,
+.x1-brand img {
+  display: block;
+  object-fit: contain;
+  filter: grayscale(1);
+}
+.x1-brand {
+  justify-content: center;
+  margin-bottom: 30px;
+}
+.x1-app .x1-sidebar {
+  max-height: 100dvh;
+  overflow-y: auto;
+}
+@media (min-width: 721px) and (max-height: 600px) {
+  .x1-app .x1-sidebar {
+    padding-block: 12px;
+  }
+  .x1-app .x1-brand {
+    min-height: 44px;
+    margin-bottom: 12px;
+  }
+  .x1-app .x1-sidebar nav a {
+    min-height: 48px;
+    padding-block: 10px;
+  }
+  .x1-app .x1-sidebar nav a small {
+    display: none;
+  }
+}
+.x2-omnisearch {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--x1-divider);
+  background: var(--x1-surface-1);
+  border-radius: 12px;
+  max-width: 660px;
+  flex: 1;
+  margin-inline: auto;
+  padding: 0 12px;
+  min-height: 44px;
+}
+.x2-omnisearch input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline-offset: 2px;
+  background: transparent;
+  color: var(--x1-text-primary);
+  height: 42px;
+  font-size: 0.875rem;
+}
+.x2-omnisearch input::placeholder {
+  color: var(--x1-text-muted);
+}
+.x2-omnisearch button {
+  min-height: 44px;
+  min-width: 34px;
+}
+.x2-search-results {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 8px);
+  background: var(--x1-surface-2);
+  border: 1px solid var(--x1-divider-strong);
+  border-radius: 12px;
+  padding: 10px;
+  z-index: 65;
+  max-height: 65dvh;
+  overflow: auto;
+  box-shadow: 0 14px 30px rgb(0 0 0 / 0.5);
+}
+.x2-search-results > button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  gap: 10px;
+  padding: 10px;
+  border-bottom: 1px solid var(--x1-divider);
+}
+.x2-search-results small {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--x1-text-muted);
+}
+.x2-search-results strong {
+  font-weight: 500;
+}
+.x2-search-results p {
+  font-size: 0.875rem;
+  margin: 12px 4px;
+}
+.x2-scope {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.75rem;
+  color: var(--x1-text-secondary);
+}
+.x2-scope select {
+  min-height: 40px;
+  background: var(--x1-surface-1);
+  border: 1px solid var(--x1-divider);
+  border-radius: 6px;
+  color: inherit;
+  padding: 4px 10px;
+}
+.x1-app .x1-main {
+  max-width: 1600px;
+  width: 100%;
+  margin-inline: auto;
+  padding-top: 0;
+}
+.x1-app .x1-page-title {
+  margin: 22px 0 20px;
+  gap: 12px;
+  align-items: center;
+}
+.x1-app .x1-page-title h1 {
+  font-size: clamp(1.35rem, 2.7vw, 2.1rem);
+  line-height: 1.25;
+  letter-spacing: -0.035em;
+  margin-bottom: 4px;
+}
+.x1-app .x1-page-title .x1-kicker {
+  display: none;
+}
+.x1-app .x1-page-title p {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin-bottom: 0;
+}
+.x1-app .x1-page-title > div {
+  position: relative;
+  padding-right: 38px;
+}
+.x2-tagline {
+  color: var(--x1-text-secondary);
+}
+.x1-app .x1-panel-head h2 {
+  font-size: clamp(1.1rem, 1.4vw, 1.3rem);
+  line-height: 1.35;
+}
+.x2-scroll-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-bottom: 1px solid var(--x1-divider);
+}
+.x2-scroll-tabs > button {
+  min-height: 44px;
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  color: var(--x1-text-secondary);
+}
+.x2-scroll-tabs > button:disabled {
+  opacity: 0.18;
+}
+.x1-app .x2-scroll-tabs .x1-subnav {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  white-space: nowrap;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  scrollbar-width: none;
+}
+.x1-app .x2-scroll-tabs .x1-subnav > button {
+  min-height: 48px;
+  padding: 9px 13px;
+  font-size: 0.8125rem;
+  flex: 0 0 auto;
+}
+.x1-app .x1-private-brief {
+  margin-bottom: 16px;
+}
+.x1-app .x1-overview-grid {
+  gap: 18px;
+}
+.x1-app .x1-metrics {
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.x1-app .x1-globe-stage {
+  max-height: 340px;
+}
+.x2-info {
+  display: inline-block;
+  position: relative;
+}
+.x1-app .x2-info {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.x1-page-title .x2-info {
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+.x2-info summary {
+  list-style: none;
+  min-width: 44px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  color: var(--x1-text-secondary);
+}
+.x2-info summary::-webkit-details-marker {
+  display: none;
+}
+.x2-info > div {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  width: min(300px, 78vw);
+  padding: 14px;
+  background: var(--x1-surface-2);
+  border: 1px solid var(--x1-divider-strong);
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgb(0 0 0 / 0.45);
+  z-index: 40;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  color: var(--x1-text-secondary);
+}
+.x2-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.x1-app button[aria-busy="true"] {
+  cursor: progress;
+}
+.x1-app dialog {
+  max-width: min(1120px, calc(100vw - 24px));
+  max-height: calc(100dvh - 28px);
+}
+.x1-app .x1-modal-body {
+  overflow-x: hidden;
+}
+.x1-app textarea {
+  max-width: 100%;
+}
+@media (max-width: 1024px) {
+  .x1-app .x1-topbar {
+    padding-inline: 20px;
+    gap: 10px;
+  }
+  .x1-app .x1-top-source span {
+    display: none;
+  }
+}
+@media (max-width: 680px) {
+  .x1-app .x1-topbar {
+    height: 64px;
+    min-height: 64px;
+    gap: 6px;
+    padding: 8px 12px;
+  }
+  .x2-header-logo {
+    flex-basis: 44px;
+    min-width: 44px;
+  }
+  .x2-header-logo img {
+    width: 44px;
+    height: 44px;
+  }
+  .x2-omnisearch {
+    border-radius: 10px;
+    gap: 7px;
+    padding-inline: 9px;
+  }
+  .x2-omnisearch input {
+    font-size: 0.8125rem;
+  }
+  .x1-app .x1-top-source {
+    display: none;
+  }
+  .x1-app .x1-account {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 36px;
+    min-width: 36px;
+  }
+  .x1-app .x1-main {
+    padding: 0 16px 94px;
+  }
+  .x1-app .x1-page-title {
+    margin: 18px 0 16px;
+  }
+  .x1-app .x1-page-title h1 {
+    font-size: 1.5rem;
+  }
+  .x1-app .x1-page-title > div {
+    padding-right: 26px;
+  }
+  .x1-app .x1-page-title .x1-secondary {
+    font-size: 0.75rem;
+    padding: 8px 10px;
+    min-height: 44px;
+  }
+  .x1-app .x2-scroll-tabs .x1-subnav > button {
+    padding: 8px;
+    font-size: 0.75rem;
+  }
+  .x2-scroll-tabs > button {
+    flex-basis: 20px;
+    min-width: 20px;
+  }
+  .x1-app .x1-metrics {
+    gap: 10px;
+  }
+  .x1-app .x1-globe-stage {
+    height: 280px;
+    max-height: 280px;
+  }
+  .x1-app .x1-panel {
+    padding: 18px 16px;
+  }
+  .x1-app .x1-dashboard-strategy .x1-panel {
+    padding: 20px 16px;
+  }
+  .x1-app .x1-panel-head {
+    gap: 10px;
+  }
+  .x2-search-results {
+    position: fixed;
+    top: 68px;
+    left: 12px;
+    right: 12px;
+    max-height: 65dvh;
+  }
+  .x1-app .x1-community-grid {
+    gap: 18px;
+  }
+  .x1-app .x1-modal {
+    padding: 18px 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .x1-app *,
+  .x1-app *::before,
+  .x1-app *::after {
+    scroll-behavior: auto !important;
+  }
+}
+@media (forced-colors: active) {
+  .x2-omnisearch,
+  .x2-search-results,
+  .x2-info > div {
+    border: 1px solid CanvasText;
+  }
+}
+
+.x2-eclipse-approved-logo {
+  object-fit: contain;
+  filter: grayscale(1);
+  width: 72px;
+  height: 72px;
+}
