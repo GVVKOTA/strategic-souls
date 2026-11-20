@@ -6,8 +6,8 @@ import { configureToolEnvironment } from "./operations/scripts/tool-environment.
 import { sites } from "./operations/scripts/vite/sites-vite-plugin";
 import { connectorPreview } from "./operations/scripts/vite/connector-preview-plugin.mjs";
 
-const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
-  "00000000-0000-4000-8000-000000000000";
+const CLOUDFLARE_D1_DATABASE_NAME = "ss";
+const CLOUDFLARE_D1_DATABASE_ID = "1cda2b05-6b99-4d04-896f-b3542ad2ce7f";
 
 const { d1, r2 } = hostingConfig;
 
@@ -22,8 +22,8 @@ const localBindingConfig = {
     ? [
         {
           binding: d1,
-          database_name: "site-creator-d1",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_name: CLOUDFLARE_D1_DATABASE_NAME,
+          database_id: CLOUDFLARE_D1_DATABASE_ID,
         },
       ]
     : [],
