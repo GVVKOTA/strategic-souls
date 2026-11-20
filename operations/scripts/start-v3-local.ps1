@@ -2,8 +2,8 @@ param([switch]$StartSupabase)
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location -LiteralPath $projectRoot
-$manifest=Get-Content -LiteralPath '.openai/hosting.json' -Raw | ConvertFrom-Json
-if($manifest.project_id -ne 'appgprj_6ae0ae7364a481919dfb1af2f4fe17f0'){throw 'Existing Site identity mismatch. Nothing started.'}
+$manifest=Get-Content -LiteralPath 'package.json' -Raw | ConvertFrom-Json
+if($manifest.name -ne 'strategic-souls-private-research'){throw 'Project identity mismatch. Nothing started.'}
 if(-not (Test-Path -LiteralPath 'node_modules')){& pnpm install --frozen-lockfile;if($LASTEXITCODE -ne 0){throw 'Dependency installation failed.'}}
 if($StartSupabase){
  if(-not (Get-Command docker -ErrorAction SilentlyContinue)){throw 'Container engine is unavailable. Complete operations/scripts/setup-windows-v3.ps1 first.'}

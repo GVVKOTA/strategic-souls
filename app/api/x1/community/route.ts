@@ -1,4 +1,4 @@
-import { getChatGPTUser } from '../../../../backend/auth/chatgpt-auth';
+import { getAuthenticatedUser } from '../../../../backend/auth/session';
 import { rate } from '../../../../database/queries/repository';
 import { body, HttpError, protectMutation } from '../../../../backend/middleware/security';
 import { getCommunity, mutateCommunity } from '../../../../backend/services/community/community';
@@ -9,8 +9,8 @@ const json = (value: unknown, status = 200) => Response.json(value, { status, he
 
 async function handle(request: Request): Promise<Response> {
   try {
-    const user = await getChatGPTUser();
-    if (!user) throw new HttpError(401, 'Sign in with ChatGPT to use your private Community.');
+    const user = await getAuthenticatedUser(request);
+    if (!user) throw new HttpError(401, 'Sign in to use your private Community.');
     if (request.method !== 'GET') protectMutation(request, 16384);
     await rate(user.userId + ':x1-community-read', COMMUNITY_LIMITS.requestsPerMinute, 60000);
     const url = new URL(request.url);

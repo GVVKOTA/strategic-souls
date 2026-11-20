@@ -114,9 +114,13 @@ type Editor = {
   changeNote: string;
 };
 export default function Community({
+  authenticated = true,
+  onRequireAuth,
   notify,
   sharedFormula,
 }: {
+  authenticated?: boolean;
+  onRequireAuth?: () => void;
   notify: Notice;
   sharedFormula: string;
 }) {
@@ -197,6 +201,14 @@ export default function Community({
     }
   }
   useEffect(() => {
+    if (!authenticated) {
+      queueMicrotask(() => {
+        setLoading(false);
+        setData(null);
+        setError("");
+      });
+      return;
+    }
     let alive = true;
     api<CommunityState>(
       "/api/x1/community" +
@@ -222,7 +234,7 @@ export default function Community({
     return () => {
       alive = false;
     };
-  }, [groupId, cursor]);
+  }, [authenticated, groupId, cursor]);
   async function mutate(
     input: Record<string, unknown>,
     success = "Saved privately.",
@@ -254,6 +266,38 @@ export default function Community({
   }
   const body = data?.body,
     group = data?.selectedGroup;
+  if (!authenticated) {
+    return (
+      <>
+        <header className="x1-page-title">
+          <div>
+            <h1>Research community</h1>
+          </div>
+        </header>
+        <Panel
+          title="Private research collaboration"
+          kicker="Sign in required"
+        >
+          <Empty
+            title="Join or create private research groups"
+            action={
+              <button
+                className="x1-primary x1-motion-button"
+                onClick={() => onRequireAuth?.()}
+              >
+                Sign in or create account
+                <ArrowRight size={16} />
+              </button>
+            }
+          >
+            Sign in to create your Body profile, share versioned Souls, review
+            revisions, and collaborate in private groups without exposing
+            personal portfolios.
+          </Empty>
+        </Panel>
+      </>
+    );
+  }
   return (
     <>
       <header className="x1-page-title">

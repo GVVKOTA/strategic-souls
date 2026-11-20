@@ -89,7 +89,7 @@ export async function providerSettings(subject: string) {
       };
     }),
     secretSetup:
-      "Insert server-only secrets in the existing Site runtime environment. This page never receives or installs keys.",
+      "Configure server-only secrets in Cloudflare Workers runtime settings (wrangler secret put). This page never receives or installs keys.",
     priceBudget: {
       reserveInr: 3000,
       spendAuthorized: false,

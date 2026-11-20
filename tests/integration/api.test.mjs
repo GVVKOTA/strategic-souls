@@ -72,11 +72,15 @@ const cache = new Map();
 async function load(path) {
   const file = resolve(path);
   if (cache.has(file)) return cache.get(file);
-  if (file.replaceAll("\\", "/").endsWith("/backend/auth/chatgpt-auth.ts")) {
+  if (file.replaceAll("\\", "/").endsWith("/backend/auth/session.ts")) {
     const m = new vm.SyntheticModule(
-      ["getChatGPTUser"],
+      ["getAuthenticatedUser", "clearSessionCookie"],
       function () {
-        this.setExport("getChatGPTUser", async () => currentUser);
+        this.setExport("getAuthenticatedUser", async () => currentUser);
+        this.setExport(
+          "clearSessionCookie",
+          () => "__ss_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+        );
       },
       { context },
     );

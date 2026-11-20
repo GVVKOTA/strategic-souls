@@ -139,11 +139,11 @@ async function load(path) {
   const file = resolve(path);
   if (cache.has(file)) return cache.get(file);
   const normalized = file.replaceAll("\\", "/");
-  if (normalized.endsWith("/backend/auth/chatgpt-auth.ts")) {
+  if (normalized.endsWith("/backend/auth/session.ts")) {
     const m = new vm.SyntheticModule(
-      ["getChatGPTUser"],
+      ["getAuthenticatedUser"],
       function () {
-        this.setExport("getChatGPTUser", async () => currentUser);
+        this.setExport("getAuthenticatedUser", async () => currentUser);
       },
       { context },
     );

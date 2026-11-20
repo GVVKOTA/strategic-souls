@@ -83,6 +83,8 @@ function DeferredGlobe(props: React.ComponentProps<typeof GlobeCanvas>) {
 type Props = {
   data: MarketSnapshot | null;
   workspace: WorkspaceState | null;
+  authenticated?: boolean;
+  onRequireAuth?: () => void;
   reload: () => Promise<void>;
   notify: Notice;
   analyze: (formula?: string, instrumentId?: string) => void;
@@ -101,12 +103,16 @@ export function assetName(id: string, data: MarketSnapshot | null) {
 }
 export function AssetDialog({
   id,
+  authenticated = true,
+  onRequireAuth,
   onClose,
   analyze,
   notify,
 }: {
   id: string;
   data: MarketSnapshot | null;
+  authenticated?: boolean;
+  onRequireAuth?: () => void;
   onClose: () => void;
   analyze: (formula?: string, instrumentId?: string) => void;
   notify: Notice;
@@ -114,7 +120,13 @@ export function AssetDialog({
   return (
     <Modal title="Asset research" onClose={onClose}>
       <Suspense fallback={<p role="status">Loading asset research…</p>}>
-        <AssetTerminal id={id} onAnalyze={analyze} notify={notify} />
+        <AssetTerminal
+          id={id}
+          authenticated={authenticated}
+          onRequireAuth={onRequireAuth}
+          onAnalyze={analyze}
+          notify={notify}
+        />
       </Suspense>
     </Modal>
   );
@@ -158,6 +170,8 @@ function DataCard({
 export default function Global({
   data,
   workspace,
+  authenticated = true,
+  onRequireAuth,
   reload,
   notify,
   analyze,
@@ -226,7 +240,18 @@ export default function Global({
     )
     .slice(0, 40);
   const pendingWrite = useRef<{ signature: string; id: string } | null>(null);
+  const openEditor = (kind: "list" | "portfolio" | "transaction" | "rename") => {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    setEdit(kind);
+  };
   async function mutate(input: Record<string, unknown>) {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
     if (input.requestId) {
       const signature = JSON.stringify({ ...input, requestId: undefined });
       if (pendingWrite.current?.signature !== signature)
@@ -647,10 +672,10 @@ export default function Global({
                     action={
                       <button
                         className="x1-secondary x1-motion-button"
-                        onClick={() => setEdit("list")}
+                        onClick={() => openEditor("list")}
                       >
                         <Plus size={16} />
-                        Create a watchlist
+                        {authenticated ? "Create a watchlist" : "Sign in to create a watchlist"}
                       </button>
                     }
                   >
@@ -694,11 +719,15 @@ export default function Global({
                       <button
                         className="x1-text-button"
                         onClick={() => {
+                          if (!authenticated) {
+                            onRequireAuth?.();
+                            return;
+                          }
                           setPanel("Portfolio");
                           setEdit("portfolio");
                         }}
                       >
-                        Add a manual portfolio
+                        {authenticated ? "Add a manual portfolio" : "Sign in to track a portfolio"}
                         <ArrowRight size={15} />
                       </button>
                     }
@@ -735,7 +764,7 @@ export default function Global({
             action={
               <button
                 className="x1-secondary x1-motion-button"
-                onClick={() => setEdit("list")}
+                onClick={() => openEditor("list")}
               >
                 <Plus size={16} />
                 New list
@@ -931,7 +960,7 @@ export default function Global({
             </div>
             <button
               className="x1-secondary x1-motion-button"
-              onClick={() => setEdit("portfolio")}
+              onClick={() => openEditor("portfolio")}
             >
               <Plus size={16} />
               New portfolio
@@ -1047,9 +1076,9 @@ export default function Global({
                 action={
                   <button
                     className="x1-primary x1-motion-button"
-                    onClick={() => setEdit("portfolio")}
+                    onClick={() => openEditor("portfolio")}
                   >
-                    Create portfolio
+                    {authenticated ? "Create portfolio" : "Sign in to create portfolio"}
                     <ArrowRight size={16} />
                   </button>
                 }

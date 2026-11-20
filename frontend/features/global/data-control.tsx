@@ -272,16 +272,17 @@ export default function DataControl({
           <details open>
             <summary>1 · Secure secret setup</summary>
             <p>
-              Use the existing ChatGPT Site settings → runtime environment. Set
-              the server-only secret <code>{current?.secret}</code>. This page
-              never accepts, stores or returns a provider key.
+              Configure server-only secrets in Cloudflare Workers Settings →
+              Variables and Secrets (or via <code>wrangler secret put</code>).
+              Set the server-only secret <code>{current?.secret}</code>. This
+              page never accepts, stores or returns a provider key.
             </p>
             <p>
               For TrueData this is a current historical-service Bearer token;
               automatic credential/login-token refresh is not claimed. For EODHD
-              use an approved commercial API token. Runtime secret changes
-              require the publication/restart process supported by Sites; this
-              page tests the configuration currently running.
+              use an approved commercial API token. Runtime secret changes take
+              effect on the updated Worker deployment; this page tests the
+              configuration currently running.
             </p>
             <a href={current?.docs} target="_blank" rel="noopener noreferrer">
               Official endpoint documentation

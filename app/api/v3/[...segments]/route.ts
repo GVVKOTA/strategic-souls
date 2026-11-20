@@ -24,7 +24,7 @@ import {
 } from "../../../../backend/services/v3/model";
 import { timestamp, sourceUrl } from "../../../../backend/services/legacy/notebook";
 import { validateHolding } from "../../../../backend/services/legacy/research";
-import { getChatGPTUser } from "../../../../backend/auth/chatgpt-auth";
+import { getAuthenticatedUser } from "../../../../backend/auth/session";
 export const dynamic = "force-dynamic";
 const json = (data: unknown, status = 200, headers?: Headers) => {
   const h = headers ?? new Headers();
@@ -628,7 +628,7 @@ async function handler(request: Request): Promise<Response> {
           503,
           "Legacy handoff is disabled until the verified owner configuration is installed.",
         );
-      const siteUser = await getChatGPTUser();
+      const siteUser = await getAuthenticatedUser(request);
       if (!siteUser || siteUser.userId !== e.LEGACY_SITE_OWNER_SUBJECT)
         throw new HttpError(
           403,

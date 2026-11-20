@@ -1,5 +1,5 @@
 export class HttpError extends Error { status:number; constructor(status:number,message:string){super(message);this.status=status;} }
-export const SITE_ORIGIN="https://strategic-souls-gvv.vishnukota20071005.chatgpt.site";
+export const SITE_ORIGIN="https://strategic-souls.vishnukota20071005.workers.dev";
 /** O(1). Mutations must be same-origin JSON; no cookie-derived form writes. */
 export function protectMutation(request:Request,maxBytes=32768):void{
   const origin=request.headers.get("origin");

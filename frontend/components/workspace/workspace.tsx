@@ -1,4 +1,4 @@
-/* eslint-disable @next/next/no-html-link-for-pages -- Native navigation preserves Sites authentication and the existing archive. */
+/* eslint-disable @next/next/no-html-link-for-pages -- Preserve native document transitions for archive/export routes. */
 "use client";
 import {
   lazy,
@@ -20,6 +20,9 @@ import {
   ArrowRight,
   FolderArchive,
   Settings2,
+  LogIn,
+  LogOut,
+  UserRound,
 } from "lucide-react";
 import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import Global, { AssetDialog } from "../../features/global/dashboard";
@@ -28,13 +31,30 @@ const Community = lazy(() => import("../../features/community/dashboard"));
 import EclipseIntro from "./eclipse-intro";
 import UniversalSearch from "./universal-search";
 const DataControl = lazy(() => import("../../features/global/data-control"));
+import AuthPanel, {
+  type AuthSessionResponse,
+} from "../../features/auth/auth-panel";
 import { api, Modal, type WorkspaceState } from "./shared";
+
 type View = "Global" | "Strategy" | "Community";
+
+function userInitials(name: string | null | undefined): string {
+  const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "SS";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 export default function X1Workspace() {
   const [view, setView] = useState<View>("Global"),
     [data, setData] = useState<MarketSnapshot | null>(null),
     [workspace, setWorkspace] = useState<WorkspaceState | null>(null),
+    [authenticated, setAuthenticated] = useState<boolean | null>(null),
+    [authUser, setAuthUser] = useState<AuthSessionResponse["user"]>(null),
+    [googleEnabled, setGoogleEnabled] = useState(false),
     [accepted, setAccepted] = useState<boolean | null>(null),
+    [authModal, setAuthModal] = useState<"signin" | "register" | null>(null),
+    [accountModal, setAccountModal] = useState(false),
     [message, setMessage] = useState<{ text: string; error: boolean } | null>(
       null,
     ),
@@ -51,8 +71,18 @@ export default function X1Workspace() {
     [dataControl, setDataControl] = useState(false),
     [isOwner, setIsOwner] = useState(false),
     [refreshing, setRefreshing] = useState(false);
+
   const refreshLock = useRef(false);
   const researchDirty = useRef(false);
+  const authRef = useRef({ authenticated: false, accepted: false });
+
+  useEffect(() => {
+    authRef.current = {
+      authenticated: authenticated === true,
+      accepted: accepted === true,
+    };
+  }, [authenticated, accepted]);
+
   useEffect(() => {
     const dirty = (event: Event) => {
       researchDirty.current = !!(event as CustomEvent<boolean>).detail;
@@ -60,27 +90,79 @@ export default function X1Workspace() {
     window.addEventListener("x2-research-dirty", dirty);
     return () => window.removeEventListener("x2-research-dirty", dirty);
   }, []);
+
   const notify = useCallback(
     (text: string, error = false) => setMessage({ text, error }),
     [],
   );
+
   const reload = useCallback(async () => {
     const state = await api<WorkspaceState>("/api/x1/workspace");
     setWorkspace(state);
   }, []);
+
+  const loadMarket = useCallback(async (usePrivate: boolean) => {
+    const endpoint = usePrivate
+      ? "/api/x2/data?view=overview"
+      : "/api/markets/public";
+    return api<MarketSnapshot>(endpoint);
+  }, []);
+
   const refreshData = useCallback(async () => {
     if (refreshLock.current) return;
     refreshLock.current = true;
     setRefreshing(true);
     try {
-      setData(await api<MarketSnapshot>("/api/x2/data?view=overview"));
+      const usePrivate =
+        authRef.current.authenticated && authRef.current.accepted;
+      setData(await loadMarket(usePrivate));
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
       refreshLock.current = false;
       setRefreshing(false);
     }
-  }, [notify]);
+  }, [loadMarket, notify]);
+
+  const hydrateForSession = useCallback(
+    async (session: AuthSessionResponse, aliveCheck: () => boolean) => {
+      setAuthenticated(session.authenticated);
+      setAuthUser(session.user);
+      setGoogleEnabled(!!session.googleEnabled);
+      setIsOwner(!!session.isOwner);
+      setAccepted(session.authenticated ? session.accepted : null);
+      setSessionError("");
+
+      const canLoadPrivate = session.authenticated && session.accepted;
+      if (canLoadPrivate) {
+        const [ws, market] = await Promise.allSettled([
+          api<WorkspaceState>("/api/x1/workspace"),
+          loadMarket(true),
+        ]);
+        if (!aliveCheck()) return;
+        if (ws.status === "fulfilled") setWorkspace(ws.value);
+        if (market.status === "fulfilled") setData(market.value);
+        else {
+          try {
+            const fallback = await loadMarket(false);
+            if (aliveCheck()) setData(fallback);
+          } catch {
+            if (aliveCheck()) notify(market.reason.message, true);
+          }
+        }
+      } else {
+        setWorkspace(null);
+        try {
+          const pub = await loadMarket(false);
+          if (aliveCheck()) setData(pub);
+        } catch (err) {
+          if (aliveCheck()) notify((err as Error).message, true);
+        }
+      }
+    },
+    [loadMarket, notify],
+  );
+
   useEffect(() => {
     let alive = true;
     queueMicrotask(() => {
@@ -93,32 +175,36 @@ export default function X1Workspace() {
         setStrategyPanel(params.get("panel")!);
       }
     });
-    api<{ isOwner: boolean }>("/api/x2/providers?view=capabilities")
-      .then((r) => {
-        if (alive) setIsOwner(r.isOwner);
+
+    api<AuthSessionResponse>("/api/auth/session")
+      .then((session) => {
+        if (!alive) return;
+        return hydrateForSession(session, () => alive);
       })
-      .catch(() => {});
-    Promise.allSettled([
-      api<{ accepted: boolean }>("/api/session"),
-      api<WorkspaceState>("/api/x1/workspace"),
-      api<MarketSnapshot>("/api/x2/data?view=overview"),
-    ]).then(([session, ws, market]) => {
-      if (!alive) return;
-      if (session.status === "fulfilled") setAccepted(session.value.accepted);
-      else setSessionError(session.reason.message);
-      if (ws.status === "fulfilled") setWorkspace(ws.value);
-      if (market.status === "fulfilled") setData(market.value);
-      else notify(market.reason.message, true);
-    });
+      .catch(async (err) => {
+        if (!alive) return;
+        setAuthenticated(false);
+        setAccepted(null);
+        setSessionError((err as Error).message);
+        try {
+          const pub = await loadMarket(false);
+          if (alive) setData(pub);
+        } catch {
+          /* Public feed error surfaced separately if refresh is retried. */
+        }
+      });
+
     return () => {
       alive = false;
     };
-  }, [notify]);
+  }, [hydrateForSession, loadMarket]);
+
   useEffect(() => {
     if (!message || message.error) return;
     const timer = setTimeout(() => setMessage(null), 6000);
     return () => clearTimeout(timer);
   }, [message]);
+
   useEffect(() => {
     const updated = () => {
       void refreshData();
@@ -126,12 +212,14 @@ export default function X1Workspace() {
     window.addEventListener("x2-data-updated", updated);
     return () => window.removeEventListener("x2-data-updated", updated);
   }, [refreshData]);
+
   useEffect(() => {
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") refreshData();
     }, 5 * 60_000);
     return () => clearInterval(timer);
   }, [refreshData]);
+
   function navigate(next: View) {
     if (
       view === "Strategy" &&
@@ -148,6 +236,7 @@ export default function X1Workspace() {
     window.scrollTo({ top: 0, behavior: "instant" });
     return true;
   }
+
   const analyze = (formula = "close > sma(close, 20)", instrumentId = "") => {
     setInitialInstrument(instrumentId);
     setInitialFormula(formula);
@@ -155,6 +244,30 @@ export default function X1Workspace() {
     navigate("Strategy");
     setAsset("");
   };
+
+  async function handleSignOut() {
+    setBusy(true);
+    try {
+      await api("/api/auth/signout", {});
+      setAccountModal(false);
+      setAuthenticated(false);
+      setAuthUser(null);
+      setAccepted(null);
+      setIsOwner(false);
+      setWorkspace(null);
+      try {
+        setData(await loadMarket(false));
+      } catch {
+        /* Keep last official snapshot if refresh fails. */
+      }
+      notify("Signed out safely.");
+    } catch (err) {
+      notify((err as Error).message, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const nav = [
     {
       name: "Global",
@@ -175,11 +288,16 @@ export default function X1Workspace() {
       detail: "Research, together",
     },
   ] as const;
+
+  const isSignedIn = authenticated === true;
+
   return (
     <div className="x1-app">
       <EclipseIntro
         key={introPreview ? "preview" : "normal"}
-        ready={introPreview ? false : accepted !== null || !!sessionError}
+        ready={
+          introPreview ? false : authenticated !== null || !!sessionError
+        }
         preview={introPreview}
         onDismiss={() => setIntroPreview(false)}
       />
@@ -243,6 +361,7 @@ export default function X1Workspace() {
           </a>
           <UniversalSearch
             data={data}
+            authenticated={isSignedIn && accepted === true}
             onAsset={setAsset}
             onCommunity={(query) => {
               navigate("Community");
@@ -282,24 +401,61 @@ export default function X1Workspace() {
             </span>
             <ArrowUpRight size={14} />
           </button>
-          <button
-            className="x1-account"
-            aria-label="GV · Open your Community profile"
-            onClick={() => navigate("Community")}
-          >
-            GV
-          </button>
+          {isSignedIn ? (
+            <button
+              className="x1-account"
+              aria-label={`${authUser?.displayName || "Account"} · Open account controls`}
+              onClick={() => setAccountModal(true)}
+            >
+              {userInitials(authUser?.displayName)}
+            </button>
+          ) : (
+            <button
+              className="x1-secondary x2-signin-trigger"
+              onClick={() => setAuthModal("signin")}
+            >
+              <LogIn size={15} />
+              <span>Sign in</span>
+            </button>
+          )}
         </header>
         <main id="x1-main" tabIndex={-1} className="x1-main">
           {sessionError && (
             <div role="alert" className="x1-callout">
               {sessionError}{" "}
-              <a href="/signin-with-chatgpt?return_to=%2F" target="_top">
-                Sign in with ChatGPT
-              </a>
+              <button
+                className="x1-text-button"
+                onClick={() => setAuthModal("signin")}
+              >
+                Sign in
+              </button>
             </div>
           )}
-          {accepted === false && (
+          {authenticated === false && !sessionError && (
+            <div className="x1-callout x2-guest-banner">
+              <span>
+                Exploring official ECB daily FX, US Treasury yields, the
+                24-exchange globe, and Formula Lab. Sign in or create an account
+                to save watchlists, portfolios, Soul Scans, and Community
+                research.
+              </span>
+              <div className="x1-actions">
+                <button
+                  className="x1-secondary"
+                  onClick={() => setAuthModal("signin")}
+                >
+                  Sign in
+                </button>
+                <button
+                  className="x1-primary"
+                  onClick={() => setAuthModal("register")}
+                >
+                  Create account
+                </button>
+              </div>
+            </div>
+          )}
+          {isSignedIn && accepted === false && (
             <section className="x1-consent">
               <h2>Your private research workspace</h2>
               <p>
@@ -320,6 +476,7 @@ export default function X1Workspace() {
                     });
                     setAccepted(true);
                     await reload();
+                    setData(await loadMarket(true));
                     notify("Workspace enabled for private adult research.");
                   } catch (error) {
                     notify((error as Error).message, true);
@@ -364,6 +521,8 @@ export default function X1Workspace() {
                   key={"global-" + globalPanel}
                   data={data}
                   workspace={workspace}
+                  authenticated={isSignedIn && accepted === true}
+                  onRequireAuth={() => setAuthModal("signin")}
                   reload={reload}
                   notify={notify}
                   analyze={analyze}
@@ -377,6 +536,8 @@ export default function X1Workspace() {
                   key={"strategy-" + initialFormula + "-" + strategyPanel}
                   data={data}
                   workspace={workspace}
+                  authenticated={isSignedIn && accepted === true}
+                  onRequireAuth={() => setAuthModal("signin")}
                   reload={reload}
                   notify={notify}
                   openAsset={setAsset}
@@ -392,7 +553,12 @@ export default function X1Workspace() {
                   }}
                 />
               ) : (
-                <Community notify={notify} sharedFormula={sharedFormula} />
+                <Community
+                  authenticated={isSignedIn && accepted === true}
+                  onRequireAuth={() => setAuthModal("signin")}
+                  notify={notify}
+                  sharedFormula={sharedFormula}
+                />
               )}
             </div>
           </Suspense>
@@ -465,10 +631,94 @@ export default function X1Workspace() {
         <AssetDialog
           id={asset}
           data={data}
+          authenticated={isSignedIn && accepted === true}
+          onRequireAuth={() => {
+            setAsset("");
+            setAuthModal("signin");
+          }}
           onClose={() => setAsset("")}
           analyze={(formula, id) => analyze(formula, id)}
           notify={notify}
         />
+      )}
+      {authModal && (
+        <Modal
+          title={
+            authModal === "register"
+              ? "Create your Strategic Souls account"
+              : "Sign in to Strategic Souls"
+          }
+          onClose={() => setAuthModal(null)}
+        >
+          <AuthPanel
+            initialMode={authModal}
+            googleEnabled={googleEnabled}
+            onAuthenticated={(session) => {
+              setAuthModal(null);
+              void hydrateForSession(session, () => true);
+              notify(
+                session.accepted
+                  ? "Signed in to your private workspace."
+                  : "Signed in. Confirm research notices to enable saving.",
+              );
+            }}
+          />
+        </Modal>
+      )}
+      {accountModal && isSignedIn && (
+        <Modal title="Your account" onClose={() => setAccountModal(false)}>
+          <dl className="x1-details">
+            <div>
+              <dt>Researcher</dt>
+              <dd>{authUser?.displayName || "Researcher"}</dd>
+            </div>
+            <div>
+              <dt>Email</dt>
+              <dd>{authUser?.email || "—"}</dd>
+            </div>
+            <div>
+              <dt>Sign-in method</dt>
+              <dd>
+                {authUser?.authProvider === "google"
+                  ? "Google OAuth"
+                  : "Email & password (Cloudflare D1)"}
+              </dd>
+            </div>
+          </dl>
+          <div className="x1-actions">
+            <button
+              className="x1-secondary x1-motion-button"
+              onClick={() => {
+                setAccountModal(false);
+                navigate("Community");
+              }}
+            >
+              <UserRound size={15} />
+              Community profile
+            </button>
+            <a
+              className="x1-secondary x1-motion-button"
+              href="/api/export"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Export my private data
+              <ArrowUpRight size={15} />
+            </a>
+            <a className="x1-secondary x1-motion-button" href="/legacy">
+              Account settings & archive
+              <ArrowUpRight size={15} />
+            </a>
+            <button
+              className="x1-primary x1-motion-button"
+              disabled={busy}
+              onClick={() => void handleSignOut()}
+            >
+              <LogOut size={15} />
+              {busy ? "Signing out…" : "Sign out"}
+            </button>
+          </div>
+        </Modal>
       )}
       {dataControl && isOwner && (
         <Modal
@@ -497,10 +747,10 @@ export default function X1Workspace() {
               </dd>
             </div>
             <div>
-              <dt>Access</dt>
+              <dt>Authentication</dt>
               <dd>
-                Existing restricted Site audience. Group invites do not grant
-                Site access.
+                Cloudflare Workers + D1 session authentication with HttpOnly
+                cookies. Group invites do not expose private portfolios.
               </dd>
             </div>
             <div>
@@ -512,8 +762,8 @@ export default function X1Workspace() {
             </div>
           </dl>
           <p>
-            Payments, broker execution, public content publishing, external
-            member onboarding and collective evidence are not enabled.
+            Payments, broker execution, public content publishing, and
+            unverified forward probability claims remain disabled.
           </p>
           <div className="x1-actions">
             <button
@@ -533,15 +783,17 @@ export default function X1Workspace() {
             >
               Preview silver eclipse
             </button>
-            <a
-              className="x1-secondary x1-motion-button"
-              href="/api/export"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Export my private data
-              <ArrowUpRight size={15} />
-            </a>
+            {isSignedIn && (
+              <a
+                className="x1-secondary x1-motion-button"
+                href="/api/export"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Export my private data
+                <ArrowUpRight size={15} />
+              </a>
+            )}
             <a className="x1-text-button" href="/legacy">
               Existing research archive
               <ArrowUpRight size={15} />

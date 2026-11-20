@@ -111,7 +111,7 @@ export const documents: Record<string, LegalDoc> = {
     sections: [
       {
         title: "Data stored",
-        body: "Site-specific authenticated ID, display alias, age self-declaration, consent version/time, activity time, rate counters, support requests, private notebook Souls, source URLs and interpretations, review events, strategy drafts, holdings and notes. Email is not stored by this application. Sites and hosting providers may hold separate logs.",
+        body: "Authenticated account ID, normalized email address, salted PBKDF2 password hash (for email accounts), hashed session tokens, display alias, age self-declaration, consent version/time, activity time, rate counters, support requests, private notebook Souls, source URLs and interpretations, review events, strategy drafts, holdings and notes. Cloudflare infrastructure and hosting providers may hold separate operational logs.",
       },
       {
         title: "Use and control",
@@ -250,5 +250,5 @@ releaseGates[4].evidence =
 
 documents.privacy.sections.push({
   title: "X2 research network and erasure",
-  body: "Optional Body profiles, discovery preferences, conversation requests, messages, read state, blocks, reports, bookmarks, notifications, group discussions and private chart layouts are stored in the existing Site database. Messages are server-authorized and are not claimed end-to-end encrypted. Account erasure removes paired conversations, including recipient copies, and owned shared groups only after separate acknowledgement of that impact. Export first. Provider runtime secrets are managed separately in owner-only Sites settings, never in profile fields or messages. Public publishing and paid services remain inactive.",
+  body: "Optional Body profiles, discovery preferences, conversation requests, messages, read state, blocks, reports, bookmarks, notifications, group discussions and private chart layouts are stored in the Cloudflare D1 database. Messages are server-authorized and are not claimed end-to-end encrypted. Account erasure removes paired conversations, including recipient copies, and owned shared groups only after separate acknowledgement of that impact. Export first. Provider runtime secrets are managed separately in owner-only Cloudflare Workers settings, never in profile fields or messages. Public publishing and paid services remain inactive.",
 });

@@ -66,11 +66,11 @@ const cache = new Map();
 async function load(path) {
   const file = resolve(path);
   if (cache.has(file)) return cache.get(file);
-  if (file.replaceAll("\\", "/").endsWith("/backend/auth/chatgpt-auth.ts")) {
+  if (file.replaceAll("\\", "/").endsWith("/backend/auth/session.ts")) {
     const m = new vm.SyntheticModule(
-      ["getChatGPTUser"],
+      ["getAuthenticatedUser"],
       function () {
-        this.setExport("getChatGPTUser", async () => null);
+        this.setExport("getAuthenticatedUser", async () => null);
       },
       { context },
     );

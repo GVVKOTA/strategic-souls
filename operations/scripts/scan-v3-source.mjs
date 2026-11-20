@@ -1,6 +1,6 @@
 /** Pattern scan of Git-distributable text. Does not claim absence of every secret. */
 import {execFileSync} from 'node:child_process';
-import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,existsSync} from 'node:fs';
 import {resolve,extname} from 'node:path';
 const root=process.cwd();
 const files=[...new Set(execFileSync('git',['ls-files','--cached','--others','--exclude-standard','-z'],{encoding:'utf8'}).split('\0').filter(Boolean))];
@@ -16,7 +16,7 @@ const patterns=[
 const findings=[];let count=0;
 for(const name of files){
  if(!['.ts','.tsx','.mts','.js','.jsx','.mjs','.cjs','.json','.py','.sql','.md','.toml','.yml','.yaml','.html','.ps1','.bat'].includes(extname(name)))continue;
- const path=resolve(root,name);if(!path.startsWith(root))throw new Error('Unsafe scan path');
+ const path=resolve(root,name);if(!path.startsWith(root))throw new Error('Unsafe scan path');if(!existsSync(path))continue;
  const value=readFileSync(path,'utf8');count++;
  for(const [rule,re] of patterns)if(re.test(value))findings.push({file:name,rule}); // Never emit a matched value.
 }

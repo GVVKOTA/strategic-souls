@@ -11,10 +11,12 @@ type SocialResults = {
 };
 export default function UniversalSearch({
   data,
+  authenticated = false,
   onAsset,
   onCommunity,
 }: {
   data: MarketSnapshot | null;
+  authenticated?: boolean;
   onAsset: (id: string) => void;
   onCommunity: (query: string) => void;
 }) {
@@ -27,6 +29,7 @@ export default function UniversalSearch({
     ...X2_INSTRUMENTS,
   ]);
   useEffect(() => {
+    if (!authenticated) return;
     let active = true;
     const load = () =>
       api<{ instruments: { id: string; name: string }[] }>(
@@ -43,7 +46,7 @@ export default function UniversalSearch({
       active = false;
       window.removeEventListener("x2-data-updated", load);
     };
-  }, []);
+  }, [authenticated]);
   const q = query.trim();
   const assets = useMemo(() => {
     const all = [...(data?.quotes || []), ...(data?.yields || [])]
@@ -58,7 +61,7 @@ export default function UniversalSearch({
       .slice(0, 8);
   }, [data, q, registry]);
   useEffect(() => {
-    if (q.length < 2 || scope === "assets") {
+    if (!authenticated || q.length < 2 || scope === "assets") {
       return;
     }
     const controller = new AbortController();
@@ -88,7 +91,7 @@ export default function UniversalSearch({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [q, scope]);
+  }, [authenticated, q, scope]);
   const updateQuery = (value: string) => {
     setQuery(value);
     setSocial(null);

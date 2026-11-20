@@ -1,4 +1,4 @@
-import { getChatGPTUser } from "../../../../backend/auth/chatgpt-auth";
+import { getAuthenticatedUser } from "../../../../backend/auth/session";
 import { rate } from "../../../../database/queries/repository";
 import { body, HttpError, protectMutation } from "../../../../backend/middleware/security";
 import { getSocial, mutateSocial } from "../../../../backend/services/community/social";
@@ -13,7 +13,7 @@ const json = (value: unknown, status = 200) =>
   });
 async function handle(request: Request) {
   try {
-    const user = await getChatGPTUser();
+    const user = await getAuthenticatedUser(request);
     if (!user) throw new HttpError(401, "Sign in to use the research network.");
     if (request.method !== "GET") protectMutation(request, 16384);
     await rate(user.userId + ":x2-social-read", 100, 60000);

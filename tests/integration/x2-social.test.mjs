@@ -28,8 +28,8 @@ const context = vm.createContext({ console, Request, Response, Headers, TextEnco
 const cache = new Map();
 async function load(path) {
   const file = resolve(path); if (cache.has(file)) return cache.get(file);
-  if (file.replaceAll('\\', '/').endsWith('/backend/auth/chatgpt-auth.ts')) {
-    const m = new vm.SyntheticModule(['getChatGPTUser'], function () { this.setExport('getChatGPTUser', async () => currentUser); }, { context }); cache.set(file, m); return m;
+  if (file.replaceAll('\\', '/').endsWith('/backend/auth/session.ts')) {
+    const m = new vm.SyntheticModule(['getAuthenticatedUser'], function () { this.setExport('getAuthenticatedUser', async () => currentUser); }, { context }); cache.set(file, m); return m;
   }
   const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
   const m = new vm.SourceTextModule(code, { context, identifier: file }); cache.set(file, m); return m;

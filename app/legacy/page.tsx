@@ -1,4 +1,4 @@
 import Workspace from '../../frontend/features/legacy/workspace';
-import {requireChatGPTUser} from '../../backend/auth/chatgpt-auth';
+import {requireAuthenticatedUser} from '../../backend/auth/session';
 export const dynamic='force-dynamic';
-export default async function Legacy(){await requireChatGPTUser('/legacy');return <Workspace/>;}
+export default async function Legacy(){await requireAuthenticatedUser('/legacy');return <Workspace/>;}

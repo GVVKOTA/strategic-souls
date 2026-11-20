@@ -1,4 +1,4 @@
-import { getChatGPTUser } from "../../../../backend/auth/chatgpt-auth";
+import { getAuthenticatedUser } from "../../../../backend/auth/session";
 import { HttpError, body, protectMutation } from "../../../../backend/middleware/security";
 import {
   configureProvider,
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 async function handle(request: Request) {
   const headers = { "Cache-Control": "private, no-store" };
   try {
-    const user = await getChatGPTUser();
+    const user = await getAuthenticatedUser(request);
     if (!user) throw new HttpError(401, "Sign in.");
     if (request.method === "GET") {
       if (new URL(request.url).searchParams.get("view") === "capabilities")

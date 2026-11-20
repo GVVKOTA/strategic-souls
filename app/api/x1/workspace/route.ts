@@ -1,4 +1,4 @@
-import { getChatGPTUser } from "../../../../backend/auth/chatgpt-auth";
+import { getAuthenticatedUser } from "../../../../backend/auth/session";
 import { account, rate } from "../../../../database/queries/repository";
 import {
   HttpError,
@@ -15,7 +15,7 @@ import {
 export const dynamic = "force-dynamic";
 async function handle(request: Request) {
   try {
-    const user = await getChatGPTUser();
+    const user = await getAuthenticatedUser(request);
     if (!user)
       throw new HttpError(401, "Sign in to use your private workspace.");
     await rate(user.userId + ":x1read", 180, 60000);

@@ -1,4 +1,7 @@
-import { getChatGPTUser } from "../../../backend/auth/chatgpt-auth";
+import {
+  clearSessionCookie,
+  getAuthenticatedUser,
+} from "../../../backend/auth/session";
 import { database, account, history, rate } from "../../../database/queries/repository";
 import {
   HttpError,
@@ -82,11 +85,11 @@ async function chartExport(subject: string) {
 }
 async function handle(request: Request): Promise<Response> {
   try {
-    const user = await getChatGPTUser();
+    const user = await getAuthenticatedUser(request);
     if (!user)
       throw new HttpError(
         401,
-        "Sign in with ChatGPT to use your private workspace.",
+        "Sign in to use your private workspace.",
       );
     const subject = user.userId,
       path = new URL(request.url).pathname.replace(/^\/api\//, "");
@@ -410,15 +413,27 @@ async function handle(request: Request): Promise<Response> {
           .prepare("DELETE FROM support_requests WHERE subject=?")
           .bind(subject),
         db.prepare("DELETE FROM accounts WHERE subject=?").bind(subject),
+        db.prepare("DELETE FROM auth_sessions WHERE user_id=?").bind(subject),
+        db.prepare("DELETE FROM auth_users WHERE id=?").bind(subject),
         db
           .prepare("DELETE FROM rate_limits WHERE key LIKE ?")
           .bind(subject + ":%"),
       ]);
-      return json({
-        erased: true,
-        notice:
-          "Personal app records and ownership links deleted. Unlinked legacy synthetic originals and platform backups follow separate retention.",
-      });
+      return Response.json(
+        {
+          erased: true,
+          notice:
+            "Personal app records, account credentials, sessions and ownership links deleted. Unlinked legacy synthetic originals and platform backups follow separate retention.",
+        },
+        {
+          status: 200,
+          headers: {
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Set-Cookie": clearSessionCookie(request),
+          },
+        },
+      );
     }
     throw new HttpError(404, "Endpoint not found.");
   } catch (e) {

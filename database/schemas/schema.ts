@@ -110,5 +110,6 @@ export const notebookEvents = sqliteTable(
   ],
 );
 
+export * from "./auth";
 export * from "./x2-social";
 export * from "./x2-data";

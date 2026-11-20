@@ -398,3 +398,155 @@
   width: 72px;
   height: 72px;
 }
+
+.x2-signin-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 6px 14px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.x2-guest-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.x2-guest-banner > span {
+  flex: 1 1 320px;
+  color: var(--x1-text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.x2-auth-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.x2-auth-oauth {
+  display: grid;
+  gap: 8px;
+}
+
+.x2-password-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.x2-password-field input {
+  flex: 1;
+  min-width: 0;
+}
+
+.x2-signin-page {
+  max-width: 520px;
+  margin-inline: auto;
+}
+
+.x2-signin-page .x2-auth-panel {
+  background: var(--x1-surface-1);
+  border: 1px solid var(--x1-divider);
+  border-radius: 14px;
+  padding: 20px;
+  margin: 20px 0;
+}
+
+.x2-signin-page .x1-form {
+  display: grid;
+  gap: 14px;
+}
+
+.x2-signin-page .x1-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--x1-text-secondary);
+  font-size: 0.875rem;
+}
+
+.x2-signin-page .x1-form label.x1-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.x2-signin-page .x1-form input:not([type="checkbox"]) {
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--x1-divider);
+  background: var(--x1-surface-2);
+  color: var(--x1-text-primary);
+  font-size: 0.9375rem;
+}
+
+.x2-signin-page .x1-segment {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--x1-surface-2);
+  border: 1px solid var(--x1-divider);
+}
+
+.x2-signin-page .x1-segment button {
+  flex: 1;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--x1-text-secondary);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.x2-signin-page .x1-segment button[aria-pressed="true"] {
+  background: var(--x1-surface-3);
+  color: var(--x1-text-primary);
+}
+
+.x2-signin-page .x1-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--x1-divider-strong);
+  background: var(--x1-text-primary);
+  color: var(--x1-bg);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.x2-signin-page .x1-form-error {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--x1-divider-strong);
+  background: var(--x1-surface-2);
+  color: var(--x1-text-primary);
+  font-size: 0.875rem;
+}
+
+.x2-signin-page .x1-caption {
+  color: var(--x1-text-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 680px) {
+  .x2-signin-trigger {
+    padding: 6px 10px;
+    font-size: 0.75rem;
+  }
+}

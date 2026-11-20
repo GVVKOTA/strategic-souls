@@ -24,6 +24,8 @@ import {
 import { X2_INSTRUMENTS } from "../../../backend/services/market-data/instrument-registry";
 type Props = {
   id: string;
+  authenticated?: boolean;
+  onRequireAuth?: () => void;
   onClose?: () => void;
   onAnalyze?: (formula?: string, instrumentId?: string) => void;
   notify?: (text: string, error?: boolean) => void;
@@ -48,6 +50,8 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 }
 export default function AssetTerminal({
   id,
+  authenticated = true,
+  onRequireAuth,
   onClose,
   onAnalyze,
   notify,
@@ -105,8 +109,9 @@ export default function AssetTerminal({
       setError("");
     });
     const timeout = setTimeout(() => ctrl.abort(), 12000);
+    const endpoint = authenticated ? "/api/x2/data" : "/api/markets/public";
     json<{ asset: AssetResearch; layout: ChartLayout }>(
-      "/api/x2/data?id=" + encodeURIComponent(id) + "&interval=" + interval,
+      endpoint + "?id=" + encodeURIComponent(id) + "&interval=" + interval,
       { signal: ctrl.signal },
     )
       .then((v) => {
@@ -138,13 +143,17 @@ export default function AssetTerminal({
       ctrl.abort();
       clearTimeout(timeout);
     };
-  }, [id, interval, reload]);
+  }, [authenticated, id, interval, reload]);
   function change(next: Partial<ChartLayout["payload"]>) {
     requestKey.current = null;
     setSaveMessage("");
     setLayout((v) => ({ ...v, payload: { ...v.payload, ...next } }));
   }
   async function save() {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
     if (saveRef.current) return;
     saveRef.current = true;
     setSaving(true);
@@ -182,8 +191,9 @@ export default function AssetTerminal({
     setPeerBusy(true);
     setError("");
     try {
+      const endpoint = authenticated ? "/api/x2/data" : "/api/markets/public";
       const v = await json<{ asset: AssetResearch }>(
-        "/api/x2/data?id=" +
+        endpoint + "?id=" +
           encodeURIComponent(peerId) +
           "&interval=" +
           interval,

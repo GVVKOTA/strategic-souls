@@ -1,4 +1,4 @@
-/* eslint-disable @next/next/no-html-link-for-pages -- Sites authentication requires native top-level anchors, not client routing. */
+/* eslint-disable @next/next/no-html-link-for-pages -- Preserve native document navigation for the retained archive. */
 "use client";
 import Link from "next/link";
 import { useState, useEffect, useRef, type ReactNode } from "react";
@@ -645,10 +645,9 @@ export default function Workspace() {
           {!session && error.includes("Sign in") && (
             <a
               className="secondary"
-              href="/signin-with-chatgpt?return_to=/"
-              target="_top"
+              href="/signin?return_to=%2Flegacy"
             >
-              Sign in with ChatGPT
+              Sign in
             </a>
           )}
           {session && !session.accepted && (
@@ -2324,13 +2323,23 @@ function Settings({
         Save name
       </button>
       <hr />
-      <a
+      <button
+        type="button"
         className="secondary"
-        href="/signout-with-chatgpt?return_to=%2Fhome"
-        target="_top"
+        disabled={busy}
+        onClick={() =>
+          void run(async () => {
+            await fetch("/api/auth/signout", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: "{}",
+            });
+            window.location.assign("/");
+          })
+        }
       >
         Sign out
-      </a>
+      </button>
       {!reference && (
         <div className="button-row">
           <a
@@ -2400,9 +2409,8 @@ function Settings({
         <summary>Withdraw consent and delete my app data</summary>
         <p>
           Deletes your notebook Souls and review events, holdings, notes,
-          strategy versions, account and ownership links. Unlinked legacy
-          synthetic records and provider backups are separate. This does not
-          delete your ChatGPT account.
+          strategy versions, account credentials, sessions and ownership links.
+          Unlinked legacy synthetic records and provider backups are separate.
         </p>
         <label className="field">
           <span>

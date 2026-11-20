@@ -10,7 +10,7 @@ Strategic Souls is a financial-market research and strategy workspace developed 
 
 > [!NOTE]
 > **Project Status — Active Development (X2):**
-> The core X2 web application, local Cloudflare Worker + D1 preview, canonical Soul Scan engine, Formula Lab, 3D exchange globe, official ECB/US Treasury data feeds, and Community workflows are implemented and verified with automated tests (`245` Node tests + `29` optional Python quant tests). Commercial NSE/BSE/MCX and global equity data feeds require licensed provider API keys (`EODHD`, `TrueData`) before live or historical market data is unlocked.
+> The core X2 web application, Cloudflare Workers + D1 deployment, standalone email/password authentication (with optional Google OAuth), canonical Soul Scan engine, Formula Lab, 3D exchange globe, official ECB/US Treasury data feeds, and Community workflows are implemented and verified with automated tests (`250` Node tests + `29` optional Python quant tests). Commercial NSE/BSE/MCX and global equity data feeds require licensed provider API keys (`EODHD`, `TrueData`) before live or historical market data is unlocked.
 
 ---
 
@@ -117,10 +117,10 @@ To keep expectations clear, here is the exact status of every capability in this
 
 | Category | Capabilities |
 | --- | --- |
-| **Working Out of the Box (Local Preview)** | 3D 24-exchange globe, live official ECB FX & US Treasury daily rates, canonical Soul Scan AST builder/evaluator, Formula Lab, watchlists, manual multi-currency portfolio ledger, X1/X2 Community & Social workflows, on-request TradingView display widgets, local Cloudflare Worker + D1 persistence (`http://127.0.0.1:5173`). |
-| **Implemented — Requires Commercial Keys & Licences** | NSE, BSE, MCX, and global equity OHLC, fundamentals, statements, and news via **EODHD** (`X2_EODHD_API_TOKEN`) and **TrueData** (`X2_TRUEDATA_BEARER_TOKEN`). Until licensed and configured, adapters fail closed with clear `KEY REQUIRED` / `UNAVAILABLE` states. |
+| **Working Out of the Box (Cloudflare Workers & Local Preview)** | Standalone email/password registration & sign-in (salted PBKDF2-SHA256 + D1 hashed HttpOnly sessions; optional Google OAuth), 3D 24-exchange globe, live official ECB FX & US Treasury daily rates (also viewable before sign-in via `/api/markets/public`), canonical Soul Scan AST builder/evaluator, Formula Lab, watchlists, manual multi-currency portfolio ledger, X1/X2 Community & Social workflows, on-request TradingView display widgets, and Cloudflare Workers + D1 persistence. |
+| **Implemented — Requires Commercial Keys & Licences** | NSE, BSE, MCX, and global equity OHLC, fundamentals, statements, and news via **EODHD** (`X2_EODHD_API_TOKEN`) and **TrueData** (`X2_TRUEDATA_BEARER_TOKEN`). Until licensed and configured, adapters fail closed with clear `KEY REQUIRED` / `UNAVAILABLE` states. Optional Google OAuth activates when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` Worker secrets are configured. |
 | **Optional / Retained Source (Off by Default)** | Legacy owner research notebook (`/legacy`), plus optional **V3** local stack: Supabase Auth/PostgreSQL RLS (`supabase/`) and Python DuckDB/NumPy/PyArrow quant worker (`backend/quant/`). |
-| **Explicitly Out of Scope / Disabled** | No crypto scope in X2, no fabricated quotes or forward probabilities (`INSUFFICIENT EVIDENCE` when uncalibrated), no broker order execution, no payments/billing/ads, and GitHub pushes do **not** auto-deploy to production. |
+| **Explicitly Out of Scope / Disabled** | No OpenAI/ChatGPT authentication, no crypto scope in X2, no fabricated quotes or forward probabilities (`INSUFFICIENT EVIDENCE` when uncalibrated), no broker order execution, and no payments/billing/ads. |
 
 ---
 
@@ -199,6 +199,8 @@ Click any section below to view an explanation of every file inside that folder.
 
 | File | Purpose |
 | --- | --- |
+| `app/api/auth/[...action]/route.ts` | `GET/POST /api/auth/*` — standalone D1 session status, email/password registration & sign-in, sign-out revocation, and optional PKCE Google OAuth (`/api/auth/google`). |
+| `app/api/markets/public/route.ts` | `GET /api/markets/public` — read-only public official ECB FX and US Treasury daily reference data (no private workspace data or provider keys). |
 | `app/api/release/route.ts` | `GET /api/release` — returns release metadata, dashboard list, 24 exchange venues, and data-scope disclosure. |
 | `app/api/[...path]/route.ts` | Core account & legacy catch-all API (`session`, `consent`, `export`, `erase`, `notebooks`, `workspace`, `souls`, `profile`, `support`). |
 | `app/api/x1/markets/route.ts` | `GET /api/x1/markets` — returns live official ECB FX reference rates and US Treasury par yield snapshots. |
@@ -218,8 +220,8 @@ Click any section below to view an explanation of every file inside that folder.
 
 | File | Purpose |
 | --- | --- |
-| `backend/auth/chatgpt-auth.ts` | Reads trusted native ChatGPT Sites identity headers and enforces authenticated access (`getChatGPTUser`, `requireChatGPTUser`). |
-| `backend/middleware/index.ts` | Cloudflare Worker fetch entrypoint delegating requests to Vinext within the connector request context. |
+| `backend/auth/session.ts` | Standalone Cloudflare D1 session authentication (`PBKDF2-SHA256` password hashing, SHA-256 hashed `HttpOnly` session cookies, open-redirect protection, and optional Google OAuth). |
+| `backend/middleware/index.ts` | Cloudflare Worker fetch entrypoint delegating requests to Vinext and enforcing strict CSP, HSTS, and cache-control headers. |
 | `backend/middleware/security.ts` | `HttpError`, same-origin CSRF guard (`protectMutation`), bounded JSON reader, ownership/consent checks, and disabled-feature kill-list. |
 
 **Core Research & Math Engines (6 files):**
@@ -296,6 +298,7 @@ Click any section below to view an explanation of every file inside that folder.
 | `drizzle/0004_thankful_talisman.sql` | Creates all 14 X1 workspace & community tables (`x1_*`). |
 | `drizzle/0005_x1_immutability.sql` | Adds SQLite triggers preventing updates to immutable `x1_scans`, `x1_ledger`, `x1_scan_events`, and `x1_soul_revisions`. |
 | `drizzle/0006_low_norrin_radd.sql` | Creates all 14 X2 social & market-data tables (`x2_*`). |
+| `drizzle/0007_standalone_auth.sql` | Creates standalone authentication tables (`auth_users`, `auth_sessions`) for Cloudflare D1. |
 | `drizzle/meta/` (8 files) | `_journal.json` + schema snapshots `0000_snapshot.json` through `0006_snapshot.json`. |
 
 **Optional V3 Local Supabase Project (`supabase/`, 9 files):**
@@ -454,7 +457,7 @@ When Wrangler reports it is ready, open **`http://127.0.0.1:5173`** in your brow
 > [!TIP]
 > **How local preview works:**
 > - **No `.env` file or API keys are needed** to run the core workspace locally.
-> - `npm run dev` builds the Cloudflare Worker, applies all 7 D1 migrations to a local `.wrangler/state` database, and provides a loopback-only fictional developer identity (complete the local onboarding screen before saving data).
+> - `npm run dev` builds the Cloudflare Worker, applies all 8 D1 migrations (`0000`–`0007`) to a local `.wrangler/local-preview` database, and runs the real standalone authentication flow locally (register or sign in directly at `http://127.0.0.1:5173`).
 > - On Windows, restart `npm run dev` after code changes (recommended over `npm run dev:hmr` due to an upstream Vinext/Vite HMR issue documented in [`operations/docs/DEVELOPER_GUIDE.md`](operations/docs/DEVELOPER_GUIDE.md)).
 
 ### 2. Useful Commands
@@ -464,17 +467,17 @@ When Wrangler reports it is ready, open **`http://127.0.0.1:5173`** in your brow
 | `npm run dev` | Build the Worker, migrate local D1, and start the local preview on `http://127.0.0.1:5173` |
 | `npm run verify:x2` | Run full X2 release checks (TypeScript typecheck, app ESLint, and Node test suite) |
 | `npm run verify` | Run `typecheck`, `lint:app`, and `test` sequentially |
-| `npm test` | Run all `245` Node.js unit and integration tests |
+| `npm test` | Run all `250` Node.js unit and integration tests |
 | `npm run typecheck` | Run TypeScript type checks (`tsc --noEmit`) |
 | `npm run lint:app` | Lint `app/`, `frontend/`, `backend/`, and `database/` |
 | `npm run build` | Build the production Cloudflare Worker bundle |
 | `npm run test:quant` | Run the `29` optional Python quant tests (requires `uv`) |
 | `npm run audit:security` | Run high-severity dependency audit (`pnpm audit --audit-level high`) |
 
-### 3. Optional Environment Variables & Provider Keys
+### 3. Optional Environment Variables & Cloudflare Workers Secrets
 
-- Copy variable names from [`.env.example`](.env.example) only if you are configuring licensed provider adapters (`X2_EODHD_API_TOKEN`, `X2_TRUEDATA_BEARER_TOKEN`, `X2_OWNER_SUBJECT`) or testing the optional V3 Supabase/Python stack.
-- Store local secrets only in git-ignored `.sites-runtime/.dev.vars` (or hosted runtime settings). **Never commit `.env`, `.dev.vars`, API keys, or private user data.**
+- Copy variable names from [`.env.example`](.env.example) only if you are configuring optional Google OAuth (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`), licensed provider adapters (`X2_EODHD_API_TOKEN`, `X2_TRUEDATA_BEARER_TOKEN`, `X2_OWNER_SUBJECT`), or the optional V3 Supabase/Python stack.
+- For Cloudflare Workers production (`https://strategic-souls.vishnukota20071005.workers.dev/`), set secrets via Cloudflare Dashboard (`Workers & Pages -> strategic-souls -> Settings -> Variables and Secrets`) or `wrangler secret put`. **Never commit `.env`, `.dev.vars`, API keys, or private user data.**
 - See [`operations/docs/setup/X2_DATA_SETUP.md`](operations/docs/setup/X2_DATA_SETUP.md) for provider licensing and setup details.
 
 ---

@@ -1,4 +1,4 @@
-import { getChatGPTUser } from "../../../../backend/auth/chatgpt-auth";
+import { getAuthenticatedUser } from "../../../../backend/auth/session";
 import { account, rate } from "../../../../database/queries/repository";
 import {
   HttpError,
@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 async function handle(request: Request) {
   const headers = { "Cache-Control": "private, no-store" };
   try {
-    const user = await getChatGPTUser();
+    const user = await getAuthenticatedUser(request);
     if (!user) throw new HttpError(401, "Sign in to view research.");
     await rate(user.userId + ":x2dataread", 120, 60000);
     const current = await account(user.userId);

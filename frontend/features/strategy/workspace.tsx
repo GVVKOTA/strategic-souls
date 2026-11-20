@@ -37,6 +37,8 @@ import "./research.css";
 type Props = {
   data: MarketSnapshot | null;
   workspace: WorkspaceState | null;
+  authenticated?: boolean;
+  onRequireAuth?: () => void;
   reload: () => Promise<void>;
   notify: Notice;
   openAsset: (id: string) => void;
@@ -115,6 +117,8 @@ const defaultTree: RuleTree = {
 export default function ResearchWorkspace({
   data,
   workspace,
+  authenticated = true,
+  onRequireAuth,
   reload,
   notify,
   openAsset,
@@ -347,6 +351,10 @@ export default function ResearchWorkspace({
     setPanel("Soul Scan");
   }
   async function perform(kind: "preflight" | "run" | "draft") {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
     if (lock.current || !definition.value || !canonical.value) return;
     lock.current = true;
     setBusy(
@@ -632,13 +640,15 @@ export default function ResearchWorkspace({
               </div>
               <p className="x2-scan-status" role="status" aria-live="polite">
                 {busy ||
-                  (!definition.value
-                    ? "Name and describe the hypothesis before execution."
-                    : !coverage
-                      ? "Check source coverage before running."
-                      : dirty
-                        ? "Unsaved definition changes"
-                        : "Definition preserved")}
+                  (!authenticated
+                    ? "Sign in to check coverage, run scans, and save immutable Soul history."
+                    : !definition.value
+                      ? "Name and describe the hypothesis before execution."
+                      : !coverage
+                        ? "Check source coverage before running."
+                        : dirty
+                          ? "Unsaved definition changes"
+                          : "Definition preserved")}
               </p>
               {coverage && (
                 <div className="x2-source-preflight">
