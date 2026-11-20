@@ -17,7 +17,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { compileFormula } from "../../../backend/engines/scan";
-import { Panel, Empty, Modal, api, moment, type Notice } from "../../components/workspace/shared";
+import { Panel, Empty, Modal, WorkspaceSkeleton, api, moment, type Notice } from "../../components/workspace/shared";
 import {
   SocialWorkspace,
   GroupNetworkPanel,
@@ -457,9 +457,10 @@ export default function Community({
           </aside>
           <div className="x1-community-main">
             {loading && !data ? (
-              <div className="x1-loading" role="status">
-                Opening your private Community…
-              </div>
+              <WorkspaceSkeleton
+                label="Opening your private Community…"
+                kind="panel"
+              />
             ) : group ? (
               <>
                 <Panel

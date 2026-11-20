@@ -34,6 +34,7 @@ import {
   SourceLink,
   Modal,
   Sparkline,
+  WorkspaceSkeleton,
   api,
   number,
   moment,
@@ -119,7 +120,14 @@ export function AssetDialog({
 }) {
   return (
     <Modal title="Asset research" onClose={onClose}>
-      <Suspense fallback={<p role="status">Loading asset research…</p>}>
+      <Suspense
+        fallback={
+          <WorkspaceSkeleton
+            label="Loading asset research terminal…"
+            kind="terminal"
+          />
+        }
+      >
         <AssetTerminal
           id={id}
           authenticated={authenticated}
