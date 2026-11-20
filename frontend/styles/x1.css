@@ -738,7 +738,8 @@
   font-size: 12px;
   white-space: nowrap;
 }
-.x1-segment button[aria-pressed="true"] {
+.x1-segment button[aria-pressed="true"],
+.x1-segment button[aria-selected="true"] {
   background: var(--x1-surface-3);
   color: var(--x-accent);
 }

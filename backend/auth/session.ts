@@ -60,6 +60,11 @@ function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
   return diff === 0;
 }
 
+export function timingSafeEqualStrings(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  return timingSafeEqualBytes(enc.encode(a), enc.encode(b));
+}
+
 export function randomToken(byteLength = 32): string {
   const bytes = new Uint8Array(byteLength);
   crypto.getRandomValues(bytes);

@@ -14,6 +14,7 @@ import {
   safeRelativeReturnPath,
   sha256Base64Url,
   sha256Hex,
+  timingSafeEqualStrings,
 } from "../../../../backend/auth/session";
 import { HttpError, body, protectMutation } from "../../../../backend/middleware/security";
 import { RELEASE_GATES } from "../../../../backend/services/legacy/gates";
@@ -25,6 +26,40 @@ const CONSENT_VERSION = "2026-11-14-v4";
 const OAUTH_STATE_COOKIE = "__ss_oauth_state";
 const OAUTH_PKCE_COOKIE = "__ss_oauth_pkce";
 const OAUTH_RETURN_COOKIE = "__ss_oauth_return";
+
+function clearOAuthCookies(headers: Headers, request: Request): void {
+  headers.append("Set-Cookie", formatCookie(OAUTH_STATE_COOKIE, "", request, 0));
+  headers.append("Set-Cookie", formatCookie(OAUTH_PKCE_COOKIE, "", request, 0));
+  headers.append("Set-Cookie", formatCookie(OAUTH_RETURN_COOKIE, "", request, 0));
+}
+
+async function fetchBoundedOAuth(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(url, {
+      ...init,
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel();
+      throw new HttpError(502, "Google authentication returned an unexpected redirect.");
+    }
+    return res;
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(
+      502,
+      "Google authentication request timed out or could not be reached.",
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function json(data: unknown, status = 200, headers?: Headers): Response {
   const h = headers ?? new Headers();
@@ -139,6 +174,13 @@ async function handle(request: Request): Promise<Response> {
         password: input.password,
       });
 
+      // Rotate out any prior session cookie stored in D1 before issuing a new token.
+      await revokeSessionFromRequest(request);
+      await database()
+        .prepare("UPDATE accounts SET last_active = ? WHERE subject = ?")
+        .bind(new Date().toISOString(), user.userId)
+        .run();
+
       const headers = new Headers();
       headers.append("Set-Cookie", await createSession(user.userId, request));
       return json(await sessionPayload(user), 200, headers);
@@ -212,27 +254,36 @@ async function handle(request: Request): Promise<Response> {
         !code ||
         !state ||
         !jar[OAUTH_STATE_COOKIE] ||
-        state !== jar[OAUTH_STATE_COOKIE] ||
+        !timingSafeEqualStrings(state, jar[OAUTH_STATE_COOKIE]) ||
         !jar[OAUTH_PKCE_COOKIE]
       ) {
-        throw new HttpError(
+        const errHeaders = new Headers();
+        clearOAuthCookies(errHeaders, request);
+        return json(
+          {
+            error:
+              "Sign-in verification expired or did not match. Start again from Strategic Souls.",
+          },
           400,
-          "Sign-in verification expired or did not match. Start again from Strategic Souls.",
+          errHeaders,
         );
       }
       const redirectUri = `${url.origin}/api/auth/google/callback`;
-      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          code,
-          client_id: oauth.clientId,
-          client_secret: oauth.clientSecret,
-          redirect_uri: redirectUri,
-          grant_type: "authorization_code",
-          code_verifier: jar[OAUTH_PKCE_COOKIE],
-        }),
-      });
+      const tokenRes = await fetchBoundedOAuth(
+        "https://oauth2.googleapis.com/token",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            code,
+            client_id: oauth.clientId,
+            client_secret: oauth.clientSecret,
+            redirect_uri: redirectUri,
+            grant_type: "authorization_code",
+            code_verifier: jar[OAUTH_PKCE_COOKIE],
+          }),
+        },
+      );
       if (!tokenRes.ok) {
         throw new HttpError(502, "Google authentication could not be verified.");
       }
@@ -240,7 +291,7 @@ async function handle(request: Request): Promise<Response> {
       if (!tokenData.access_token) {
         throw new HttpError(502, "Google authentication returned no token.");
       }
-      const userRes = await fetch(
+      const userRes = await fetchBoundedOAuth(
         "https://openidconnect.googleapis.com/v1/userinfo",
         {
           headers: { Authorization: `Bearer ${tokenData.access_token}` },
@@ -267,6 +318,7 @@ async function handle(request: Request): Promise<Response> {
         email: profile.email,
         name: profile.name,
       });
+      await revokeSessionFromRequest(request);
       let decodedReturn = "/";
       try {
         decodedReturn = safeRelativeReturnPath(
@@ -280,18 +332,7 @@ async function handle(request: Request): Promise<Response> {
         "Cache-Control": "private, no-store",
       });
       headers.append("Set-Cookie", await createSession(user.userId, request));
-      headers.append(
-        "Set-Cookie",
-        formatCookie(OAUTH_STATE_COOKIE, "", request, 0),
-      );
-      headers.append(
-        "Set-Cookie",
-        formatCookie(OAUTH_PKCE_COOKIE, "", request, 0),
-      );
-      headers.append(
-        "Set-Cookie",
-        formatCookie(OAUTH_RETURN_COOKIE, "", request, 0),
-      );
+      clearOAuthCookies(headers, request);
       return new Response(null, { status: 302, headers });
     }
 

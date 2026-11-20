@@ -508,7 +508,8 @@
   cursor: pointer;
 }
 
-.x2-signin-page .x1-segment button[aria-pressed="true"] {
+.x2-signin-page .x1-segment button[aria-pressed="true"],
+.x2-signin-page .x1-segment button[aria-selected="true"] {
   background: var(--x1-surface-3);
   color: var(--x1-text-primary);
 }

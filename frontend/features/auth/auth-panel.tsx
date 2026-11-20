@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Eye, EyeOff, Lock } from "lucide-react";
 import { api } from "../../components/workspace/shared";
 
@@ -47,6 +47,7 @@ export default function AuthPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [googleEnabled, setGoogleEnabled] = useState(!!googleEnabledProp);
+  const submitLock = useRef(false);
 
   useEffect(() => {
     if (googleEnabledProp !== undefined) return;
@@ -70,6 +71,8 @@ export default function AuthPanel({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitLock.current) return;
+    submitLock.current = true;
     setError("");
     setBusy(true);
     try {
@@ -90,6 +93,7 @@ export default function AuthPanel({
         err instanceof Error ? err.message : "Authentication request failed.",
       );
     } finally {
+      submitLock.current = false;
       setBusy(false);
     }
   }
@@ -101,7 +105,6 @@ export default function AuthPanel({
           type="button"
           role="tab"
           aria-selected={mode === "signin"}
-          aria-pressed={mode === "signin"}
           onClick={() => {
             setMode("signin");
             setError("");
@@ -113,7 +116,6 @@ export default function AuthPanel({
           type="button"
           role="tab"
           aria-selected={mode === "register"}
-          aria-pressed={mode === "register"}
           onClick={() => {
             setMode("register");
             setError("");
