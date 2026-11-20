@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, ArrowUpRight, Check, Share2 } from "lucide-react";
 import { compileFormula } from "../../../backend/engines/scan";
 import {
+  BEGINNER_SCAN_PRESETS,
+  RESEARCH_GLOSSARY,
   compileTree,
   treeFromFormula,
   validateResearch,
@@ -128,10 +130,15 @@ export default function ResearchWorkspace({
   initialPanel,
 }: Props) {
   const [panel, setPanel] = useState(initialPanel || "Soul Scan"),
-    [mode, setMode] = useState<"SIMPLE" | "ADVANCED">(
-      initialFormula ? "ADVANCED" : "SIMPLE",
+    [level, setLevel] = useState<"BEGINNER" | "INTERMEDIATE" | "ADVANCED">(
+      initialFormula ? "ADVANCED" : "BEGINNER",
     ),
-    [formula, setFormula] = useState(initialFormula || "rsi(close,14) < 40"),
+    [activePreset, setActivePreset] = useState<string>(
+      BEGINNER_SCAN_PRESETS[0].id,
+    ),
+    [formula, setFormula] = useState(
+      initialFormula || BEGINNER_SCAN_PRESETS[0].formula,
+    ),
     [tree, setTree] = useState<RuleTree>(defaultTree),
     [name, setName] = useState(""),
     [description, setDescription] = useState(""),
@@ -167,7 +174,7 @@ export default function ResearchWorkspace({
     queueMicrotask(() => {
       if (alive && initialFormula) {
         setFormula(initialFormula);
-        setMode("ADVANCED");
+        setLevel("ADVANCED");
       }
     });
     return () => {
@@ -203,13 +210,27 @@ export default function ResearchWorkspace({
   const canonical = useMemo(() => {
     try {
       return {
-        value: mode === "SIMPLE" ? compileTree(tree) : compileFormula(formula),
+        value:
+          level === "INTERMEDIATE"
+            ? compileTree(tree)
+            : compileFormula(formula),
         error: "",
       };
     } catch (error) {
       return { value: null, error: (error as Error).message };
     }
-  }, [mode, tree, formula]);
+  }, [level, tree, formula]);
+  const backendMode: ResearchDefinition["mode"] = useMemo(() => {
+    if (level === "INTERMEDIATE") return "SIMPLE";
+    if (level === "BEGINNER") {
+      try {
+        return treeFromFormula(formula) ? "SIMPLE" : "ADVANCED";
+      } catch {
+        return "ADVANCED";
+      }
+    }
+    return "ADVANCED";
+  }, [level, formula]);
   const definition = useMemo(() => {
     try {
       return {
@@ -217,7 +238,7 @@ export default function ResearchWorkspace({
           name,
           description,
           formula: canonical.value?.formula ?? formula,
-          mode,
+          mode: backendMode,
           universe,
           interval,
           instrumentIds: instruments.split(/[\s,]+/).filter(Boolean),
@@ -234,7 +255,7 @@ export default function ResearchWorkspace({
     description,
     canonical.value,
     formula,
-    mode,
+    backendMode,
     universe,
     interval,
     instruments,
@@ -246,7 +267,7 @@ export default function ResearchWorkspace({
       name,
       description,
       formula: canonical.value?.formula ?? formula,
-      mode,
+      mode: backendMode,
       universe,
       interval,
       instruments,
@@ -306,15 +327,30 @@ export default function ResearchWorkspace({
         ? workspace?.scanHistoryNextBefore
         : olderCursor,
     coverage = preflight?.signature === signature ? preflight.value : null;
-  function switchMode(next: "SIMPLE" | "ADVANCED") {
-    if (next === mode) return;
+  function selectBeginnerPreset(preset: (typeof BEGINNER_SCAN_PRESETS)[number]) {
+    setActivePreset(preset.id);
+    setFormula(preset.formula);
+    const converted = treeFromFormula(preset.formula);
+    if (converted) setTree(converted);
+    if (!name.trim()) setName(preset.defaultName);
+    if (description.trim().length < 10) setDescription(preset.defaultDescription);
+    setPreflight(null);
+  }
+  function switchLevel(next: "BEGINNER" | "INTERMEDIATE" | "ADVANCED") {
+    if (next === level) return;
+    const currentFormula = canonical.value?.formula ?? formula;
     if (next === "ADVANCED") {
-      if (canonical.value) setFormula(canonical.value.formula);
-      setMode(next);
+      setFormula(currentFormula);
+      setLevel("ADVANCED");
+      return;
+    }
+    if (next === "BEGINNER") {
+      setFormula(currentFormula);
+      setLevel("BEGINNER");
       return;
     }
     try {
-      const converted = treeFromFormula(formula);
+      const converted = treeFromFormula(currentFormula);
       if (!converted) {
         notify(
           "This custom expression needs Advanced mode; your method is preserved.",
@@ -323,7 +359,8 @@ export default function ResearchWorkspace({
         return;
       }
       setTree(converted);
-      setMode(next);
+      setFormula(currentFormula);
+      setLevel("INTERMEDIATE");
     } catch (e) {
       notify((e as Error).message, true);
     }
@@ -339,8 +376,8 @@ export default function ResearchWorkspace({
       value.mode === "SIMPLE" ? treeFromFormula(value.formula) : null;
     if (converted) {
       setTree(converted);
-      setMode("SIMPLE");
-    } else setMode("ADVANCED");
+      setLevel("INTERMEDIATE");
+    } else setLevel("ADVANCED");
     setUniverse(value.universe);
     setInterval(value.interval);
     setInstruments(value.instrumentIds.join(", "));
@@ -460,14 +497,21 @@ export default function ResearchWorkspace({
             <Panel
               title="Build a Soul"
               action={
-                <div className="x1-segment">
-                  {(["SIMPLE", "ADVANCED"] as const).map((m) => (
+                <div className="x1-segment" role="group" aria-label="Soul Scan experience level">
+                  {(
+                    [
+                      ["BEGINNER", "Beginner"],
+                      ["INTERMEDIATE", "Intermediate"],
+                      ["ADVANCED", "Advanced"],
+                    ] as const
+                  ).map(([id, label]) => (
                     <button
-                      key={m}
-                      aria-pressed={mode === m}
-                      onClick={() => switchMode(m)}
+                      key={id}
+                      type="button"
+                      aria-pressed={level === id}
+                      onClick={() => switchLevel(id)}
                     >
-                      {m === "SIMPLE" ? "Simple" : "Advanced"}
+                      {label}
                     </button>
                   ))}
                 </div>
@@ -565,7 +609,31 @@ export default function ResearchWorkspace({
                     : "Only supported, entitled provider instruments execute. No substitute dataset is used."}
                 </p>
               </details>
-              {mode === "SIMPLE" ? (
+              {level === "BEGINNER" ? (
+                <div>
+                  <p className="x1-caption">
+                    Choose a guided research preset below. Every preset compiles
+                    to the exact same deterministic AST used by Intermediate and
+                    Advanced modes.
+                  </p>
+                  <div className="x3-preset-grid">
+                    {BEGINNER_SCAN_PRESETS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        className="x3-preset-card"
+                        aria-pressed={activePreset === preset.id && formula === preset.formula}
+                        onClick={() => selectBeginnerPreset(preset)}
+                      >
+                        <strong>{preset.label}</strong>
+                        <span>{preset.plainLanguage}</span>
+                        <code>{preset.formula}</code>
+                        <small className="x1-caption">{preset.requires}</small>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : level === "INTERMEDIATE" ? (
                 <RuleEditor tree={tree} onChange={setTree} />
               ) : (
                 <>
@@ -586,7 +654,7 @@ export default function ResearchWorkspace({
                       "all(close > ema(close,20), not(rsi(close,14) > 70))",
                       "crossesAbove(close,sma(close,20))",
                     ].map((f) => (
-                      <button key={f} onClick={() => setFormula(f)}>
+                      <button key={f} type="button" onClick={() => setFormula(f)}>
                         {f}
                       </button>
                     ))}
@@ -692,11 +760,23 @@ export default function ResearchWorkspace({
                 </div>
               )}
               <ResearchInfo label="Method and evidence">
-                Simple ALL/ANY/NOT and Advanced share a bounded typed engine.
-                Missing inputs remain UNKNOWN. Executions preserve method,
-                description, source snapshot and outcome. Replay requires
-                licensed point-in-time adjusted history.
+                Beginner presets, Intermediate ALL/ANY/NOT groups, and Advanced
+                formulas all compile to one bounded typed AST engine. Missing
+                inputs remain UNKNOWN. Executions preserve method, description,
+                source snapshot and outcome. Replay requires licensed
+                point-in-time adjusted history.
               </ResearchInfo>
+              <details className="x1-small-details">
+                <summary>Research glossary (RSI, ATR, OHLC, CAGR, XIRR, IV, PIT)</summary>
+                <div className="x3-glossary-grid">
+                  {RESEARCH_GLOSSARY.map((item) => (
+                    <div className="x3-glossary-item" key={item.term}>
+                      <strong>{item.term}</strong>
+                      <p>{item.meaning}</p>
+                    </div>
+                  ))}
+                </div>
+              </details>
               <button
                 className="x1-text-button"
                 disabled={!canonical.value}
@@ -829,7 +909,7 @@ export default function ResearchWorkspace({
                         setName(active.name);
                         setDescription("");
                         setFormula(active.payload.rule.formula);
-                        setMode("ADVANCED");
+                        setLevel("ADVANCED");
                       }
                     }}
                   >
@@ -997,7 +1077,7 @@ export default function ResearchWorkspace({
                   key={label}
                   onClick={() => {
                     setFormula(method);
-                    setMode("ADVANCED");
+                    setLevel("ADVANCED");
                     setName(label + " research");
                     setDescription(
                       "Test " +

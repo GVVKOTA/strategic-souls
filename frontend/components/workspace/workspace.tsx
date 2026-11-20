@@ -34,7 +34,7 @@ const DataControl = lazy(() => import("../../features/global/data-control"));
 import AuthPanel, {
   type AuthSessionResponse,
 } from "../../features/auth/auth-panel";
-import { api, Modal, type WorkspaceState } from "./shared";
+import { api, Modal, WorkspaceSkeleton, type WorkspaceState } from "./shared";
 
 type View = "Global" | "Strategy" | "Community";
 
@@ -70,7 +70,26 @@ export default function X1Workspace() {
     [sessionError, setSessionError] = useState(""),
     [dataControl, setDataControl] = useState(false),
     [isOwner, setIsOwner] = useState(false),
-    [refreshing, setRefreshing] = useState(false);
+    [refreshing, setRefreshing] = useState(false),
+    [motionPref, setMotionPref] = useState<"system" | "minimal">("system");
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("ss-motion-pref");
+      if (stored === "minimal") queueMicrotask(() => setMotionPref("minimal"));
+    } catch {
+      /* Storage is optional. */
+    }
+  }, []);
+
+  const updateMotionPref = (next: "system" | "minimal") => {
+    setMotionPref(next);
+    try {
+      window.localStorage.setItem("ss-motion-pref", next);
+    } catch {
+      /* Storage is optional. */
+    }
+  };
 
   const refreshLock = useRef(false);
   const researchDirty = useRef(false);
@@ -292,7 +311,7 @@ export default function X1Workspace() {
   const isSignedIn = authenticated === true;
 
   return (
-    <div className="x1-app">
+    <div className="x1-app" data-motion={motionPref}>
       <EclipseIntro
         key={introPreview ? "preview" : "normal"}
         ready={
@@ -511,7 +530,14 @@ export default function X1Workspace() {
               </form>
             </section>
           )}
-          <Suspense fallback={<p role="status">Opening {view}…</p>}>
+          <Suspense
+            fallback={
+              <WorkspaceSkeleton
+                label={`Opening ${view} workspace…`}
+                kind="workspace"
+              />
+            }
+          >
             <div
               key={view}
               className={"x1-dashboard x1-dashboard-" + view.toLowerCase()}
@@ -530,6 +556,7 @@ export default function X1Workspace() {
                   refreshData={refreshData}
                   refreshing={refreshing}
                   initialPanel={globalPanel}
+                  onNavigate={navigate}
                 />
               ) : view === "Strategy" ? (
                 <Strategy
@@ -685,6 +712,21 @@ export default function X1Workspace() {
               </dd>
             </div>
           </dl>
+          <div className="x3-motion-pref">
+            <span>Interface motion</span>
+            <div className="x1-segment" role="group" aria-label="Interface motion preference">
+              {(["system", "minimal"] as const).map((pref) => (
+                <button
+                  key={pref}
+                  type="button"
+                  aria-pressed={motionPref === pref}
+                  onClick={() => updateMotionPref(pref)}
+                >
+                  {pref === "system" ? "System (default)" : "Minimal"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="x1-actions">
             <button
               className="x1-secondary x1-motion-button"
@@ -725,7 +767,14 @@ export default function X1Workspace() {
           title="Data Control Center"
           onClose={() => setDataControl(false)}
         >
-          <Suspense fallback={<p role="status">Opening provider controls…</p>}>
+          <Suspense
+            fallback={
+              <WorkspaceSkeleton
+                label="Opening Data Control Center…"
+                kind="panel"
+              />
+            }
+          >
             <DataControl notify={notify} />
           </Suspense>
         </Modal>
@@ -765,6 +814,21 @@ export default function X1Workspace() {
             Payments, broker execution, public content publishing, and
             unverified forward probability claims remain disabled.
           </p>
+          <div className="x3-motion-pref">
+            <span>Interface motion</span>
+            <div className="x1-segment" role="group" aria-label="Interface motion preference">
+              {(["system", "minimal"] as const).map((pref) => (
+                <button
+                  key={pref}
+                  type="button"
+                  aria-pressed={motionPref === pref}
+                  onClick={() => updateMotionPref(pref)}
+                >
+                  {pref === "system" ? "System (default)" : "Minimal"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="x1-actions">
             <button
               className="x1-secondary x1-motion-button"

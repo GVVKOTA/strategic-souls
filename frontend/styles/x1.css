@@ -299,7 +299,7 @@
   justify-content: space-between;
   align-items: center;
   width: 100%;
-  font-size: 12px !important;
+  font-size: 13px;
   background: none;
   border: 0;
   padding: 8px 0;
@@ -391,7 +391,7 @@
   border: 0;
   padding: 10px 0;
   color: var(--x-muted);
-  font-size: 12px !important;
+  font-size: 13px;
   white-space: nowrap;
   margin-left: auto;
 }
@@ -428,7 +428,7 @@
   scrollbar-width: none;
 }
 .x1-subnav button {
-  font-size: 13px;
+  font-size: 14px;
   background: none;
   color: var(--x-muted);
   border: 0;
@@ -436,6 +436,7 @@
   padding: 0 1px;
   min-height: 48px;
   white-space: nowrap;
+  transition: color 150ms ease, border-color 150ms ease;
 }
 .x1-subnav button[aria-current="page"] {
   color: var(--x-accent);
@@ -502,18 +503,20 @@
   min-height: 44px;
   padding: 10px 16px;
   border: 1px solid transparent;
-  border-radius: 5px;
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  line-height: 1.4 !important;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
   transition:
-    background 0.16s,
-    border-color 0.16s;
+    background 150ms ease,
+    border-color 150ms ease,
+    transform 130ms ease;
   color: var(--x1-text-primary);
   background: var(--x1-surface-3);
 }
 .x1-primary:hover {
   background: var(--x1-surface-3);
+  transform: translateY(-1px);
 }
 .x1-secondary {
   background: var(--x1-surface-2);
@@ -523,6 +526,7 @@
 .x1-secondary:hover {
   background: var(--x1-surface-3);
   border-color: var(--x1-divider-strong);
+  transform: translateY(-1px);
 }
 .x1-icon-button {
   display: inline-flex;
@@ -550,7 +554,7 @@
   padding: 9px 0;
   min-height: 44px;
   color: var(--x-accent);
-  font-size: 12px !important;
+  font-size: 14px;
   text-align: left;
   line-height: 1.4;
 }
@@ -648,9 +652,15 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 7px;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease;
 }
 .x1-data-card:hover {
   border-color: var(--x1-divider-strong);
+  background: var(--x1-surface-2);
+  transform: translateY(-2px);
 }
 .x1-data-card-top {
   display: flex;
@@ -738,7 +748,8 @@
   font-size: 12px;
   white-space: nowrap;
 }
-.x1-segment button[aria-pressed="true"] {
+.x1-segment button[aria-pressed="true"],
+.x1-segment button[aria-selected="true"] {
   background: var(--x1-surface-3);
   color: var(--x-accent);
 }
@@ -761,7 +772,7 @@
   display: inline-flex !important;
   align-items: center;
   gap: 10px;
-  font-size: 12px !important;
+  font-size: 14px;
   color: var(--x-muted);
   min-width: 0;
 }
@@ -775,7 +786,7 @@
   color: var(--x-text);
   min-height: 44px;
   width: 100%;
-  font-size: 13px;
+  font-size: 14px;
   min-width: 0;
   line-height: 1.5;
 }
@@ -788,9 +799,9 @@
 }
 .x1-inline-label select {
   width: auto;
-  font-size: 12px;
+  font-size: 14px;
   max-width: 220px;
-  min-height: 38px;
+  min-height: 44px;
   padding: 7px 10px;
 }
 .x1-globe-stage {
@@ -1007,12 +1018,12 @@
   text-align: left;
 }
 .x1-quote-row strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 .x1-quote-row span:last-child {
   text-align: right;
   font-family: "IBM Plex Mono", monospace;
-  font-size: 12px;
+  font-size: 14px;
 }
 .x1-quote-row small {
   display: block;
@@ -1135,14 +1146,14 @@
   white-space: nowrap;
 }
 .x1-app th {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--x-muted);
-  font-weight: 400;
+  font-weight: 500;
   padding: 12px 14px 12px 0;
   border-bottom: 1px solid var(--x-border);
 }
 .x1-app td {
-  font-size: 12px;
+  font-size: 14px;
   padding: 16px 14px 16px 0;
   border-bottom: 1px solid var(--x-border);
 }
@@ -1198,7 +1209,7 @@
   border-radius: 6px;
   background: var(--x1-surface-2);
   color: var(--x1-text-primary);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.65;
   margin: 16px 0;
 }
@@ -1252,7 +1263,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--x1-text-secondary);
   min-width: 0;
 }
@@ -1277,7 +1288,7 @@
   gap: 20px;
   padding: 12px 0;
   border-bottom: 1px solid var(--x-border);
-  font-size: 12px;
+  font-size: 14px;
 }
 .x1-details dt {
   color: var(--x-muted);
@@ -2159,7 +2170,7 @@
     display: none;
   }
   .x1-topbar input {
-    font-size: 12px !important;
+    font-size: 16px;
   }
   .x1-overview-grid {
     grid-template-columns: 1fr;
@@ -2259,7 +2270,7 @@
     margin-left: auto;
   }
   .x1-universal-search input {
-    font-size: 12px !important;
+    font-size: 16px;
   }
   .x1-account {
     height: 32px;
@@ -2388,13 +2399,13 @@
     font-size: 12px;
   }
   .x1-globe-toolbar .x1-inline-label {
-    font-size: 12px !important;
+    font-size: 13px;
     gap: 6px;
   }
   .x1-inline-label select {
-    font-size: 12px;
-    max-width: 150px;
-    padding: 7px;
+    font-size: 16px;
+    max-width: 170px;
+    padding: 7px 10px;
   }
   .x1-globe-stage {
     height: 300px;
@@ -2501,11 +2512,14 @@
   .x1-form select,
   .x1-form textarea,
   .x1-label input,
-  .x1-label textarea {
+  .x1-label textarea,
+  .x1-app input:not([type="checkbox"]):not([type="radio"]),
+  .x1-app select,
+  .x1-app textarea {
     font-size: 16px;
   }
   .x1-form label {
-    font-size: 12px;
+    font-size: 14px;
   }
   .x1-dialog .x1-details > div {
     font-size: 12px;
@@ -2542,7 +2556,7 @@
   }
   .x1-rule-block input,
   .x1-rule-block select {
-    font-size: 12px;
+    font-size: 16px;
     padding: 7px 6px;
     min-height: 44px;
   }
@@ -2577,7 +2591,7 @@
     gap: 2px;
   }
   .x1-history-row > .x1-text-button {
-    font-size: 12px !important;
+    font-size: 14px;
   }
   .x1-calculation-result {
     font-size: 22px;
@@ -2815,12 +2829,12 @@
 }
 .x1-private-brief button {
   height: 44px;
-  font-size: 12px;
+  font-size: 14px;
 }
 .x1-private-brief strong {
   min-width: 2ch;
   font:
-    12px "IBM Plex Mono",
+    14px "IBM Plex Mono",
     monospace;
   color: var(--x1-text-primary);
 }
@@ -2871,7 +2885,7 @@
   font-size: 13px;
 }
 .x1-app .x1-universal-search input {
-  font-size: 13px !important;
+  font-size: 14px;
 }
 .x1-app .x1-mobile-nav a {
   min-height: 58px;

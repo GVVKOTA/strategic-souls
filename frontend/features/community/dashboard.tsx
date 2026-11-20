@@ -17,7 +17,7 @@ import {
   Pencil,
 } from "lucide-react";
 import { compileFormula } from "../../../backend/engines/scan";
-import { Panel, Empty, Modal, api, moment, type Notice } from "../../components/workspace/shared";
+import { Panel, Empty, Modal, WorkspaceSkeleton, api, moment, type Notice } from "../../components/workspace/shared";
 import {
   SocialWorkspace,
   GroupNetworkPanel,
@@ -448,18 +448,19 @@ export default function Community({
               <div>
                 <strong>Private by design</strong>
                 <p>
-                  Group publication stays inside current membership. This Site
-                  remains restricted to its existing audience. Public posting
-                  and payments are disabled.
+                  Group publication stays inside current membership. Private
+                  groups remain restricted to invited and approved members.
+                  Public posting and payments are disabled.
                 </p>
               </div>
             </div>
           </aside>
           <div className="x1-community-main">
             {loading && !data ? (
-              <div className="x1-loading" role="status">
-                Opening your private Community…
-              </div>
+              <WorkspaceSkeleton
+                label="Opening your private Community…"
+                kind="panel"
+              />
             ) : group ? (
               <>
                 <Panel

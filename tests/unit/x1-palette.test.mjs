@@ -155,3 +155,20 @@ test('Checkpoint brief and fixed market-card geometry remain in the real CSS', (
   assert.ok(cards.includes('190px')); assert.ok(cards.includes('210px'));
   assert.ok(/prefers-reduced-motion:\s*reduce/.test(css)); assert.ok(/forced-colors:\s*active/.test(css));
 });
+
+test('Primary buttons and mobile form inputs meet X3 legibility and anti-autozoom scale without altering text colors', () => {
+  const x1 = roots.find(r => r.file === 'frontend/styles/x1.css').root;
+  const x2 = roots.find(r => r.file === 'frontend/styles/x2.css').root;
+  const btnSizes = [];
+  x1.walkRules(/\.x1-primary/, rule => {
+    if (rule.selector.includes('.x1-secondary')) rule.walkDecls('font-size', d => btnSizes.push(d.value));
+  });
+  assert.ok(btnSizes.some(v => /^1[4-6]px$/.test(v)), 'Primary/secondary buttons must be 14–16px, not cramped 12px !important');
+  assert.ok(btnSizes.every(v => !/!important/.test(v)), 'Primary/secondary button size must not rely on !important cascade');
+
+  const mobileSearchSizes = [];
+  x2.walkRules(/\.x2-omnisearch input/, rule => {
+    if (inMedia(rule.first, /max-width:\s*680px/)) rule.walkDecls('font-size', d => mobileSearchSizes.push(d.value));
+  });
+  assert.ok(mobileSearchSizes.some(v => v === '1rem' || v === '16px'), 'Mobile search input must be >=16px to avoid iOS/Android auto-zoom');
+});

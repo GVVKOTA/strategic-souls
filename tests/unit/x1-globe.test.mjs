@@ -2,13 +2,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import ts from 'typescript';
 
 async function importTs(file) {
   const source = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
   return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
 }
-const { xyz, project, clusterVenues, greatCircle } = await importTs('backend/services/market-data/globe.ts');
+const { xyz, project, clusterVenues, greatCircle, solarDirection, rotateToView } = await importTs('backend/services/market-data/globe.ts');
 const { EXCHANGES } = await importTs('backend/services/market-data/exchanges.ts');
 const almost = (actual, expected, tolerance = 1e-10) => assert.ok(Math.abs(actual - expected) <= tolerance, `Expected ${actual} near ${expected} within ${tolerance}`);
 const radius = (vertices, index) => Math.hypot(...vertices.slice(index * 3, index * 3 + 3));
@@ -91,5 +92,39 @@ test('Antipodal and nearly antipodal great-circle paths use a stable normalized 
     for (let k = 0; k <= 48; k++) almost(radius(curve, k), 1.014 + Math.sin(Math.PI * k / 48) * .11, 1e-7);
     xyz(a, 1.014).forEach((value, i) => almost(curve[i], value, 1e-7));
     xyz(b, 1.014).forEach((value, i) => almost(curve[curve.length - 3 + i], value, 1e-7));
+  }
+});
+
+test('Approximate solar direction stays unit-normalized and tracks equinox/solstice & UTC hour', () => {
+  const noonEquinox = solarDirection(Date.UTC(2026, 2, 21, 12, 0, 0));
+  almost(Math.hypot(...noonEquinox), 1, 1e-10);
+  assert.ok(noonEquinox[2] > 0.99, 'At 12:00 UTC on equinox sun faces Prime Meridian (+z)');
+  const morningEquinox = solarDirection(Date.UTC(2026, 2, 21, 6, 0, 0));
+  assert.ok(morningEquinox[0] > 0.99, 'At 06:00 UTC sun faces +90E (+x)');
+  const eveningEquinox = solarDirection(Date.UTC(2026, 2, 21, 18, 0, 0));
+  assert.ok(eveningEquinox[0] < -0.99, 'At 18:00 UTC sun faces -90W (-x)');
+  const juneSolstice = solarDirection(Date.UTC(2026, 5, 21, 12, 0, 0));
+  const decSolstice = solarDirection(Date.UTC(2026, 11, 21, 12, 0, 0));
+  assert.ok(juneSolstice[1] > 0.35, 'Northern summer solstice has positive solar declination');
+  assert.ok(decSolstice[1] < -0.35, 'Southern summer solstice has negative solar declination');
+  const fallback = solarDirection(Number.NaN);
+  almost(Math.hypot(...fallback), 1, 1e-10);
+  const rotated = rotateToView(noonEquinox, 0.5, -0.3);
+  almost(Math.hypot(...rotated), 1, 1e-10);
+});
+
+test('Globe shader and static fallback preserve natural full-color NASA assets and SHA-256 provenance', () => {
+  const canvasSrc = readFileSync('frontend/features/global/globe-canvas.tsx', 'utf8');
+  const globeCss = readFileSync('frontend/components/workspace/globe-visual.css', 'utf8');
+  assert.doesNotMatch(canvasSrc, /float\s+luminance\s*\(/, 'Globe fragment shader must not collapse Earth to grayscale luminance');
+  assert.match(canvasSrc, /uSunDir/, 'Globe shader must include approximate solar terminator uniform');
+  assert.match(canvasSrc, /webglcontextrestored/, 'Globe must support graceful WebGL context restoration');
+  assert.doesNotMatch(globeCss, /filter:\s*grayscale\(1\)/, 'Static Blue Marble fallback must render in natural color');
+
+  const manifest = JSON.parse(readFileSync('public/data/earth-assets.json', 'utf8'));
+  for (const asset of manifest.assets) {
+    const filePath = 'public' + asset.path;
+    const digest = createHash('sha256').update(readFileSync(filePath)).digest('hex');
+    assert.equal(digest, asset.sha256, `Original NASA asset bytes must remain preserved for ${asset.path}`);
   }
 });

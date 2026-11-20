@@ -1,28 +1,42 @@
-# Strategic Souls engineering rules
+# Strategic Souls Engineering Rules
 
-## Mission and code map
+## 1. Mission & Five Ownership Areas
 
-Maintain the X2 research application for Global Vertex Vectors. The three dashboards live under [frontend/features](frontend/features). Put identity, canonical engines, provider adapters and application logic under [backend](backend). Routes remain in [app](app), and database definitions and access helpers belong in [database](database). Keep ordered D1 migrations in [drizzle](drizzle) and public assets in [public](public). Never duplicate canonical algorithms, provider adapters or access checks in dashboards.
+Maintain the **Strategic Souls** financial research application for **Global Vertex Vectors (GVV)** across five primary ownership areas while keeping framework-required root folders in place:
 
-Tested Node 22.16.0, pnpm 11.25.0; React/TypeScript, Next conventions through Vinext/Vite on Workers/D1. Preserve `pnpm-lock.yaml`; no unnecessary upgrades or second Node lockfile. Read README/SOURCE_PROVENANCE before assuming a deployed/source state.
+- [`frontend/`](frontend/README.md): Three workspaces under `frontend/features/` (`global/`, `strategy/`, `community/`, plus retained `legacy/` and `v3/`), shared shell/UI in `frontend/components/`, hooks in `frontend/hooks/`, and stylesheets in `frontend/styles/`.
+- [`backend/`](backend/README.md): Standalone Cloudflare D1 auth & optional Google OAuth (`backend/auth/`), deterministic canonical math/scan/backtest/portfolio engines (`backend/engines/`), application & market-data services (`backend/services/`), integrations (`backend/integrations/`), Worker middleware/security (`backend/middleware/`), and optional Python quant worker (`backend/quant/`).
+- [`database/`](database/README.md): Cloudflare D1 Drizzle schemas (`database/schemas/`) and query helpers (`database/queries/`).
+- [`public/`](public/README.md): Approved GVV logo (`public/gvv-approved.jpg`), favicons, self-hosted WOFF2 fonts (`public/fonts/`), NASA Earth textures and provenance (`public/data/`), and offline reference files (`public/downloads/`).
+- [`operations/`](operations/docs/README.md): Active architecture/visual/API/deployment docs (`operations/docs/`), build/verify/preview/backup scripts (`operations/scripts/`), and reference examples (`operations/examples/`).
+- **Framework root exceptions (keep at root):** `app/` (Next.js/Vinext pages & `/api/*`), `drizzle/` (applied chronological D1 SQL migrations `0000`–`0007`), `supabase/` (optional separate V3 PostgreSQL RLS stack), `tests/`, `scripts/`, `.github/`, and root config/lockfiles.
 
-## Product and evidence invariants
+Never duplicate canonical algorithms, provider adapters, or access checks inside frontend dashboards or route handlers. Keep `pnpm-lock.yaml` intact; do not create a second Node lockfile or perform unsolicited upgrades.
 
-- Preserve matte black UI, readable shiny silver copy, bright blue headings, approved GVV header image, compact labels, accessible info controls, keyboard/focus behavior, reduced motion and responsive interaction. No unsolicited redesign/new dashboard.
-- X2 has no crypto scope. Keep labelled legacy/synthetic archives separate from current evidence. Never invent LIVE values, volume, units, publication/known-at times or coverage. Null/UNKNOWN is not zero/FAIL. A key is separate from display, derived-display, non-display, cache, storage and redistribution rights.
-- Use one deterministic canonical AST for Simple/Advanced. Preserve immutable executions/inputs/digests; corrections create versions. Enforce original cutoffs, censoring, ambiguity, deduplication/non-overlap. Negative-only Graveyard data is biased. Numerical probability needs eligible independent data, defensible cohorts, uncertainty and validated OOS calibration; otherwise INSUFFICIENT EVIDENCE.
-- Enforce native identity/current consent and server-side owner/participant/membership/role checks, including mutation-time authority. Group sharing does not expose private portfolios or authorize training. Discovery is opt-in; retain blocks/rate limits; do not claim E2EE.
-- Keep migrations chronological and non-destructive. Never erase/rewrite old migrations or rows to pass a test. Core X2 uses D1; retained Supabase/quant source is gated, not proof of active services.
+## 2. Product, Visual & Evidence Invariants
 
-## Development and checks
+- **ABSOLUTE UI TEXT COLOR INVARIANT:** Never change any canonical UI text color hex token in `frontend/styles/globals.css` (`--x1-text-primary: #E8EDF2`, `--x1-text-secondary: #CAD3DC`, `--x1-text-tertiary: #B9C3CE`, `--x1-text-muted: #A7B1BC`, `--x1-title-blue: #76C0FF`, `--x1-title-blue-alt: #94D0FF`) or recolor existing UI text. Improve silver readability through surface contrast, typography scale (`>=14px` interactive controls, `>=16px` mobile inputs), spacing, and layout.
+- **Natural Full-Color 3D Earth:** The interactive WebGL globe (`frontend/features/global/globe-canvas.tsx`) and static fallback (`globe-visual.css`) render authentic NASA Blue/Black Marble historical textures in natural full color with approximate UTC solar lighting, translucent clouds, restrained Rayleigh blue rim, 24 exchange venues, and honest historical/approximate disclosures. Never claim historical NASA imagery is live satellite telemetry.
+- **Motion & Loading:** Keep `EclipseIntro` within its tested contract (`<=1050ms` React / `1100ms` CSS safety escape, once/session, skip-safe, reduced-motion aware). Respect `prefers-reduced-motion` and the optional System/Minimal motion preference. Loaders must reflect real async work, unblock on error/timeout, and never fabricate completion.
+- **Evidence & Data Integrity:** X2 has no crypto scope. Keep labelled legacy/synthetic archives separate from current evidence. Never invent `LIVE` values, volume, units, publication/known-at times, FII/DII flows, or coverage. `NULL`/`UNKNOWN` is never silently treated as `0`/`FAIL`. An API key is separate from display, derived-display, non-display, cache, storage, and redistribution rights.
+- **One Canonical Soul Scan Engine:** Beginner (default), Intermediate, and Advanced Soul Scan modes MUST compile to and execute through the ONE deterministic canonical AST (`backend/engines/scan.ts`). Preserve immutable executions, input digests, original cutoffs, censoring, deduplication, and `INSUFFICIENT EVIDENCE` gating when uncalibrated.
+- **Standalone Auth & Access Control:** Authentication uses standalone Cloudflare D1 email/password (`PBKDF2-SHA256` + SHA-256 hashed `HttpOnly` session cookies + session rotation) and optional PKCE Google OAuth. **Never reintroduce OpenAI/ChatGPT user login.** Enforce current consent and server-side owner/participant/membership/role checks on every read and mutation. Group sharing never exposes private portfolios. Discovery is opt-in; keep blocks and rate limits; do not claim E2EE.
+- **Migrations & Data Safety:** Keep D1 migrations in `drizzle/` chronological and non-destructive. Never edit, squash, reset, or drop applied migrations (`0000`–`0007`) or production D1 rows.
 
-Use small branches from current `main`; agree on shared-file ownership. Inspect diffs, stage exact files, commit clearly and open a PR. No force pushes, overwriting contributions or cosmetic mass moves. Co-locate new behavioral tests when useful; retain existing backend suites in `tests/`. Do not weaken assertions to make checks green.
+## 3. Development, Testing & Verification
 
-Use `pnpm install --frozen-lockfile` after dependency changes; `npm run verify:x2` for types/full application lint/Node tests; `npm run build` for the real Worker. Individual commands: `npm run typecheck`, `npm run lint:app`, `npm test`. Report actual results, warnings and untested limits. Remote Actions success is separate. Windows: use npm run dev for the compiled Worker preview. The upstream HMR issue is documented in the developer guide. Local mode is loopback-only fictional identity plus isolated local D1, never production auth/data. Stop owned QA helpers afterward.
+- Create small, focused branches from `main`. Inspect `git status` and `git diff`, stage exact files, commit clearly, and open a PR. Never force-push or overwrite collaborator work. Do not weaken assertions to make checks pass.
+- **Verified Commands:**
+  - Install: `pnpm install --frozen-lockfile` (PowerShell restricted policy: `pnpm.cmd install --frozen-lockfile`)
+  - Full verification: `node operations/scripts/check-x2-release.mjs` (runs `typecheck`, `lint:app`, and all Node unit/integration tests)
+  - Production Worker build: `node operations/scripts/run-framework.mjs build` (or `npm.cmd run build`)
+  - Local isolated preview on Windows: `node operations/scripts/local-preview.mjs launch` (or `npm.cmd run dev`) -> open `http://127.0.0.1:5173`. Uses an isolated `.wrangler/local-preview` D1 database and real standalone auth with disposable local accounts; never connects to production D1. Stop owned local helpers after QA.
+  - Optional Python quant tests: `uv run --project backend/quant pytest backend/quant/tests -q`
+- Report actual command outputs, test counts, warnings, and untested limits truthfully (`OBSERVED`, `REPRODUCED`, `CHANGED`, `TESTED-PASS`, `TESTED-FAIL`, `NOT-TESTED`, `BLOCKED`, `DEPLOYED-VERIFIED`).
 
-## Security, teamwork and releases
+## 4. Security, Teamwork & Cloudflare Releases
 
-- Never commit/output credentials, `.env` values, cookies, native owner subjects, user messages/rows/portfolios, private screenshots, DB dumps, vendor contracts or unauthorized datasets. Use server secrets, ignored local configuration and explicit synthetic fixtures. Scan current files and all history intended for push. Private GitHub is not a secret store. Retain third-party licences/credits; no scraping against terms or trade execution.
-- Founder controls product/releases; contributors use their own identities and branches. Personal-repository roles do not guarantee review enforcement. Do not invite anyone without exact username and owner authorization.
-- GitHub push does not deploy. Future approved deployment must verify original project `appgprj_6ae0ae7364a481919dfb1af2f4fe17f0`, version/source/access, reconcile reviewed changes into the official Sites checkout, privately back up current data, check/build/package exact source and verify native deployment/original URL/audience. Record both SHAs; never create a replacement Site.
-- No purchases, paid integrations, public/audience/access changes, credential expansion or irreversible production actions without explicit owner authorization. This export authorizes source management only, not deployment.
+- **Zero Secret Leakage:** Never commit or print credentials, `.env`/`.dev.vars` values, cookies, session tokens, `X2_OWNER_SUBJECT`, provider keys, private user rows, or DB dumps. Store production secrets only in Cloudflare Worker Secrets. Scan diffs and history before pushing.
+- **Real Deployment Topology:** Production runs on Cloudflare Worker `strategic-souls` (`https://strategic-souls.vishnukota20071005.workers.dev/`) bound to physical Cloudflare D1 database `ss` (binding `DB`, UUID `1cda2b05-6b99-4d04-896f-b3542ad2ce7f`), deployed via GitHub-connected Cloudflare Workers Builds on branch `main`.
+- **Release Safety:** Never create a replacement Worker or D1 database. Before any production release, verify `dist/server/wrangler.json` binds the exact existing Worker and D1 UUID, confirm all local & CI checks pass, verify rollback version provenance, and independently verify the live URL after deployment. Pushing to a branch is NOT proof of deployment.
+- **Out-of-Scope Without Explicit Founder Approval:** Paid subscriptions, billing/checkout, advertising activation, live broker trading, destructive migrations, credential rotation, public launch announcements, or repository visibility changes.

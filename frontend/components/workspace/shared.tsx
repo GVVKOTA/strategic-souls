@@ -145,6 +145,33 @@ export function Panel({
     </section>
   );
 }
+/** Non-blocking, layout-matched skeleton shown only while real async content is pending. */
+export function WorkspaceSkeleton({
+  label,
+  kind = "workspace",
+}: {
+  label: string;
+  kind?: "workspace" | "terminal" | "panel";
+}) {
+  return (
+    <div className="x3-skeleton" role="status" aria-live="polite">
+      <div className="x3-skeleton-head">
+        <div className="x3-skeleton-bar is-title" aria-hidden="true" />
+        <div className="x3-skeleton-bar is-short" aria-hidden="true" />
+      </div>
+      {kind === "workspace" ? (
+        <div className="x3-skeleton-grid" aria-hidden="true">
+          <div className="x3-skeleton-card" />
+          <div className="x3-skeleton-card" />
+          <div className="x3-skeleton-card" />
+        </div>
+      ) : (
+        <div className="x3-skeleton-card" aria-hidden="true" />
+      )}
+      <p className="x3-skeleton-label">{label}</p>
+    </div>
+  );
+}
 export function Empty({
   title,
   children,

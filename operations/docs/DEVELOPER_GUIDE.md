@@ -1,50 +1,98 @@
-# Developer guide
+# Developer Guide (Windows, VS Code & Local Workflow)
 
-Open the project folder in VS Code with File → Open Folder, then choose Terminal → New Terminal. Run these commands from the folder that contains package.json.
+This guide explains how to run, test, edit, and contribute to **Strategic Souls** safely on Windows (or macOS/Linux) without affecting production Cloudflare data.
 
-~~~powershell
+## 1. Open the Right Folder in VS Code
+
+1. Open VS Code -> **File -> Open Folder** and choose the repository root containing `package.json` and `.git` (for example, `D:\Project SS\strategic-souls`).
+   - *Watch out for nested unzip folders* (such as `ss/strategic-souls-main`): run `git status` and check `Test-Path package.json` before running commands.
+2. Open a terminal (**Terminal -> New Terminal**).
+
+## 2. Check Toolchain & Install Dependencies
+
+Verified on Windows with Node `>= 22.13.0` (tested on `22.16.0` and `26.13.1`) and `pnpm 11.25.0`.
+
+> **Windows PowerShell tip:** If PowerShell blocks `.ps1` shims (`running scripts is disabled on this system`), use **`pnpm.cmd`** and **`npm.cmd`** (or run `node ...` directly, or switch the terminal profile to Command Prompt `cmd`).
+
+```powershell
 node --version
-pnpm --version
-pnpm install --frozen-lockfile
-npm run dev
-~~~
+pnpm.cmd --version
+pnpm.cmd install --frozen-lockfile
+```
 
-The tested Windows versions are Node 22.16.0 and pnpm 11.25.0. If pnpm is missing and Corepack is available, run the install with corepack pnpm@11.25.0 install --frozen-lockfile.
+Never run `npm install` (which creates a conflicting `package-lock.json`) — always use `pnpm` with `--frozen-lockfile`.
 
-Open http://127.0.0.1:5173 when Wrangler says it is ready. The local app has its own database and a fictional account. Complete the local onboarding checkboxes before trying saved drafts or watchlists. Use test labels and imaginary inputs for local records. Press Ctrl+C to stop, and restart the same command after edits.
+## 3. Start & Stop the Local Preview
 
-The default command builds, runs local-only migrations and starts the preview. Use npm run dev:hmr for the original hot-reload runner on environments that support it. On Windows it previously hit a Vinext startup error. Ports 5173 and 8787 must be free. If you already have a fresh build and a prepared database, npm run local:serve starts the preview alone.
+```powershell
+npm.cmd run dev
+# equivalent direct command:
+node operations/scripts/local-preview.mjs launch
+```
 
-The core preview needs no .env file. See [.env.example](../../.env.example) for optional settings. Authorized local Worker credentials belong in ignored .sites-runtime/.dev.vars. Keep production records and credentials out of local testing and Git.
+- Wait until Wrangler prints `Ready on http://127.0.0.1:8787` and the launcher prints the local URL **`http://127.0.0.1:5173`**.
+- Open **`http://127.0.0.1:5173`** in your browser.
+- **Isolated local database:** `local-preview.mjs` builds the real Cloudflare Worker, applies D1 migrations `0000`–`0007` to `.wrangler/local-preview/` (gitignored), and starts an isolated local Worker. It **never** connects to production Cloudflare D1.
+- **Standalone local accounts:** Register a disposable test account (e.g., `qa@example.test`) in the browser UI or `/signin`, then accept the research consent checkboxes to test watchlists, portfolios, Soul Scans, and Community groups. Never use real production passwords in local dev.
+- **Restart after edits:** Press **`Ctrl + C`** to stop, then run `npm.cmd run dev` again. On Windows, `local-preview.mjs` is recommended over `npm.cmd run dev:hmr` due to upstream Vinext/Vite HMR path issues on Windows.
+- **Fast restart when only restarting the server:** If `dist/` is already fresh and local D1 is migrated, run `node operations/scripts/local-preview.mjs serve`.
 
-## Where to work
+### Common Local Fixes
 
-| If you want to change | Start here |
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| `npm.ps1 cannot be loaded` in PowerShell | Default Windows ExecutionPolicy | Use `npm.cmd`, `pnpm.cmd`, or `node operations/scripts/...` directly. |
+| `ECONNREFUSED 127.0.0.1:5173` | Server not started yet, wrong folder, or port occupied | Confirm `package.json` is in current folder; check if ports `5173` or `8787` are already in use (`netstat -ano \| findstr ":5173 :8787"`); launch `node operations/scripts/local-preview.mjs launch`. |
+| `no such table: auth_users` locally | Stale `.wrangler/local-preview` state before migration `0007` | Stop server and re-run `node operations/scripts/local-preview.mjs setup` (applies `0000`–`0007` to local SQLite only). |
+| Missing commercial market prices locally | Normal keyless mode (`EODHD`/`TrueData` keys unset) | Official ECB FX and US Treasury feeds work keyless; commercial markets intentionally show `UNAVAILABLE` / `KEY REQUIRED`. |
+
+## 4. Where to Edit (Five Ownership Areas)
+
+| Want to change... | Start in... |
 | --- | --- |
-| A dashboard or form | frontend/features |
-| A shared component | frontend/components |
-| A page URL or HTTP endpoint | app |
-| Scan math, provider access or business rules | backend |
-| A query or table definition | database |
-| How the repository runs and deploys | operations |
-| Behavior checks | tests/unit or tests/integration |
+| Global, Strategy, or Community UI | `frontend/features/global/`, `frontend/features/strategy/`, `frontend/features/community/` |
+| Shared shell, search, modals, skeletons, intro | `frontend/components/workspace/` |
+| Typography, spacing, surfaces (never UI text hex colors) | `frontend/styles/` (`x1.css`, `x2.css`, `globe-visual.css`) |
+| Page routes or `/api/*` HTTP handlers | `app/` |
+| Auth, security, Soul Scan math, Formula Lab, market providers | `backend/` |
+| Cloudflare D1 Drizzle schemas or SQL queries | `database/` (do not modify applied `drizzle/0000`–`0007`) |
+| Static assets, GVV logo, NASA Earth images, local fonts | `public/` |
+| Docs, scripts, runbooks, verification helpers | `operations/` |
+| Unit & integration regression tests | `tests/unit/`, `tests/integration/` |
 
-For example, a new Strategy field starts in the Strategy UI. If it changes what a saved scan means, update shared research validation and add a test through the existing route. Check how the change handles old saved scans. Keep deployed migrations intact.
+## 5. Run Verification Before Committing
 
-## Check your changes
+```powershell
+# Full verification (TypeScript + ESLint on app/frontend/backend/database + all Node tests)
+node operations/scripts/check-x2-release.mjs
 
-Run npm run verify:x2 for types, lint and Node tests, then npm run build to confirm the Worker builds. Open the affected screen locally and try the action you changed. The separate Python suite runs with npm run test:quant and requires uv. Full V3 authentication requires local Supabase and a container engine. See the [V3 runbook](v3/RUNBOOK.md).
+# Production Cloudflare Worker build
+node operations/scripts/run-framework.mjs build
 
-## Contribute on GitHub
+# High-severity dependency audit
+pnpm.cmd audit --audit-level high
 
-A branch is an independent line of work. A pull request asks a reviewer to compare that branch with main. First update the reviewed base, then create a branch for your task.
+# Secret & provenance hygiene scan
+node operations/scripts/scan-v3-source.mjs
 
-~~~powershell
+# Optional Python quant suite (requires uv)
+uv run --project backend/quant pytest backend/quant/tests -q
+```
+
+> **Optional V3 local Supabase stack:** Full `operations/scripts/test-supabase-local.mjs` requires Docker + `supabase start` (not needed for core Cloudflare D1 development). The embedded PGlite RLS tests (`tests/integration/v3-postgres.test.mjs`) run automatically inside `npm.cmd test` without Docker.
+
+## 6. Contribute Safely on GitHub
+
+```powershell
 git switch main
 git pull --ff-only
-git switch -c feature/your-task
+git switch -c feat/your-task
+# ... make small focused edits and run verification ...
 git status
-git diff
-~~~
+git diff --check
+git add <exact-paths>
+git commit -m "feat(scope): clear description of change"
+git push -u origin feat/your-task
+```
 
-After verification, stage the paths you changed, commit with a descriptive message and run git push -u origin feature/your-task. Open a pull request on GitHub and say what changed and how you tested it. If a pull reports a conflict, keep both versions available and resolve the overlapping edits before committing. Follow the [architecture guide](ARCHITECTURE.md#database-and-deployment) for release steps.
+Open a Pull Request on GitHub against `main`, include what changed and which commands/screens you tested, and wait for CI (`verify.yml`) and review. Follow [`DEPLOYMENT_RUNBOOK.md`](DEPLOYMENT_RUNBOOK.md) for production releases to Cloudflare.

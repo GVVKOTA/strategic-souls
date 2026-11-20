@@ -35,6 +35,127 @@ export type RuleTree =
   | { kind: "condition"; rule: SimpleRule }
   | { kind: "ALL" | "ANY"; children: RuleTree[] }
   | { kind: "NOT"; child: RuleTree };
+
+export type BeginnerScanPreset = {
+  id: string;
+  label: string;
+  goal: string;
+  plainLanguage: string;
+  formula: string;
+  defaultName: string;
+  defaultDescription: string;
+  requires: string;
+};
+
+/** Guided Beginner presets that compile through the same canonical AST as Intermediate and Advanced. */
+export const BEGINNER_SCAN_PRESETS: readonly BeginnerScanPreset[] = Object.freeze([
+  {
+    id: "oversold-rsi",
+    label: "Oversold RSI (14)",
+    goal: "Pullback / mean-reversion study",
+    plainLanguage:
+      "Matches instruments whose 14-session Wilder RSI is below 40. Missing history stays UNKNOWN.",
+    formula: "rsi(close, 14) < 40",
+    defaultName: "Oversold RSI pullback study",
+    defaultDescription:
+      "Evaluate instruments where 14-session Wilder RSI is below 40 using eligible daily close observations.",
+    requires: "15+ daily closes (works keyless on ECB daily FX)",
+  },
+  {
+    id: "above-sma20",
+    label: "Trend above 20-day SMA",
+    goal: "Trend strength study",
+    plainLanguage:
+      "Matches instruments closing above their 20-session simple moving average.",
+    formula: "close > sma(close, 20)",
+    defaultName: "Above 20-session SMA trend study",
+    defaultDescription:
+      "Test whether eligible instruments currently close above their 20-session simple moving average.",
+    requires: "20+ daily closes (works keyless on ECB daily FX)",
+  },
+  {
+    id: "ema-not-overbought",
+    label: "EMA trend without stretched RSI",
+    goal: "Balanced momentum filter",
+    plainLanguage:
+      "Matches instruments above their 20-session EMA while 14-session RSI is not above 70.",
+    formula: "all(close > ema(close, 20), not(rsi(close, 14) > 70))",
+    defaultName: "EMA trend with RSI guardrail",
+    defaultDescription:
+      "Filter for instruments closing above their 20-session EMA while excluding RSI(14) above 70.",
+    requires: "20+ daily closes (works keyless on ECB daily FX)",
+  },
+  {
+    id: "positive-macd",
+    label: "Positive MACD (12, 26)",
+    goal: "Momentum continuation study",
+    plainLanguage:
+      "Matches instruments where the 12/26 exponential moving average spread (MACD) is above zero.",
+    formula: "macd(close, 12, 26) > 0",
+    defaultName: "Positive MACD momentum study",
+    defaultDescription:
+      "Examine instruments whose 12/26 MACD line is above zero on eligible daily observations.",
+    requires: "26+ daily closes (works keyless on ECB daily FX)",
+  },
+  {
+    id: "sma20-crossover",
+    label: "Fresh SMA(20) upward cross",
+    goal: "Regime-shift event study",
+    plainLanguage:
+      "Matches instruments whose latest close crossed above the 20-session SMA from below.",
+    formula: "crossesAbove(close, sma(close, 20))",
+    defaultName: "SMA 20 upward crossover study",
+    defaultDescription:
+      "Detect instruments whose latest eligible close crossed above the 20-session simple moving average.",
+    requires: "21+ daily closes (works keyless on ECB daily FX)",
+  },
+  {
+    id: "overbought-rsi",
+    label: "Stretched RSI (14) > 70",
+    goal: "Overextension monitor",
+    plainLanguage:
+      "Matches instruments whose 14-session Wilder RSI exceeds 70 on eligible closes.",
+    formula: "rsi(close, 14) > 70",
+    defaultName: "Stretched RSI overextension study",
+    defaultDescription:
+      "Identify instruments where 14-session Wilder RSI is above 70 under eligible daily closes.",
+    requires: "15+ daily closes (works keyless on ECB daily FX)",
+  },
+]);
+
+export const RESEARCH_GLOSSARY: readonly { term: string; meaning: string }[] =
+  Object.freeze([
+    {
+      term: "Wilder RSI (14)",
+      meaning:
+        "Relative Strength Index over 14 sessions measuring recent up-move vs down-move magnitude on a 0–100 scale. Not a guaranteed reversal signal.",
+    },
+    {
+      term: "ATR (14)",
+      meaning:
+        "Average True Range over 14 sessions measuring price range volatility. Requires high, low, and close OHLC bars.",
+    },
+    {
+      term: "OHLC",
+      meaning:
+        "Open, High, Low, Close prices for a session. Daily reference feeds like ECB supply only a single reference close, never synthetic OHLC.",
+    },
+    {
+      term: "CAGR & XIRR",
+      meaning:
+        "CAGR computes annualized growth between two values over a fixed period; XIRR solves the annualized internal rate of return across irregular dated cash flows.",
+    },
+    {
+      term: "Implied Volatility (IV) & BSM",
+      meaning:
+        "Black-Scholes-Merton theoretical pricing and implied volatility assume European exercise and constant parameters; they are educational models, not live exchange option quotes.",
+    },
+    {
+      term: "Point-in-Time (PIT) Evidence",
+      meaning:
+        "Evaluates rules using only information genuinely known at the original observation date. Retrieval-only datasets cannot establish PIT backtest claims.",
+    },
+  ]);
 const finite = (value: unknown, label: string, lo: number, hi: number) => {
   if (
     typeof value !== "number" ||

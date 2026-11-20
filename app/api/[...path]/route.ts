@@ -132,7 +132,7 @@ async function handle(request: Request): Promise<Response> {
         )
         .bind(
           subject,
-          "Researcher",
+          user.displayName || "Researcher",
           new Date().toISOString(),
           VERSION,
           new Date().toISOString(),

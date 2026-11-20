@@ -58,6 +58,9 @@ const DB = {
 };
 
 const env = { DB };
+let mockFetch = () => {
+  throw new Error("Unexpected network fetch in auth tests.");
+};
 const context = vm.createContext({
   console,
   Request,
@@ -65,6 +68,9 @@ const context = vm.createContext({
   Headers,
   TextEncoder,
   TextDecoder,
+  AbortController,
+  setTimeout,
+  clearTimeout,
   crypto: {
     subtle: webcrypto.subtle,
     getRandomValues: (arr) => webcrypto.getRandomValues(arr),
@@ -82,9 +88,7 @@ const context = vm.createContext({
   Map,
   btoa,
   atob,
-  fetch: () => {
-    throw new Error("Unexpected network fetch in auth tests.");
-  },
+  fetch: (...args) => mockFetch(...args),
 });
 
 const cache = new Map();
@@ -307,7 +311,66 @@ test("signin rejects wrong password or unknown email with uniform 401 and succee
   });
   assert.equal(ok.status, 200);
   assert.equal(ok.data.authenticated, true);
-  assert.ok(extractSessionCookie(ok.headers));
+  const firstCookie = extractSessionCookie(ok.headers);
+  assert.ok(firstCookie);
+
+  // Re-authenticating with an active session rotates out the old session token in D1.
+  const rotated = await callAuth(
+    "signin",
+    {
+      email: "alpha@example.com",
+      password: "StrongPassword123",
+    },
+    { cookie: firstCookie },
+  );
+  assert.equal(rotated.status, 200);
+  const secondCookie = extractSessionCookie(rotated.headers);
+  assert.ok(secondCookie);
+  assert.notEqual(secondCookie, firstCookie);
+  const staleCheck = await callAuth("session", undefined, { cookie: firstCookie });
+  assert.equal(staleCheck.data.authenticated, false);
+  const freshCheck = await callAuth("session", undefined, { cookie: secondCookie });
+  assert.equal(freshCheck.data.authenticated, true);
+});
+
+test("Google OAuth callback rejects mismatched state, clears OAuth cookies, and blocks upstream redirects", async () => {
+  env.GOOGLE_CLIENT_ID = "test-client-id";
+  env.GOOGLE_CLIENT_SECRET = "test-client-secret";
+  try {
+    const start = await callAuth("google?return_to=%2Fworkspace");
+    assert.equal(start.status, 302);
+    const location = start.headers.get("location") || "";
+    assert.match(location, /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
+
+    const badState = await callAuth(
+      "google/callback?code=fake-code&state=wrong-state",
+      undefined,
+      { cookie: "__ss_oauth_state=expected-state; __ss_oauth_pkce=verifier123" },
+    );
+    assert.equal(badState.status, 400);
+    const cleared = badState.headers.get("set-cookie") || "";
+    assert.match(cleared, /__ss_oauth_state=;/);
+    assert.match(cleared, /Max-Age=0/);
+
+    let sawManual = false;
+    mockFetch = async (_url, init) => {
+      sawManual = init?.redirect === "manual";
+      return new Response(null, { status: 302, headers: { location: "https://evil.invalid" } });
+    };
+    const redirected = await callAuth(
+      "google/callback?code=fake-code&state=expected-state",
+      undefined,
+      { cookie: "__ss_oauth_state=expected-state; __ss_oauth_pkce=verifier123" },
+    );
+    assert.equal(sawManual, true);
+    assert.equal(redirected.status, 502);
+  } finally {
+    delete env.GOOGLE_CLIENT_ID;
+    delete env.GOOGLE_CLIENT_SECRET;
+    mockFetch = () => {
+      throw new Error("Unexpected network fetch in auth tests.");
+    };
+  }
 });
 
 test("Google OAuth fails closed when credentials are missing and return paths block open redirects", async () => {
