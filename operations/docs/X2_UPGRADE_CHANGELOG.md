@@ -1,6 +1,6 @@
 # Strategic Souls — X3 / X2 Upgrade Changelog
 
-**Branch:** `feat/x3-strategic-souls-upgrade` (branched cleanly from `main` @ `af16aae5fb3f32ce7472b4071c85eb5119f1cf20`)  
+**Branch:** `feat/x3-strategic-souls-upgrade` (branched cleanly from `main` @ `af16aae5fb3f32ce7472b4071c85eb5119f1cf20`)
 **Zero new npm or Python dependencies added.** `pnpm-lock.yaml`, `backend/quant/uv.lock`, and applied D1 migrations `drizzle/0000`–`0007` remain 100% untouched.
 
 ---
