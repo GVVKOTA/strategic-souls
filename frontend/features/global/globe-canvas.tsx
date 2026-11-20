@@ -1,7 +1,15 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { clusterVenues, greatCircle, project, xyz } from "../../../backend/services/market-data/globe";
+import {
+  clusterVenues,
+  greatCircle,
+  project,
+  rotateToView,
+  solarDirection,
+  xyz,
+} from "../../../backend/services/market-data/globe";
 import type { Exchange } from "../../../backend/services/market-data/exchanges";
+
 type Props = {
   venues: Exchange[];
   selected: Exchange | null;
@@ -15,9 +23,123 @@ type Props = {
   resetToken?: number;
   onFallbackChange?: (fallback: boolean) => void;
 };
-const vertex = `attribute vec3 aPosition;uniform vec2 uRotation;uniform float uScale;uniform float uAspect;uniform float uPointSize;varying vec3 vPosition;varying vec3 vWorld;void main(){float c=cos(uRotation.x),s=sin(uRotation.x),p=cos(uRotation.y),q=sin(uRotation.y);vec3 a=vec3(c*aPosition.x+s*aPosition.z,aPosition.y,-s*aPosition.x+c*aPosition.z);vWorld=aPosition;vPosition=vec3(a.x,p*a.y-q*a.z,q*a.y+p*a.z);gl_Position=vec4(vPosition.x*uScale/uAspect,vPosition.y*uScale,-vPosition.z*.4,1.0);gl_PointSize=uPointSize;}`;
-const fragment = `precision mediump float;varying vec3 vPosition;varying vec3 vWorld;uniform vec4 uColor;uniform float uMode;uniform sampler2D uDay;uniform sampler2D uNight;uniform sampler2D uCloud;uniform float uTextureReady;uniform float uCloudReady;float luminance(vec3 c){return dot(c,vec3(.2126,.7152,.0722));}void main(){if(uMode<.5){vec3 n=normalize(vPosition),w=normalize(vWorld);vec2 uv=vec2(atan(w.x,w.z)/6.28318530718+.5,asin(clamp(w.y,-1.,1.))/3.14159265359+.5);float light=dot(n,normalize(vec3(-.58,.40,1.0)));float terrain=luminance(texture2D(uDay,uv).rgb);float night=luminance(texture2D(uNight,uv).rgb);float shade=.18+.82*max(0.,light);float value=(.055+.82*pow(terrain,.78))*shade;float nightMask=1.-smoothstep(-.05,.55,light);value+=pow(max(0.,night-.055),.8)*nightMask*.70;float clouds=luminance(texture2D(uCloud,uv).rgb)*uCloudReady;value=mix(value,.26+.58*max(0.,light),clamp(pow(clouds,1.9)*.48,0.,.65));float rim=pow(1.-max(0.,n.z),4.)*.12;value=mix(.075,value,uTextureReady)+rim;gl_FragColor=vec4(vec3(clamp(value,0.,.94)),1.);}else if(uMode>1.5){if(vPosition.z<0.)discard;float d=length(gl_PointCoord-vec2(.5));if(d>.5||(uMode>2.5&&d<.32))discard;gl_FragColor=vec4(uColor.rgb,uColor.a*(1.-smoothstep(.40,.5,d)));}else{gl_FragColor=uColor;}}`;
-/** Native WebGL sphere with locally hosted, historically dated NASA textures. */
+
+const vertex = `
+attribute vec3 aPosition;
+uniform vec2 uRotation;
+uniform float uScale;
+uniform float uAspect;
+uniform float uPointSize;
+varying vec3 vPosition;
+varying vec3 vWorld;
+void main() {
+  float c = cos(uRotation.x), s = sin(uRotation.x);
+  float p = cos(uRotation.y), q = sin(uRotation.y);
+  vec3 a = vec3(c * aPosition.x + s * aPosition.z, aPosition.y, -s * aPosition.x + c * aPosition.z);
+  vWorld = aPosition;
+  vPosition = vec3(a.x, p * a.y - q * a.z, q * a.y + p * a.z);
+  gl_Position = vec4(vPosition.x * uScale / uAspect, vPosition.y * uScale, -vPosition.z * 0.4, 1.0);
+  gl_PointSize = uPointSize;
+}
+`;
+
+const fragment = `
+precision mediump float;
+varying vec3 vPosition;
+varying vec3 vWorld;
+uniform vec4 uColor;
+uniform float uMode;
+uniform sampler2D uDay;
+uniform sampler2D uNight;
+uniform sampler2D uCloud;
+uniform float uTextureReady;
+uniform float uCloudReady;
+uniform vec3 uSunDir;
+uniform vec3 uSunView;
+
+void main() {
+  if (uMode < 0.5) {
+    vec3 n = normalize(vPosition);
+    vec3 w = normalize(vWorld);
+    vec2 uv = vec2(
+      atan(w.x, w.z) / 6.28318530718 + 0.5,
+      asin(clamp(w.y, -1.0, 1.0)) / 3.14159265359 + 0.5
+    );
+
+    vec3 sunW = normalize(uSunDir);
+    vec3 sunV = normalize(uSunView);
+    float sunDot = dot(w, sunW);
+    float diffuse = max(0.0, sunDot);
+    float dayFactor = smoothstep(-0.14, 0.22, sunDot);
+    float twilight = exp(-pow((sunDot + 0.02) * 5.0, 2.0));
+
+    // Natural full-color NASA Blue Marble in linear light space
+    vec3 daySrgb = texture2D(uDay, uv).rgb;
+    vec3 dayLin = pow(max(daySrgb, vec3(0.001)), vec3(2.2));
+    // Gentle satellite contrast & true-color fidelity (ocean blues, forest greens, desert ochre, polar ice)
+    float luma = dot(dayLin, vec3(0.2126, 0.7152, 0.0722));
+    vec3 naturalDay = mix(vec3(luma), dayLin, 1.16);
+
+    // Water mask derived from Blue Marble blue dominance over land channels
+    float oceanMask = smoothstep(0.015, 0.13, daySrgb.b - max(daySrgb.r, daySrgb.g) * 0.96)
+      * (1.0 - smoothstep(0.60, 0.82, daySrgb.r));
+
+    // Restrained Blinn-Phong ocean specular glint aligned with solar direction
+    vec3 halfVec = normalize(sunV + vec3(0.0, 0.0, 1.0));
+    float spec = pow(max(0.0, dot(n, halfVec)), 36.0) * oceanMask * smoothstep(0.0, 0.28, sunDot) * 0.30;
+
+    // Gentle camera-side fill keeps shadowed continents recognizable without washing out night lights
+    float viewFill = 0.05 + 0.07 * max(0.0, n.z);
+    vec3 dayLit = naturalDay * (viewFill + 1.12 * diffuse)
+      + vec3(0.22, 0.32, 0.44) * spec
+      + vec3(0.24, 0.10, 0.035) * twilight * (0.35 + 0.65 * naturalDay.r);
+
+    // Night hemisphere: deep navy-charcoal earth silhouette + warm golden NASA Black Marble city lights
+    vec3 nightBase = naturalDay * vec3(0.065, 0.088, 0.145) + vec3(0.004, 0.007, 0.014);
+    float nightTex = texture2D(uNight, uv).r;
+    float nightMask = 1.0 - smoothstep(-0.18, 0.14, sunDot);
+    float cityStrength = pow(max(0.0, nightTex - 0.042), 1.12) * nightMask;
+    vec3 cityLights = vec3(1.0, 0.78, 0.42) * cityStrength * 1.55;
+
+    // Historical translucent cloud layer (soft white in daylight, dimmed at night)
+    float cloudSample = texture2D(uCloud, uv).r * uCloudReady;
+    float cloudAlpha = clamp(pow(cloudSample, 1.48) * 0.60, 0.0, 0.70);
+    vec3 cloudDay = vec3(0.92, 0.95, 1.0) * (0.09 + 0.96 * diffuse)
+      + vec3(0.26, 0.12, 0.05) * twilight * 0.55;
+    vec3 cloudNight = vec3(0.045, 0.062, 0.10);
+    vec3 cloudColor = mix(cloudNight, cloudDay, dayFactor);
+
+    vec3 surface = mix(nightBase, dayLit, dayFactor) + cityLights * (1.0 - cloudAlpha * 0.42);
+    surface = mix(surface, cloudColor, cloudAlpha);
+
+    // Thin restrained Rayleigh blue atmospheric Fresnel rim
+    float fresnel = pow(1.0 - max(0.0, n.z), 3.4);
+    vec3 atmoColor = mix(vec3(0.07, 0.16, 0.34), vec3(0.26, 0.58, 1.0), clamp(sunDot * 0.72 + 0.55, 0.0, 1.0));
+    vec3 litEarth = surface + atmoColor * fresnel * 0.46;
+
+    // Deep-ocean placeholder sphere while satellite textures stream in
+    vec3 placeholder = vec3(0.025, 0.065, 0.14) * (0.30 + 0.70 * diffuse) + atmoColor * fresnel * 0.36;
+    vec3 finalLin = mix(placeholder, litEarth, uTextureReady);
+
+    // Photographic soft tone-mapping + sRGB gamma encoding
+    vec3 mapped = (finalLin / (finalLin + vec3(0.86))) * 1.40;
+    vec3 srgb = pow(clamp(mapped, 0.0, 1.0), vec3(1.0 / 2.2));
+    gl_FragColor = vec4(srgb, 1.0);
+  } else if (uMode > 1.5) {
+    if (vPosition.z < 0.0) discard;
+    float d = length(gl_PointCoord - vec2(0.5));
+    if (d > 0.5 || (uMode > 2.5 && d < 0.30)) discard;
+    float edge = uMode > 2.5
+      ? smoothstep(0.30, 0.35, d) * (1.0 - smoothstep(0.43, 0.5, d))
+      : 1.0 - smoothstep(0.38, 0.5, d);
+    gl_FragColor = vec4(uColor.rgb, uColor.a * edge);
+  } else {
+    gl_FragColor = uColor;
+  }
+}
+`;
+
+/** Native WebGL natural-color Earth with locally hosted, historically dated NASA textures. */
 export default function GlobeCanvas({
   venues,
   selected,
@@ -45,12 +167,15 @@ export default function GlobeCanvas({
     }),
     rotation = useRef({ yaw: -0.65, pitch: 0.2 }),
     [failure, setFailure] = useState(false),
-    [satelliteStage, setSatelliteStage] = useState<"loading" | "ready">(
-      "loading",
-    );
+    [satelliteStage, setSatelliteStage] = useState<
+      "preparing" | "loading" | "ready" | "failed"
+    >("preparing"),
+    [retryNonce, setRetryNonce] = useState(0);
+
   useEffect(() => {
     onFallbackChange?.(forceFallback || failure);
   }, [forceFallback, failure, onFallbackChange]);
+
   useEffect(() => {
     settings.current = {
       venues,
@@ -74,20 +199,25 @@ export default function GlobeCanvas({
     onZoom,
     zoom,
   ]);
+
   useEffect(() => {
     const candidate = canvas.current;
     if (!candidate || forceFallback || failure) return;
     const el: HTMLCanvasElement = candidate;
     const gl = el.getContext("webgl", {
       alpha: true,
-      antialias: false,
+      antialias: true,
       powerPreference: "low-power",
       preserveDrawingBuffer: false,
     });
     if (!gl) {
-      queueMicrotask(() => setFailure(true));
+      queueMicrotask(() => {
+        setSatelliteStage("failed");
+        setFailure(true);
+      });
       return;
     }
+
     let stopped = false,
       frame = 0,
       visible = false,
@@ -102,16 +232,24 @@ export default function GlobeCanvas({
         startY: number;
         id: number;
       } | null = null,
+      pinchDistance: number | null = null,
       selectedId = "",
       target: { yaw: number; pitch: number } | null = null;
+
+    const activePointers = new Map<number, { x: number; y: number }>();
     const buffers: WebGLBuffer[] = [],
       shaders: WebGLShader[] = [],
       textures: WebGLTexture[] = [];
+
     const program = gl.createProgram();
     if (!program) {
-      queueMicrotask(() => setFailure(true));
+      queueMicrotask(() => {
+        setSatelliteStage("failed");
+        setFailure(true);
+      });
       return;
     }
+
     function shader(type: number, source: string) {
       const s = gl!.createShader(type);
       if (!s) throw new Error("Shader allocation failed");
@@ -122,6 +260,7 @@ export default function GlobeCanvas({
         throw new Error("Shader compilation failed");
       return s;
     }
+
     try {
       gl.attachShader(program, shader(gl.VERTEX_SHADER, vertex));
       gl.attachShader(program, shader(gl.FRAGMENT_SHADER, fragment));
@@ -132,16 +271,23 @@ export default function GlobeCanvas({
       shaders.forEach((s) => gl.deleteShader(s));
       gl.deleteProgram(program);
       gl.getExtension("WEBGL_lose_context")?.loseContext();
-      queueMicrotask(() => setFailure(true));
+      queueMicrotask(() => {
+        setSatelliteStage("failed");
+        setFailure(true);
+      });
       return;
     }
+
     const position = gl.getAttribLocation(program, "aPosition"),
       uRotation = gl.getUniformLocation(program, "uRotation"),
       uScale = gl.getUniformLocation(program, "uScale"),
       uAspect = gl.getUniformLocation(program, "uAspect"),
       uMode = gl.getUniformLocation(program, "uMode"),
       uColor = gl.getUniformLocation(program, "uColor"),
-      uPointSize = gl.getUniformLocation(program, "uPointSize");
+      uPointSize = gl.getUniformLocation(program, "uPointSize"),
+      uSunDir = gl.getUniformLocation(program, "uSunDir"),
+      uSunView = gl.getUniformLocation(program, "uSunView");
+
     function buffer(vertices: number[]) {
       const b = gl!.createBuffer();
       if (!b) throw new Error("Buffer allocation failed");
@@ -156,11 +302,15 @@ export default function GlobeCanvas({
         throw new Error("Buffer allocation failed");
       return { b, count: vertices.length / 3 };
     }
-    const sphere: number[] = [];
-    for (let a = 0; a < 32; a++)
-      for (let b = 0; b < 64; b++) {
+
+    // 40x80 UV-smooth sphere keeps silhouette crisp without taxing low-power mobile GPUs
+    const latSteps = 40,
+      lonSteps = 80,
+      sphere: number[] = [];
+    for (let a = 0; a < latSteps; a++)
+      for (let b = 0; b < lonSteps; b++) {
         const p = (i: number, j: number) =>
-          xyz({ lat: -90 + (i * 180) / 32, lon: (j * 360) / 64 });
+          xyz({ lat: -90 + (i * 180) / latSteps, lon: (j * 360) / lonSteps });
         sphere.push(
           ...p(a, b),
           ...p(a + 1, b),
@@ -170,14 +320,19 @@ export default function GlobeCanvas({
           ...p(a + 1, b + 1),
         );
       }
+
     const releaseInitial = () => {
       textures.forEach((t) => gl.deleteTexture(t));
       buffers.forEach((b) => gl.deleteBuffer(b));
       shaders.forEach((s) => gl.deleteShader(s));
       gl.deleteProgram(program);
       gl.getExtension("WEBGL_lose_context")?.loseContext();
-      queueMicrotask(() => setFailure(true));
+      queueMicrotask(() => {
+        setSatelliteStage("failed");
+        setFailure(true);
+      });
     };
+
     let sphereBuffer: ReturnType<typeof buffer>;
     try {
       sphereBuffer = buffer(sphere);
@@ -185,6 +340,7 @@ export default function GlobeCanvas({
       releaseInitial();
       return;
     }
+
     const controller = new AbortController();
     let textureReady = false,
       cloudReady = false,
@@ -194,7 +350,8 @@ export default function GlobeCanvas({
       cloudUniform = gl.getUniformLocation(program, "uCloud"),
       readyUniform = gl.getUniformLocation(program, "uTextureReady"),
       cloudReadyUniform = gl.getUniformLocation(program, "uCloudReady");
-    function makeTexture(unit: number, gray: number) {
+
+    function makeTexture(unit: number, rgba: [number, number, number, number]) {
       const texture = gl!.createTexture();
       if (!texture) throw new Error("Texture allocation failed");
       textures.push(texture);
@@ -209,7 +366,7 @@ export default function GlobeCanvas({
         0,
         gl!.RGBA,
         gl!.UNSIGNED_BYTE,
-        new Uint8Array([gray, gray, gray, 255]),
+        new Uint8Array(rgba),
       );
       gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MIN_FILTER, gl!.LINEAR);
       gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MAG_FILTER, gl!.LINEAR);
@@ -217,18 +374,20 @@ export default function GlobeCanvas({
       gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_T, gl!.CLAMP_TO_EDGE);
       return texture;
     }
+
     let dayTexture: WebGLTexture,
       nightTexture: WebGLTexture,
       cloudTexture: WebGLTexture;
     try {
-      dayTexture = makeTexture(0, 45);
-      nightTexture = makeTexture(1, 0);
-      cloudTexture = makeTexture(2, 0);
+      dayTexture = makeTexture(0, [20, 44, 78, 255]);
+      nightTexture = makeTexture(1, [0, 0, 0, 255]);
+      cloudTexture = makeTexture(2, [0, 0, 0, 255]);
     } catch {
       textures.forEach((t) => gl.deleteTexture(t));
       releaseInitial();
       return;
     }
+
     const connection = navigator as Navigator & {
       connection?: { saveData?: boolean; effectiveType?: string };
       deviceMemory?: number;
@@ -241,6 +400,7 @@ export default function GlobeCanvas({
       gl.getParameter(gl.MAX_TEXTURE_SIZE) as number,
       constrained ? 1024 : 2048,
     );
+
     const loadTexture = async (
       path: string,
       texture: WebGLTexture,
@@ -296,20 +456,26 @@ export default function GlobeCanvas({
       dirty = true;
       start();
     };
+
     function beginTextures() {
       if (textureStarted || stopped) return;
       textureStarted = true;
+      setSatelliteStage("loading");
       loadTexture("/data/earth-day.jpg", dayTexture, 0)
         .then(() => {
           if (!stopped) {
             textureReady = true;
             setSatelliteStage("ready");
-            el.dataset.satellite = "day";
+            el.dataset.satellite = "day-true-color";
+            el.dataset.colorMode = "natural-rgb";
             start();
           }
         })
         .catch(() => {
-          if (!stopped) setFailure(true);
+          if (!stopped) {
+            setSatelliteStage("failed");
+            setFailure(true);
+          }
         });
       loadTexture("/data/earth-night.jpg", nightTexture, 1)
         .then(() => {
@@ -321,7 +487,7 @@ export default function GlobeCanvas({
         .catch(() => {
           el.dataset.nightLights = "unavailable";
         });
-      if (!constrained)
+      if (!connection.connection?.saveData)
         loadTexture("/data/earth-clouds.jpg", cloudTexture, 2)
           .then(() => {
             if (!stopped) {
@@ -334,11 +500,15 @@ export default function GlobeCanvas({
             el.dataset.clouds = "unavailable";
           });
     }
+
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
     let frames = 0;
     let venueSignature = "",
+      selectedBufferId = "",
       pointBuffer: { b: WebGLBuffer; count: number } | null = null,
+      selectedPointBuffer: { b: WebGLBuffer; count: number } | null = null,
       arcBuffer: { b: WebGLBuffer; count: number } | null = null;
+
     function drawBuffer(
       b: { b: WebGLBuffer; count: number },
       mode: number,
@@ -354,6 +524,7 @@ export default function GlobeCanvas({
       gl!.uniform1f(uPointSize, size);
       gl!.drawArrays(kind, 0, b.count);
     }
+
     function draw(time: number) {
       frame = 0;
       if (stopped || !visible || document.hidden) return;
@@ -396,14 +567,13 @@ export default function GlobeCanvas({
         rotation.current.yaw += (delta * Math.PI * 2) / 80000;
         dirty = true;
       }
+
       const signature = s.venues.map((v) => v.id).join("|");
       if (signature !== venueSignature) {
         venueSignature = signature;
         const clusters = clusterVenues(s.venues),
           points = clusters.flatMap((c) => xyz(c, 1.024));
-        if (pointBuffer) {
-          gl!.deleteBuffer(pointBuffer.b);
-        }
+        if (pointBuffer) gl!.deleteBuffer(pointBuffer.b);
         pointBuffer = buffer(points);
         const arcs: number[] = [];
         for (let i = 1; i < clusters.length; i += 3) {
@@ -415,9 +585,23 @@ export default function GlobeCanvas({
         arcBuffer = buffer(arcs);
         dirty = true;
       }
+
+      const currentSelectedId = s.selected?.id ?? "";
+      if (currentSelectedId !== selectedBufferId) {
+        selectedBufferId = currentSelectedId;
+        if (selectedPointBuffer) {
+          gl!.deleteBuffer(selectedPointBuffer.b);
+          selectedPointBuffer = null;
+        }
+        if (s.selected) {
+          selectedPointBuffer = buffer(xyz(s.selected, 1.028));
+        }
+        dirty = true;
+      }
+
       if (dirty || target) {
         const rect = el.getBoundingClientRect(),
-          dpr = Math.min(window.devicePixelRatio || 1, 1.5),
+          dpr = Math.min(window.devicePixelRatio || 1, constrained ? 1.5 : 2),
           width = Math.max(1, Math.round(rect.width * dpr)),
           height = Math.max(1, Math.round(rect.height * dpr));
         if (el.width !== width || el.height !== height) {
@@ -436,9 +620,17 @@ export default function GlobeCanvas({
           gl!.ONE,
           gl!.ONE_MINUS_SRC_ALPHA,
         );
+        const sunW = solarDirection(Date.now());
+        const sunV = rotateToView(
+          sunW,
+          rotation.current.yaw,
+          rotation.current.pitch,
+        );
         gl!.uniform2f(uRotation, rotation.current.yaw, rotation.current.pitch);
         gl!.uniform1f(uAspect, width / height);
         gl!.uniform1f(uScale, Math.min(0.84, (0.84 * width) / height) * s.zoom);
+        gl!.uniform3fv(uSunDir, sunW);
+        gl!.uniform3fv(uSunView, sunV);
         gl!.uniform1i(dayUniform, 0);
         gl!.uniform1i(nightUniform, 1);
         gl!.uniform1i(cloudUniform, 2);
@@ -447,11 +639,35 @@ export default function GlobeCanvas({
         drawBuffer(sphereBuffer, 0, [0, 0, 0, 1], gl!.TRIANGLES);
 
         if (arcBuffer)
-          drawBuffer(arcBuffer, 1, [0.76, 0.76, 0.76, 0.3], gl!.LINES);
+          drawBuffer(arcBuffer, 1, [0.76, 0.85, 0.94, 0.28], gl!.LINES);
         if (pointBuffer)
-          drawBuffer(pointBuffer, 2, [0.9, 0.9, 0.9, 1], gl!.POINTS, 7 * dpr);
+          drawBuffer(
+            pointBuffer,
+            2,
+            [0.94, 0.96, 0.99, 0.96],
+            gl!.POINTS,
+            7 * dpr,
+          );
+        if (selectedPointBuffer) {
+          drawBuffer(
+            selectedPointBuffer,
+            3,
+            [0.46, 0.75, 1.0, 0.95],
+            gl!.POINTS,
+            15 * dpr,
+          );
+          drawBuffer(
+            selectedPointBuffer,
+            2,
+            [0.95, 0.98, 1.0, 1.0],
+            gl!.POINTS,
+            8 * dpr,
+          );
+        }
+
         el.dataset.visibility = "visible";
         el.dataset.renderer = "webgl";
+        el.dataset.solarLighting = "approximate-utc";
         el.dataset.frameCount = String(++frames);
         el.dataset.rotation = rotation.current.yaw.toFixed(4);
         el.dataset.motion =
@@ -468,21 +684,25 @@ export default function GlobeCanvas({
       )
         frame = requestAnimationFrame(safeDraw);
     }
+
     function safeDraw(time: number) {
       try {
         draw(time);
       } catch {
         cancelAnimationFrame(frame);
         frame = 0;
+        setSatelliteStage("failed");
         setFailure(true);
       }
     }
+
     function start() {
       if (!frame && !stopped) {
         dirty = true;
         frame = requestAnimationFrame(safeDraw);
       }
     }
+
     const observer = new IntersectionObserver(
       (entries) => {
         visible = entries.some((e) => e.isIntersecting);
@@ -499,8 +719,10 @@ export default function GlobeCanvas({
       { threshold: 0.02 },
     );
     observer.observe(el);
+
     const resize = new ResizeObserver(start);
     resize.observe(el);
+
     const onVisibility = () => {
       if (document.hidden) {
         cancelAnimationFrame(frame);
@@ -511,7 +733,21 @@ export default function GlobeCanvas({
         start();
       }
     };
+
+    const currentPinchDistance = () => {
+      if (activePointers.size < 2) return null;
+      const [a, b] = [...activePointers.values()];
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+
     const onDown = (e: PointerEvent) => {
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activePointers.size === 2) {
+        drag = null;
+        pinchDistance = currentPinchDistance();
+        settings.current.onPause();
+        return;
+      }
       if (drag) return;
       drag = {
         x: e.clientX,
@@ -524,7 +760,23 @@ export default function GlobeCanvas({
       settings.current.onPause();
       el.setPointerCapture(e.pointerId);
     };
+
     const onMove = (e: PointerEvent) => {
+      if (activePointers.has(e.pointerId)) {
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+      if (activePointers.size >= 2) {
+        const nextDist = currentPinchDistance();
+        if (nextDist !== null && pinchDistance !== null && pinchDistance > 0) {
+          const delta = (nextDist - pinchDistance) * 0.004;
+          settings.current.onZoom(
+            Math.min(1.35, Math.max(0.8, settings.current.zoom + delta)),
+          );
+          pinchDistance = nextDist;
+          start();
+        }
+        return;
+      }
       if (!drag || e.pointerId !== drag.id) return;
       const dx = e.clientX - drag.x,
         dy = e.clientY - drag.y;
@@ -537,7 +789,10 @@ export default function GlobeCanvas({
       drag.y = e.clientY;
       start();
     };
+
     const onUp = (e: PointerEvent) => {
+      activePointers.delete(e.pointerId);
+      if (activePointers.size < 2) pinchDistance = null;
       if (!drag || drag.id !== e.pointerId) return;
       const active = drag;
       if (el.hasPointerCapture(e.pointerId))
@@ -581,15 +836,27 @@ export default function GlobeCanvas({
       }
       start();
     };
+
     const onLost = (e: Event) => {
       e.preventDefault();
       cancelAnimationFrame(frame);
       frame = 0;
+      setSatelliteStage("failed");
       setFailure(true);
     };
+
+    const onRestored = () => {
+      setSatelliteStage("preparing");
+      setFailure(false);
+      setRetryNonce((n) => n + 1);
+    };
+
     const onCancel = (e: PointerEvent) => {
+      activePointers.delete(e.pointerId);
+      if (activePointers.size < 2) pinchDistance = null;
       if (drag?.id === e.pointerId) drag = null;
     };
+
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && document.activeElement !== el) return;
       e.preventDefault();
@@ -599,6 +866,7 @@ export default function GlobeCanvas({
       );
       start();
     };
+
     const onKey = (e: KeyboardEvent) => {
       if (
         !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "+", "-"].includes(
@@ -624,6 +892,7 @@ export default function GlobeCanvas({
         );
       start();
     };
+
     const onEnter = (e: PointerEvent) => {
       if (e.pointerType !== "touch") {
         hovering = true;
@@ -635,6 +904,7 @@ export default function GlobeCanvas({
       last = 0;
       start();
     };
+
     el.addEventListener("pointerenter", onEnter);
     el.addEventListener("pointerleave", onLeave);
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -645,11 +915,12 @@ export default function GlobeCanvas({
     el.addEventListener("pointercancel", onCancel);
     el.addEventListener("lostpointercapture", onCancel);
     el.addEventListener("webglcontextlost", onLost);
+    el.addEventListener("webglcontextrestored", onRestored);
     document.addEventListener("visibilitychange", onVisibility);
     reduced.addEventListener("change", start);
-    // React state changes are infrequent. This event schedules a frame without a 60fps React update.
     const onRender = () => start();
     el.addEventListener("x1-render", onRender);
+
     return () => {
       stopped = true;
       controller.abort();
@@ -668,6 +939,7 @@ export default function GlobeCanvas({
       el.removeEventListener("pointermove", onMove);
       el.removeEventListener("pointerup", onUp);
       el.removeEventListener("webglcontextlost", onLost);
+      el.removeEventListener("webglcontextrestored", onRestored);
       el.removeEventListener("x1-render", onRender);
       textures.forEach((t) => gl.deleteTexture(t));
       buffers.forEach((b) => gl.deleteBuffer(b));
@@ -675,31 +947,34 @@ export default function GlobeCanvas({
       gl.deleteProgram(program);
       gl.getExtension("WEBGL_lose_context")?.loseContext();
     };
-  }, [forceFallback, failure]);
+  }, [forceFallback, failure, retryNonce]);
+
   useEffect(() => {
     canvas.current?.dispatchEvent(new Event("x1-render"));
   }, [venues, selected, autoRotate, motionOverride, resetToken, zoom]);
+
   if (failure || forceFallback)
     return (
       <div className="x1-earth-fallback" role="status">
         <img
           className="x1-earth-static"
           src="/data/earth-static.jpg"
-          alt="NASA Blue Marble eastern-hemisphere historical composite, displayed in grayscale"
+          alt="NASA Blue Marble eastern-hemisphere natural-color historical composite"
         />
         <p>
-          Static satellite Earth ·{" "}
+          Natural-color static Earth ·{" "}
           {forceFallback
-            ? "Compatibility view selected."
-            : "3D is unavailable."}{" "}
+            ? "2D compatibility view selected."
+            : "3D renderer or imagery unavailable."}{" "}
           Use the exchange list for every venue.
         </p>
         {failure && !forceFallback && (
           <button
             className="x1-secondary"
             onClick={() => {
-              setSatelliteStage("loading");
+              setSatelliteStage("preparing");
               setFailure(false);
+              setRetryNonce((n) => n + 1);
             }}
           >
             Retry 3D globe
@@ -707,19 +982,25 @@ export default function GlobeCanvas({
         )}
       </div>
     );
+
   return (
-    <div className="x1-satellite-renderer">
+    <div
+      className="x1-satellite-renderer"
+      data-earth-stage={satelliteStage}
+    >
       <canvas
         ref={canvas}
         className="x1-globe-canvas"
         role="img"
         tabIndex={0}
-        aria-label="Interactive grayscale satellite Earth with exchange cities. Drag or use arrow keys to rotate; focus and use wheel or plus/minus to zoom. Use the list to select every exchange."
+        aria-label="Interactive natural-color satellite Earth with 24 global exchange cities and approximate UTC solar day/night lighting. Drag, pinch, or use arrow keys to rotate and zoom. Use the list to select every exchange."
       />
-      {satelliteStage === "loading" && (
+      {(satelliteStage === "preparing" || satelliteStage === "loading") && (
         <div className="x1-satellite-loading" role="status">
-          <span />
-          Loading satellite imagery…
+          <span aria-hidden="true" />
+          {satelliteStage === "preparing"
+            ? "Preparing Earth renderer…"
+            : "Loading NASA Earth imagery…"}
         </div>
       )}
     </div>

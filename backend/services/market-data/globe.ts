@@ -11,6 +11,39 @@ export function xyz(
     Math.cos(a) * Math.cos(b) * radius,
   ];
 }
+/** Approximate unit subsolar vector in Earth-fixed xyz coordinates for a UTC timestamp.
+ * Used purely for illustrative day/night solar shading; not an astronomical ephemeris.
+ */
+export function solarDirection(at: Date | number = Date.now()): [number, number, number] {
+  const ms = at instanceof Date ? at.getTime() : at;
+  if (!Number.isFinite(ms)) {
+    const len = Math.hypot(-0.55, 0.25, 0.8);
+    return [-0.55 / len, 0.25 / len, 0.8 / len];
+  }
+  const date = new Date(ms);
+  const startOfYear = Date.UTC(date.getUTCFullYear(), 0, 1);
+  const dayOfYear = (ms - startOfYear) / 86_400_000 + 1;
+  const declinationDeg = 23.44 * Math.sin(((2 * Math.PI) / 365.25) * (dayOfYear - 80));
+  const utcHours =
+    date.getUTCHours() +
+    date.getUTCMinutes() / 60 +
+    date.getUTCSeconds() / 3600;
+  const subsolarLon = (12 - utcHours) * 15;
+  return xyz({ lat: declinationDeg, lon: subsolarLon }, 1);
+}
+export function rotateToView(
+  [x, y, z]: readonly [number, number, number],
+  yaw: number,
+  pitch: number,
+): [number, number, number] {
+  const c = Math.cos(yaw),
+    s = Math.sin(yaw),
+    p = Math.cos(pitch),
+    q = Math.sin(pitch);
+  const ax = c * x + s * z;
+  const az = -s * x + c * z;
+  return [ax, p * y - q * az, q * y + p * az];
+}
 export function project(
   point: GeoPoint,
   yaw: number,

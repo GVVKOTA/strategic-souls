@@ -193,6 +193,7 @@ export default function Global({
     [zoom, setZoom] = useState(1),
     [fallback, setFallback] = useState(false),
     [rendererFallback, setRendererFallback] = useState(false),
+    [tourActive, setTourActive] = useState(false),
     [listId, setListId] = useState(""),
     [search, setSearch] = useState(""),
     [edit, setEdit] = useState<
@@ -203,6 +204,24 @@ export default function Global({
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches)
       queueMicrotask(() => setAuto(false));
   }, []);
+  useEffect(() => {
+    if (!tourActive || mode !== "Globe" || rendererFallback) return;
+    const hubs = ["XNSE", "XLON", "XNYS", "XTKS"]
+      .map((id) => EXCHANGES.find((e) => e.id === id))
+      .filter((e): e is Exchange => !!e);
+    if (!hubs.length) return;
+    let step = 0;
+    queueMicrotask(() => {
+      setRegion("All");
+      setAuto(false);
+      setSelected(hubs[0]);
+    });
+    const timer = window.setInterval(() => {
+      step = (step + 1) % hubs.length;
+      setSelected(hubs[step]);
+    }, 3600);
+    return () => window.clearInterval(timer);
+  }, [tourActive, mode, rendererFallback]);
   const setPanel = (value: string) => {
     setPanelState(value);
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -282,6 +301,7 @@ export default function Global({
   const currentSession =
     selected && data ? exchangeSession(selected, data.asOf) : null;
   const selectVenue = (venue: Exchange) => {
+    setTourActive(false);
     setSelected(venue);
     setAuto(false);
   };
@@ -436,7 +456,10 @@ export default function Global({
                       motionOverride={motionOverride}
                       zoom={zoom}
                       resetToken={resetToken}
-                      onPause={() => setAuto(false)}
+                      onPause={() => {
+                        setTourActive(false);
+                        setAuto(false);
+                      }}
                       onSelect={selectVenue}
                       onZoom={setZoom}
                       forceFallback={fallback}
@@ -451,6 +474,7 @@ export default function Global({
                       aria-pressed={auto}
                       disabled={rendererFallback}
                       onClick={() => {
+                        setTourActive(false);
                         setMotionOverride(true);
                         setAuto(!auto);
                       }}
@@ -475,6 +499,7 @@ export default function Global({
                       aria-label="Reset globe view"
                       disabled={rendererFallback}
                       onClick={() => {
+                        setTourActive(false);
                         setZoom(1);
                         setAuto(false);
                         setSelected(
@@ -486,10 +511,21 @@ export default function Global({
                       <RotateCcw size={15} />
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    className="x1-secondary x1-globe-tour-btn"
+                    aria-pressed={tourActive}
+                    disabled={rendererFallback}
+                    onClick={() => setTourActive((v) => !v)}
+                  >
+                    {tourActive ? "Stop tour" : "Explore Earth"}
+                  </button>
                   <span className="x1-globe-hint">
                     {rendererFallback
-                      ? "Static satellite image"
-                      : "Drag to rotate"}
+                      ? "Natural-color static image"
+                      : tourActive
+                        ? "Touring 4 global hubs"
+                        : "Drag to rotate"}
                   </span>
                 </div>
               ) : (
@@ -602,10 +638,12 @@ export default function Global({
                     : "Use 2D compatibility view"}
                 </button>
                 <p>
-                  Earth imagery: NASA Blue Marble; night lights: NASA Black
-                  Marble (2016); historical cloud composite. These textures do
-                  not show current weather or market activity. City locations:
-                  Natural Earth, public domain.
+                  Earth imagery: natural-color NASA Blue Marble (2002); night
+                  lights: NASA Black Marble (2016); historical cloud composite.
+                  Day/night lighting approximates solar orientation from the
+                  current UTC clock. These textures do not show live satellite
+                  weather, current night activity, or capital flows. City
+                  locations: Natural Earth, public domain.
                 </p>
               </details>
             </Panel>
