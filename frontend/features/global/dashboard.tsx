@@ -93,6 +93,7 @@ type Props = {
   refreshData: () => void;
   refreshing?: boolean;
   initialPanel?: string;
+  onNavigate?: (view: "Global" | "Strategy" | "Community") => void;
 };
 export function assetName(id: string, data: MarketSnapshot | null) {
   return (
@@ -187,6 +188,7 @@ export default function Global({
   refreshData,
   refreshing = false,
   initialPanel,
+  onNavigate,
 }: Props) {
   const [panel, setPanelState] = useState(initialPanel || "Overview"),
     [selected, setSelected] = useState<Exchange | null>(
@@ -207,7 +209,26 @@ export default function Global({
     [edit, setEdit] = useState<
       "list" | "portfolio" | "transaction" | "rename" | null
     >(null),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [journeyHidden, setJourneyHidden] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem("ss-journey-hidden") === "1")
+        queueMicrotask(() => setJourneyHidden(true));
+    } catch {
+      /* Storage is optional. */
+    }
+  }, []);
+
+  const dismissJourney = () => {
+    setJourneyHidden(true);
+    try {
+      window.localStorage.setItem("ss-journey-hidden", "1");
+    } catch {
+      /* Storage is optional. */
+    }
+  };
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches)
       queueMicrotask(() => setAuto(false));
@@ -359,6 +380,74 @@ export default function Global({
               <ArrowRight size={14} />
             </button>
           </div>
+          {!journeyHidden && (
+            <section className="x3-journey" aria-label="Research workflow guide">
+              <div className="x3-journey-head">
+                <strong>Start your research cycle</strong>
+                <button
+                  type="button"
+                  className="x1-text-button"
+                  onClick={dismissJourney}
+                >
+                  Hide guide
+                </button>
+              </div>
+              <div className="x3-journey-steps">
+                <button
+                  type="button"
+                  className="x3-journey-step is-done"
+                  onClick={() => setPanel("Market Explorer")}
+                >
+                  <small>Step 01 · Global</small>
+                  <span>Explore markets &amp; Earth</span>
+                </button>
+                <button
+                  type="button"
+                  className={
+                    "x3-journey-step " + (lists.length > 0 ? "is-done" : "")
+                  }
+                  onClick={() => setPanel("Watchlists")}
+                >
+                  <small>
+                    Step 02 · {lists.length > 0 ? "Saved" : "Private"}
+                  </small>
+                  <span>Create a watchlist</span>
+                </button>
+                <button
+                  type="button"
+                  className="x3-journey-step"
+                  onClick={() => onNavigate?.("Strategy")}
+                >
+                  <small>Step 03 · Strategy</small>
+                  <span>Build a guided Soul</span>
+                </button>
+                <button
+                  type="button"
+                  className={
+                    "x3-journey-step " +
+                    ((workspace?.scans?.length ?? 0) > 0 ? "is-done" : "")
+                  }
+                  onClick={() => onNavigate?.("Strategy")}
+                >
+                  <small>
+                    Step 04 ·{" "}
+                    {(workspace?.scans?.length ?? 0) > 0
+                      ? `${workspace!.scans.length} saved`
+                      : "Immutable"}
+                  </small>
+                  <span>Review scan evidence</span>
+                </button>
+                <button
+                  type="button"
+                  className="x3-journey-step"
+                  onClick={() => onNavigate?.("Community")}
+                >
+                  <small>Step 05 · Opt-in</small>
+                  <span>Join a research group</span>
+                </button>
+              </div>
+            </section>
+          )}
           <div className="x1-metrics">
             <DataCard
               point={
@@ -1280,8 +1369,14 @@ export default function Global({
                       name="date"
                       type="date"
                       required
-                      defaultValue={data?.asOf.slice(0, 10)}
-                      max={data?.asOf.slice(0, 10)}
+                      defaultValue={
+                        data?.asOf.slice(0, 10) ||
+                        new Date().toISOString().slice(0, 10)
+                      }
+                      max={
+                        data?.asOf.slice(0, 10) ||
+                        new Date().toISOString().slice(0, 10)
+                      }
                     />
                   </label>
                 </div>

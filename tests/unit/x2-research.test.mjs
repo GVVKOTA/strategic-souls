@@ -18,8 +18,11 @@ const output = ts
     JSON.stringify(pathToFileURL(resolve("backend/engines/scan.ts")).href),
   );
 const {
+  BEGINNER_SCAN_PRESETS,
+  RESEARCH_GLOSSARY,
   validateResearch,
   compileTree,
+  treeFromFormula,
   preflightResearch,
   labelOutcome,
   wilson,
@@ -85,6 +88,56 @@ const query = () => ({
     knownAt: at(0),
     source: "TEST unconditional population",
   },
+});
+
+test("all Beginner scan presets compile through the single canonical AST and preserve UNKNOWN on missing data", () => {
+  assert.ok(BEGINNER_SCAN_PRESETS.length >= 5, "At least 5 guided Beginner presets exist");
+  assert.ok(RESEARCH_GLOSSARY.length >= 5, "Glossary covers key educational terms");
+  const syntheticDataset = [
+    {
+      instrumentId: "TEST:FX1",
+      source: "Synthetic test fixture",
+      permitted: true,
+      frequency: "DAILY_REFERENCE",
+      maxAgeMs: 10 * 86400000,
+      observations: Array.from({ length: 40 }, (_, i) => ({
+        eventAt: at(i),
+        knownAt: at(i),
+        close: 100 + i * 0.5,
+      })),
+    },
+    {
+      instrumentId: "TEST:INSUFFICIENT",
+      source: "Synthetic test fixture",
+      permitted: true,
+      frequency: "DAILY_REFERENCE",
+      maxAgeMs: 10 * 86400000,
+      observations: [{ eventAt: at(39), knownAt: at(39), close: 100 }],
+    },
+  ];
+  for (const preset of BEGINNER_SCAN_PRESETS) {
+    const compiled = compileFormula(preset.formula);
+    assert.ok(compiled.ast, `${preset.id} compiles to canonical AST`);
+    const tree = treeFromFormula(preset.formula);
+    if (tree) {
+      assert.equal(
+        compileTree(tree).formula,
+        compiled.formula,
+        `${preset.id} round-trips cleanly through Intermediate RuleTree`,
+      );
+    }
+    const validated = validateResearch({
+      name: preset.defaultName,
+      description: preset.defaultDescription,
+      formula: compiled.formula,
+      mode: tree ? "SIMPLE" : "ADVANCED",
+      outcome,
+    });
+    assert.equal(validated.formula, compiled.formula);
+    const report = evaluateScan(compiled, syntheticDataset, at(39));
+    const sparse = report.results.find((r) => r.instrumentId === "TEST:INSUFFICIENT");
+    assert.equal(sparse?.status, "UNKNOWN", `${preset.id} must yield UNKNOWN when history is insufficient`);
+  }
 });
 
 test("research definition requires meaningful Unicode-aware name/description and safe bounded settings", () => {

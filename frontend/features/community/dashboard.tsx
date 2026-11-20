@@ -448,9 +448,9 @@ export default function Community({
               <div>
                 <strong>Private by design</strong>
                 <p>
-                  Group publication stays inside current membership. This Site
-                  remains restricted to its existing audience. Public posting
-                  and payments are disabled.
+                  Group publication stays inside current membership. Private
+                  groups remain restricted to invited and approved members.
+                  Public posting and payments are disabled.
                 </p>
               </div>
             </div>

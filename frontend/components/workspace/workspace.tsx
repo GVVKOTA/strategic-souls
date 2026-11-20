@@ -556,6 +556,7 @@ export default function X1Workspace() {
                   refreshData={refreshData}
                   refreshing={refreshing}
                   initialPanel={globalPanel}
+                  onNavigate={navigate}
                 />
               ) : view === "Strategy" ? (
                 <Strategy
