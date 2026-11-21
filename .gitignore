@@ -29,6 +29,9 @@ yarn-error.log*
 # Local environment and keys
 .env*
 .dev.vars*
+!.dev.vars.example
+/.secrets/
+*.local.secret
 *.pem
 
 # Checkout-local tool state

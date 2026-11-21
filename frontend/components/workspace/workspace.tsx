@@ -548,6 +548,7 @@ export default function X1Workspace() {
                   data={data}
                   workspace={workspace}
                   authenticated={isSignedIn && accepted === true}
+                  isOwner={isOwner}
                   onRequireAuth={() => setAuthModal("signin")}
                   reload={reload}
                   notify={notify}
@@ -659,6 +660,7 @@ export default function X1Workspace() {
           id={asset}
           data={data}
           authenticated={isSignedIn && accepted === true}
+          isOwner={isOwner}
           onRequireAuth={() => {
             setAsset("");
             setAuthModal("signin");

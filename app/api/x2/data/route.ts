@@ -41,7 +41,7 @@ async function handle(request: Request) {
         );
       if (params.get("view") === "instruments")
         return Response.json(
-          { instruments: await instrumentRegistry() },
+          { instruments: await instrumentRegistry(user.userId) },
           { headers },
         );
       const id = params.get("id") ?? "",

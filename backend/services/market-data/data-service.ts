@@ -27,6 +27,17 @@ import {
   validateConfig,
 } from "./providers";
 import { X2_INSTRUMENTS, registryInstrument } from "./instrument-registry";
+import {
+  gatewayCandles,
+  resolveGatewayConfig,
+} from "./angelone/gateway";
+import {
+  ANGEL_ONE_SOURCE_URL,
+} from "./angelone/normalizer";
+import {
+  DEFAULT_OWNER_WATCH_IDS,
+  VERIFIED_SEED_INSTRUMENTS,
+} from "./angelone/instrument-master";
 type ConfigRow = {
   provider: ProviderId;
   version: number;
@@ -51,9 +62,22 @@ export async function providerConfigs(): Promise<ProviderConfig[]> {
     .map((r) => JSON.parse(r.payload))
     .sort((a, b) => a.priority - b.priority);
 }
-export async function instrumentRegistry() {
+export async function instrumentRegistry(subject?: string) {
   const configs = await providerConfigs();
   const ids = new Set<string>();
+  const gw = resolveGatewayConfig(environment());
+  const ownerSeeds =
+    subject && isDataOwner(subject) && gw.flags.enablePrivateBrokerData
+      ? VERIFIED_SEED_INSTRUMENTS.map((i) => ({
+          id: i.id,
+          label: i.symbol,
+          name: i.name,
+          market: i.exchange,
+          assetClass: i.segment,
+          sourceUrl: ANGEL_ONE_SOURCE_URL,
+          mappingStatus: "PRIVATE_OWNER_BROKER_SEED",
+        }))
+      : [];
   return [
     ...configs
       .filter((c) => rightsActive(c, "display"))
@@ -68,6 +92,7 @@ export async function instrumentRegistry() {
           mappingStatus: "OWNER_VERIFIED_SOURCE_MAPPING",
         })),
       ),
+    ...ownerSeeds,
     ...X2_INSTRUMENTS,
   ].filter((i) => !ids.has(i.id) && !!ids.add(i.id));
 }
@@ -582,6 +607,103 @@ async function sourceResearch(
       return value;
     // Retry only a complete independently entitled series; never splice histories.
   }
+
+  // Private owner-only Angel One read-only broker feed (never accessible to non-owner/public readers).
+  if (
+    !pinnedProvider &&
+    isDataOwner(subject) &&
+    /^(NSE|BSE|MCX):/i.test(id) &&
+    resolveGatewayConfig(environment()).flags.enablePrivateBrokerData
+  ) {
+    try {
+      const series = await gatewayCandles({
+        authenticated: true,
+        isOwner: true,
+        id,
+        interval: "1d",
+        days: 180,
+        runtimeEnv: environment(),
+      });
+      if (series.candles.length > 0) {
+        const rawBars = series.candles.map((b) => ({
+          date: b.dateIST,
+          open: b.open,
+          high: b.high,
+          low: b.low,
+          close: b.close,
+          adjustedClose: null,
+          volume: b.volume,
+          openInterest: b.openInterest,
+          knownAt: series.retrievalTimestampUTC,
+          adjustment: "RAW" as const,
+          provider: "Angel One SmartAPI (Private Owner)",
+        }));
+        const aggregated = aggregateCandles(rawBars, interval);
+        return {
+          ...result,
+          id: series.instrument.id,
+          name: series.instrument.name,
+          instrument: {
+            id: series.instrument.id,
+            name: series.instrument.name,
+            symbol: series.instrument.symbol,
+            providerSymbol: series.instrument.tradingSymbol,
+            market: series.instrument.exchange,
+            mic: series.instrument.mic,
+            type: series.instrument.segment,
+            currency: series.instrument.currency,
+            unit: series.instrument.unit,
+            timezone: series.instrument.timezone,
+            ...(series.instrument.expiry
+              ? {
+                  expiry: series.instrument.expiry,
+                  lotSize: series.instrument.lotSize,
+                  tickSize: series.instrument.tickSize ?? 1,
+                }
+              : {}),
+          },
+          provider: "Angel One SmartAPI (Private Owner)",
+          sourceUrl: ANGEL_ONE_SOURCE_URL,
+          state: series.quality,
+          asOf: series.retrievalTimestampUTC,
+          retrievedAt: series.retrievalTimestampUTC,
+          unit: series.instrument.unit,
+          currency: series.instrument.currency,
+          candles: aggregated,
+          references: aggregated.map((b) => ({
+            date: b.date,
+            close: b.close,
+            knownAt: b.knownAt,
+          })),
+          capabilities: {
+            ...result.capabilities,
+            chart: true,
+            candles: true,
+            volume: rawBars.some((b) => b.volume !== null),
+            analysis: true,
+            derivedDisplay: true,
+            storage: true,
+          },
+          limitations: [
+            ...series.limitations,
+            ...(interval === "1d"
+              ? []
+              : [
+                  "Aggregated daily bars may include a developing latest calendar group, not a completed period.",
+                ]),
+          ],
+        };
+      }
+    } catch {
+      return {
+        ...result,
+        provider: "Angel One SmartAPI (Private Owner)",
+        limitations: [
+          "Private broker adapter is offline, session expired, or symbol unavailable. Last-known values are never fabricated.",
+        ],
+      };
+    }
+  }
   return result;
 }
 /** Public display readers cannot select or obtain the private non-display ingestion purpose. */
@@ -603,6 +725,14 @@ export async function currentDisplayRights(
       derivedDisplayAllowed: true,
       rightsExpiresAt: null,
     };
+  if (provider === "Angel One SmartAPI (Private Owner)") {
+    const active = resolveGatewayConfig(environment()).flags.enablePrivateBrokerData;
+    return {
+      displayAllowed: active,
+      derivedDisplayAllowed: active,
+      rightsExpiresAt: null,
+    };
+  }
   const c = (await providerConfigs()).find(
     (c) =>
       c.provider === provider &&
@@ -782,6 +912,77 @@ export async function researchUniverse(
           ? "GROUPED_DAILY_OHLC; LATEST_CALENDAR_GROUP_MAY_BE_PARTIAL"
           : "DAILY_SOURCE_OBSERVATIONS",
     });
+  }
+  // Owner-only private Angel One daily candles for Soul Scan when CONNECTED_MARKETS has no commercial provider datasets
+  if (
+    out.datasets.length === 0 &&
+    isDataOwner(subject) &&
+    (options.provider === "CONNECTED_MARKETS" || options.provider === "ANGELONE") &&
+    resolveGatewayConfig(environment()).flags.enablePrivateBrokerData
+  ) {
+    const candidateIds = (
+      options.instrumentIds?.length
+        ? options.instrumentIds.filter((id) => /^(NSE|BSE|MCX):/i.test(id))
+        : [
+            DEFAULT_OWNER_WATCH_IDS[2],
+            DEFAULT_OWNER_WATCH_IDS[3],
+            DEFAULT_OWNER_WATCH_IDS[4],
+            DEFAULT_OWNER_WATCH_IDS[6],
+          ]
+    ).slice(0, 5);
+    for (const id of candidateIds) {
+      const a = await sourceResearch(
+        id,
+        subject,
+        options.interval ?? "1d",
+        false,
+        "analysis",
+      );
+      if (!a.candles.length || a.state === "REAL_BUT_STALE" || a.state === "NO_DATA") {
+        out.excluded.push({
+          id,
+          reason: "Private broker historical candles unavailable or stale for this symbol.",
+        });
+        continue;
+      }
+      out.datasets.push({
+        instrumentId: a.id,
+        currency: a.currency,
+        source: a.provider,
+        permitted: true,
+        frequency: "PUBLISHED_EOD",
+        maxAgeMs: 5 * 86400000,
+        observations: a.candles.map((c) => ({
+          eventAt: c.date + "T00:00:00.000Z",
+          knownAt: c.knownAt,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          volume: c.volume,
+          fields: { openinterest: c.openInterest },
+        })),
+      });
+      out.lineage.push({
+        instrumentId: a.id,
+        provider: a.provider,
+        eventAt: a.candles.at(-1)?.date ?? null,
+        retrievedAt: a.retrievedAt ?? new Date().toISOString(),
+        adjustment: "RAW",
+        displayAllowed: true,
+        derivedDisplayAllowed: true,
+        rightsExpiresAt: null,
+        interval: options.interval ?? "1d",
+        periodPolicy:
+          options.interval && options.interval !== "1d"
+            ? "GROUPED_DAILY_OHLC; LATEST_CALENDAR_GROUP_MAY_BE_PARTIAL"
+            : "PRIVATE_OWNER_DAILY_SOURCE_OBSERVATIONS",
+      });
+    }
+    if (out.datasets.length > 0) {
+      out.source = "Angel One SmartAPI (Private Owner)";
+      out.asOf = new Date().toISOString();
+    }
   }
   out.rights = {
     analysis: out.datasets.length > 0,

@@ -43,6 +43,7 @@ import {
   type Notice,
 } from "../../components/workspace/shared";
 import ScrollTabs from "../../components/workspace/scroll-tabs";
+import PrivateMarketPanel from "./private-market-panel";
 const AssetTerminal = lazy(() => import("./asset-terminal"));
 const GlobeCanvas = lazy(() => import("./globe-canvas"));
 function DeferredGlobe(props: React.ComponentProps<typeof GlobeCanvas>) {
@@ -85,6 +86,7 @@ type Props = {
   data: MarketSnapshot | null;
   workspace: WorkspaceState | null;
   authenticated?: boolean;
+  isOwner?: boolean;
   onRequireAuth?: () => void;
   reload: () => Promise<void>;
   notify: Notice;
@@ -106,6 +108,7 @@ export function assetName(id: string, data: MarketSnapshot | null) {
 export function AssetDialog({
   id,
   authenticated = true,
+  isOwner = false,
   onRequireAuth,
   onClose,
   analyze,
@@ -114,6 +117,7 @@ export function AssetDialog({
   id: string;
   data: MarketSnapshot | null;
   authenticated?: boolean;
+  isOwner?: boolean;
   onRequireAuth?: () => void;
   onClose: () => void;
   analyze: (formula?: string, instrumentId?: string) => void;
@@ -132,6 +136,7 @@ export function AssetDialog({
         <AssetTerminal
           id={id}
           authenticated={authenticated}
+          isOwner={isOwner}
           onRequireAuth={onRequireAuth}
           onAnalyze={analyze}
           notify={notify}
@@ -180,6 +185,7 @@ export default function Global({
   data,
   workspace,
   authenticated = true,
+  isOwner = false,
   onRequireAuth,
   reload,
   notify,
@@ -489,6 +495,16 @@ export default function Global({
               }
             />
           </div>
+          {authenticated && isOwner && (
+            <PrivateMarketPanel
+              isOwner={isOwner}
+              authenticated={authenticated}
+              compact
+              openAsset={openAsset}
+              analyze={analyze}
+              notify={notify}
+            />
+          )}
           <div className="x1-overview-grid">
             <Panel
               title="Across the exchanges"
@@ -1226,7 +1242,15 @@ export default function Global({
         </>
       )}
       {panel === "Market Explorer" && (
-        <MarketExplorer data={data} openAsset={openAsset} analyze={analyze} />
+        <MarketExplorer
+          data={data}
+          authenticated={authenticated}
+          isOwner={isOwner}
+          onRequireAuth={onRequireAuth}
+          openAsset={openAsset}
+          analyze={analyze}
+          notify={notify}
+        />
       )}
       {edit && (
         <Modal
@@ -1436,14 +1460,22 @@ const gaps: Record<string, { reason: string; source: string }> = {
 };
 function MarketExplorer({
   data,
+  authenticated = false,
+  isOwner = false,
+  onRequireAuth,
   openAsset,
   analyze,
+  notify,
 }: {
   data: MarketSnapshot | null;
+  authenticated?: boolean;
+  isOwner?: boolean;
+  onRequireAuth?: () => void;
   openAsset: (id: string) => void;
   analyze: (formula?: string, instrumentId?: string) => void;
+  notify?: Notice;
 }) {
-  const [tab, setTab] = useState("FX");
+  const [tab, setTab] = useState(isOwner ? "Markets" : "FX");
   return (
     <>
       <div className="x1-chip-row" aria-label="Market categories">
@@ -1463,6 +1495,18 @@ function MarketExplorer({
           </button>
         ))}
       </div>
+      {tab === "Markets" || tab === "Commodities" ? (
+        <PrivateMarketPanel
+          key={"private-" + tab}
+          isOwner={isOwner}
+          authenticated={authenticated}
+          exchangeFilter={tab === "Commodities" ? "MCX" : "EQUITIES"}
+          openAsset={openAsset}
+          analyze={analyze}
+          onRequireAuth={onRequireAuth}
+          notify={notify}
+        />
+      ) : (
       <Panel
         title={
           tab === "FX"
@@ -1523,6 +1567,7 @@ function MarketExplorer({
           </Empty>
         )}
       </Panel>
+      )}
       <Panel title="Source health" kicker="Connected does not mean live">
         <div className="x1-provider-list">
           {data?.providers.map((p) => (
