@@ -57,13 +57,22 @@
 
 ## 4. Production Deployment & Live URL Verification
 
-*Updated immediately upon GitHub push & Cloudflare Workers Builds completion.*
+**Live Verification Executed:** `2026-11-21T05:38:57Z` (`2026-11-21 11:08:57 IST`) against `https://strategic-souls.vishnukota20071005.workers.dev/`
 
-| Field | Value |
+| Field | Verified Value |
 | --- | --- |
 | **Live Production URL** | `https://strategic-souls.vishnukota20071005.workers.dev/` |
 | **Cloudflare Worker / D1** | `strategic-souls` / `ss` (`1cda2b05-6b99-4d04-896f-b3542ad2ce7f`) — unchanged |
+| **GitHub Feature Branch & CI** | `feat/x3-1-angelone-market-data` @ `eda7d8503b999887737c213b3edf720b3980c746` — Run [`44871691676`](https://github.com/GVVKOTA/strategic-souls/actions/runs/44871691676) (`completed / success`) |
+| **GitHub `main` Merge SHA & CI** | `6c46a63afbd273f1c0ae4906b9df4e40f9fff617` — Run [`44871695904`](https://github.com/GVVKOTA/strategic-souls/actions/runs/44871695904) (`completed / success`) |
+| **Cloudflare Workers Build UUID** | `9681a0b4-3e14-4273-b952-0c80ecb11936` (`build_outcome: "success"`, `05:36:49Z` -> `05:38:42Z`) |
+| **Live Deployment / Version ID** | Deployment `fe198f6c-7e1a-45c7-a3e3-9d6ec246f08c` / Version `1e29b1a9-6ce6-46c5-a81f-a6660b552b8a` (100% traffic) |
 | **Pre-X3.1 Rollback Target** | Deployment `527a6543-9b02-42f9-9045-c1fd4168554c` / Version `351de6c5-1fc0-42fc-8a21-069b4f8691ad` |
-| **Git Branch & Commit SHA** | Pending commit & push |
-| **Live `/api/release` Check** | Pending post-deploy live HTTP check |
-| **Live `/api/market/*` Gates** | Pending post-deploy live HTTP check |
+| **Live `GET /` & `/api/markets/public`** | HTTP `200` (Strategic Souls HTML + live ECB FX & US Treasury JSON intact) |
+| **Live `GET /api/release`** | HTTP `200` (`release: "X3.1"`, `revisionMarker: "x3.1-angelone-readonly-gateway-2026-11-21"`, `readOnlyOnly: true`, `publicExchangeQuotesEnabled: false`) |
+| **Live `GET /api/market/health`** | HTTP `200` (`accessScope: "PUBLIC_RESTRICTED"`, `authState: "HIDDEN"`) |
+| **Live `GET /api/market/session`** | HTTP `200` (`21 Nov 2026, 11:08:57 IST`, NSE/BSE/MCX `CLOSED (weekend)`) |
+| **Live `GET /api/market/quote` & `/candles`** | HTTP `401` (`UNAUTHENTICATED` — fail closed for public visitors) |
+
+### Instant Rollback Procedure
+Cloudflare Dashboard -> **Workers & Pages -> `strategic-souls` -> Deployments -> Version `351de6c5-1fc0-42fc-8a21-069b4f8691ad` -> Rollback** (or `npx wrangler rollback --name strategic-souls`). D1 database `ss` is completely untouched.
