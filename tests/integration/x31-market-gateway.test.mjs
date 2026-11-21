@@ -259,9 +259,13 @@ test("full local loopback adapter + Cloudflare Worker route authorization, multi
     const sessionRoute = await harness.load("app/api/market/session/route.ts");
     const quoteRoute = await harness.load("app/api/market/quote/route.ts");
     const candleRoute = await harness.load("app/api/market/candles/route.ts");
+    const instRoute = await harness.load("app/api/market/instruments/route.ts");
     const dataService = await harness.load("backend/services/market-data/data-service.ts");
 
-    // 2. Unauthenticated public visitor: health is sanitized, quote/candles return 401
+    // 2. Unauthenticated public visitor: health is sanitized, quote/candles return 401, but instrument identity discovery finds HDFC!
+    const pubInstRes = await (await instRoute.GET(new Request("http://127.0.0.1:5173/api/market/instruments?q=HDFC"))).json();
+    assert.equal(pubInstRes.accessScope, "PUBLIC_IDENTITY_ONLY");
+    assert.equal(pubInstRes.instruments[0]?.id, "NSE:HDFCBANK");
     const pubHealth = await (await healthRoute.GET(new Request("http://127.0.0.1:5173/api/market/health"))).json();
     assert.equal(pubHealth.accessScope, "PUBLIC_RESTRICTED");
     assert.equal(pubHealth.authState, "HIDDEN");
@@ -313,6 +317,19 @@ test("full local loopback adapter + Cloudflare Worker route authorization, multi
       instrumentIds: ["NSE:SBIN"],
     });
     assert.equal(ownerUniverse.datasets.length, 1);
+
+    // Full unscoped owner universe evaluates all verified seeds (no hidden .slice(0, 5) truncation!)
+    const fullOwnerUniverse = await dataService.researchUniverse("owner", {
+      provider: "CONNECTED_MARKETS",
+    });
+    assert.ok(
+      fullOwnerUniverse.datasets.length >= 12,
+      `Expected >=12 owner broker instruments evaluated without .slice(0,5) cap, got ${fullOwnerUniverse.datasets.length}`,
+    );
+    assert.ok(
+      fullOwnerUniverse.datasets.some((d) => d.instrumentId === "NSE:HDFCBANK"),
+      "Full owner scan universe must include NSE:HDFCBANK",
+    );
 
     // Session endpoint works independently
     const sessBody = await (await sessionRoute.GET()).json();

@@ -96,6 +96,18 @@ async function saveProfile(subject: string, input: Record<string, unknown>): Pro
     if (/UNIQUE constraint failed: x1_bodies.handle|x1_body_handle_unique/.test(String(error))) throw new HttpError(409, 'That Body handle is already in use.');
     throw error;
   }
+  if (typeof input.discoverable === 'boolean') {
+    try {
+      await db
+        .prepare(
+          "INSERT INTO x2_social_preferences (subject,discoverable,messages,receipts,notifications,updated_at) VALUES (?,?,'REQUESTS',0,1,?) ON CONFLICT(subject) DO UPDATE SET discoverable=excluded.discoverable,updated_at=excluded.updated_at",
+        )
+        .bind(subject, input.discoverable ? 1 : 0, now)
+        .run();
+    } catch {
+      /* Optional in X1-only schema fixtures without x2_social_preferences. */
+    }
+  }
   return { body: publicBody(await communityBody(subject)) };
 }
 

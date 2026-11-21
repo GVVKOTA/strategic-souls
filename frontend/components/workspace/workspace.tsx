@@ -360,7 +360,7 @@ export default function X1Workspace() {
             <ArrowUpRight size={14} />
           </a>
           <button className="x1-about-link" onClick={() => setAbout(true)}>
-            Strategic Souls X2
+            About Strategic Souls
             <Info size={14} />
           </button>
         </div>
@@ -600,7 +600,7 @@ export default function X1Workspace() {
               <a href="/trust">Privacy</a>
               <a href="/terms">Terms</a>
               <a href="/help">Help</a>
-              <button onClick={() => setAbout(true)}>About X2</button>
+              <button onClick={() => setAbout(true)}>About Strategic Souls</button>
             </div>
           </footer>
         </main>
@@ -782,19 +782,21 @@ export default function X1Workspace() {
         </Modal>
       )}
       {about && (
-        <Modal title="Strategic Souls · X2" onClose={() => setAbout(false)}>
+        <Modal title="About Strategic Souls" onClose={() => setAbout(false)}>
           <p>
             A private financial research workspace by Global Vertex Vectors.
           </p>
           <dl className="x1-details">
             <div>
               <dt>Release</dt>
-              <dd>X2 · Research intelligence and community</dd>
+              <dd>X4 · Research intelligence, Soul Scan 2.0 &amp; community</dd>
             </div>
             <div>
               <dt>Data</dt>
               <dd>
-                ECB daily FX and US Treasury daily yields, when available.
+                ECB daily FX and US Treasury daily yields (keyless), plus
+                owner-gated read-only broker or licensed EOD adapters when
+                configured.
               </dd>
             </div>
             <div>

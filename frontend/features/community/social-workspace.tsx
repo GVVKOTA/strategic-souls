@@ -359,14 +359,15 @@ export function SocialWorkspace({
       )}
       {loading && <p role="status">Loading research network…</p>}
       {home && !home.body ? (
-        <Empty title="Create your Body first">
-          Use Create your Body above to establish your research identity.
-          Discovery is off until you choose it.
+        <Empty title="Create your Body profile first to search & connect">
+          Click &ldquo;Create your research profile (Body)&rdquo; above to choose
+          your @handle and display name. Member search requires an active Body,
+          and your profile remains private unless you opt into discovery.
         </Empty>
       ) : (
         <>
           {view === "Discover" && (
-            <Panel title="Discover research">
+            <Panel title="Discover People, Groups & Souls">
               <form
                 className="x2-social-search"
                 onSubmit={(e) => e.preventDefault()}
@@ -378,7 +379,7 @@ export function SocialWorkspace({
                     type="search"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="@Body, group or Soul"
+                    placeholder="Search @handle, display name, group or Soul…"
                     maxLength={80}
                   />
                 </label>
@@ -388,18 +389,45 @@ export function SocialWorkspace({
                   onChange={(e) => setKind(e.target.value)}
                 >
                   <option value="all">All research</option>
-                  <option value="bodies">Bodies</option>
+                  <option value="bodies">People (@Bodies)</option>
                   <option value="groups">Groups</option>
-                  <option value="souls">Souls</option>
+                  <option value="souls">Shared Souls</option>
                 </select>
               </form>
+              {home && !home.preferences.discoverable && (
+                <div className="x1-callout">
+                  <span>
+                    Your Body <strong>@{home.body?.handle}</strong> is currently{" "}
+                    <strong>hidden from search</strong>. Other members cannot find
+                    you by @handle until you enable discovery.
+                  </span>
+                  <button
+                    type="button"
+                    className="x1-secondary"
+                    disabled={busy}
+                    onClick={() =>
+                      void mutate(
+                        {
+                          action: "preferences",
+                          ...home.preferences,
+                          discoverable: true,
+                        },
+                        "Your Body is now discoverable by @handle.",
+                      )
+                    }
+                  >
+                    Let other members find my Body
+                  </button>
+                </div>
+              )}
               {searching && <p role="status">Searching permitted research…</p>}
               <details className="x2-social-info">
-                <summary>ⓘ Search privacy</summary>
+                <summary>ⓘ How @handle discovery and privacy work</summary>
                 <p>
-                  Only opted-in Bodies and group directories appear. Souls
-                  require current group membership. A private profile is not
-                  revealed by search. This does not expand the Site audience.
+                  Only members who turn on <em>Let other members find my Body</em>{" "}
+                  and discoverable group directories appear in search. Internal
+                  user IDs are never public handles. Shared Souls require current
+                  group membership.
                 </p>
               </details>
               {results && (
@@ -485,8 +513,8 @@ export function SocialWorkspace({
                     !results.souls.length && (
                       <p className="x1-caption">
                         {search.trim()
-                          ? "No permitted matches. Try an exact handle or group name."
-                          : "Search for a Body, group or shared Soul."}
+                          ? `No discoverable Body, Group, or shared Soul matched "${search.trim()}". Profiles are private by default unless the member turns on "Let other members find my Body", and internal account IDs are not public @handles.`
+                          : "Enter an @handle, display name, group name, or shared Soul title to search discoverable research."}
                       </p>
                     )}
                   {results.nextBody && (

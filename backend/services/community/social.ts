@@ -228,12 +228,19 @@ export async function searchSocial(
     throw new HttpError(400, "Choose a valid research search type.");
   const after = before ?? "";
   if (after.length > 100) throw new HttpError(400, "Invalid search cursor.");
-  if (!(await ownBody(subject)) || !q)
-    return { bodies: [], groups: [], souls: [], nextBody: null };
+  const callerBody = await ownBody(subject);
+  if (!callerBody || !q)
+    return {
+      bodies: [],
+      groups: [],
+      souls: [],
+      nextBody: null,
+      callerHasBody: !!callerBody,
+    };
   const pattern = "%" + q.replace(/[!%_]/g, "!$&") + "%";
   const bodies = ["all", "bodies"].includes(kind)
     ? await query<Profile>(
-        `SELECT b.subject,b.handle,b.display_name,b.bio,b.avatar FROM x1_bodies b JOIN x2_social_preferences p ON p.subject=b.subject WHERE p.discoverable=1 AND b.handle>? AND (b.handle LIKE ? ESCAPE '!' OR lower(b.display_name) LIKE ? ESCAPE '!') AND ${searchFilter} ORDER BY b.handle LIMIT 21`,
+        `SELECT b.subject,b.handle,b.display_name,b.bio,b.avatar FROM x1_bodies b JOIN x2_social_preferences p ON p.subject=b.subject WHERE p.discoverable=1 AND b.handle>? AND (lower(b.handle) LIKE ? ESCAPE '!' OR lower(b.display_name) LIKE ? ESCAPE '!') AND ${searchFilter} ORDER BY b.handle LIMIT 21`,
         after,
         pattern,
         pattern,
@@ -243,7 +250,7 @@ export async function searchSocial(
     : [];
   const groups = ["all", "groups"].includes(kind)
     ? await query(
-        `SELECT g.id,g.name,g.description,d.handle,EXISTS(SELECT 1 FROM x1_memberships m WHERE m.group_id=g.id AND m.subject=?) AS joined FROM x1_groups g JOIN x2_group_directory d ON d.group_id=g.id WHERE d.discoverable=1 AND (lower(g.name) LIKE ? ESCAPE '!' OR d.handle LIKE ? ESCAPE '!') AND NOT EXISTS(SELECT 1 FROM x2_blocks z WHERE (z.subject=? AND z.target=g.owner_subject) OR (z.subject=g.owner_subject AND z.target=?)) ORDER BY d.handle LIMIT 20`,
+        `SELECT g.id,g.name,g.description,d.handle,EXISTS(SELECT 1 FROM x1_memberships m WHERE m.group_id=g.id AND m.subject=?) AS joined FROM x1_groups g JOIN x2_group_directory d ON d.group_id=g.id WHERE d.discoverable=1 AND (lower(g.name) LIKE ? ESCAPE '!' OR lower(d.handle) LIKE ? ESCAPE '!') AND NOT EXISTS(SELECT 1 FROM x2_blocks z WHERE (z.subject=? AND z.target=g.owner_subject) OR (z.subject=g.owner_subject AND z.target=?)) ORDER BY d.handle LIMIT 20`,
         subject,
         pattern,
         pattern,
@@ -260,11 +267,20 @@ export async function searchSocial(
         pattern,
       )
     : [];
+  const pageBodies = bodies.slice(0, 20).map(publicBody);
+  if (!after) {
+    pageBodies.sort((a, b) => {
+      const aExact = a.handle.toLowerCase() === q ? 0 : a.handle.toLowerCase().startsWith(q) ? 1 : 2;
+      const bExact = b.handle.toLowerCase() === q ? 0 : b.handle.toLowerCase().startsWith(q) ? 1 : 2;
+      return aExact - bExact || a.handle.localeCompare(b.handle);
+    });
+  }
   return {
-    bodies: bodies.slice(0, 20).map(publicBody),
+    bodies: pageBodies,
     groups,
     souls,
     nextBody: bodies.length > 20 ? bodies[19].handle : null,
+    callerHasBody: true,
   };
 }
 async function inbox(subject: string, q = "") {

@@ -304,31 +304,88 @@ export default function Community({
         <div>
           <h1>Research community</h1>
         </div>
-        <button
-          className="x1-secondary x1-motion-button"
-          onClick={() => setModal("profile")}
-        >
-          <UserRound size={16} />
-          {body ? "Edit your Body" : "Create your Body"}
-        </button>
+        <div className="x1-actions">
+          {body && (
+            <button
+              type="button"
+              className="x1-secondary x1-motion-button"
+              onClick={() => {
+                void navigator.clipboard?.writeText("@" + body.handle);
+                notify(`Copied @${body.handle} to clipboard.`);
+              }}
+            >
+              <Copy size={15} />@{body.handle}
+            </button>
+          )}
+          <button
+            className="x1-primary x1-motion-button"
+            onClick={() => setModal("profile")}
+          >
+            <UserRound size={16} />
+            {body ? "Edit your Body" : "Create your research profile (Body)"}
+          </button>
+        </div>
       </header>
+      <section className="x3-journey" aria-label="Community quick guide">
+        <div className="x3-journey-head">
+          <strong>
+            {body
+              ? `Signed in as @${body.handle} (${body.displayName})`
+              : "Welcome to Community — how collaborative research works"}
+          </strong>
+          {!body && (
+            <button
+              type="button"
+              className="x1-text-button"
+              onClick={() => setModal("profile")}
+            >
+              Create your Body in 30 seconds
+              <ArrowRight size={14} />
+            </button>
+          )}
+        </div>
+        <div className="x3-glossary-grid">
+          <div className="x3-glossary-item">
+            <strong>1. Body (@handle) = Your research profile</strong>
+            <p>
+              Choose a public @handle and display name. Turn on{" "}
+              <em>Let other members find my Body</em> so peers can search your
+              @handle (internal user IDs are never searchable).
+            </p>
+          </div>
+          <div className="x3-glossary-item">
+            <strong>2. Group = A private research room</strong>
+            <p>
+              Create an invite-only or discoverable group to test market
+              hypotheses with teammates without exposing private portfolios.
+            </p>
+          </div>
+          <div className="x3-glossary-item">
+            <strong>3. Soul = A shared strategy hypothesis</strong>
+            <p>
+              Publish versioned Soul Scan formulas inside a group, compare
+              revision diffs, and discuss evidence with role-based permissions.
+            </p>
+          </div>
+        </div>
+      </section>
       <nav className="x2-community-tabs" aria-label="Community sections">
         {(
           [
-            "Groups",
-            "Discover",
-            "Messages",
-            "Saved",
-            "Notifications",
-            "Privacy",
+            ["Discover", "Discover People & Groups"],
+            ["Groups", "My Groups"],
+            ["Messages", "Inbox"],
+            ["Saved", "Saved"],
+            ["Notifications", "Notifications"],
+            ["Privacy", "Privacy & Safety"],
           ] as const
-        ).map((item) => (
+        ).map(([item, label]) => (
           <button
             key={item}
             aria-pressed={networkView === item}
             onClick={() => setNetworkView(item)}
           >
-            {item}
+            {label}
           </button>
         ))}
       </nav>
@@ -972,6 +1029,9 @@ export default function Community({
                         : "accept-invite";
                 const input: Record<string, unknown> = { action };
                 for (const [key, value] of f) input[key] = value;
+                if (modal === "profile") {
+                  input.discoverable = f.get("discoverable") === "on";
+                }
                 if (modal === "invite") input.groupId = groupId;
                 const result = await mutate(
                   input,
@@ -1046,9 +1106,19 @@ export default function Community({
                       )}
                     </select>
                   </label>
+                  <label className="x1-checkbox">
+                    <input
+                      type="checkbox"
+                      name="discoverable"
+                      defaultChecked={true}
+                    />
+                    Let other members find my Body (@handle and display name) in
+                    Community search
+                  </label>
                   <p className="x1-caption">
-                    Initials avatars are stored. Profile photo uploads require
-                    private file storage and are not enabled.
+                    Internal account IDs are private and never searchable. Other
+                    members can only discover your Body when the option above is
+                    enabled. Initials avatars are stored.
                   </p>
                 </>
               ) : modal === "group" ? (

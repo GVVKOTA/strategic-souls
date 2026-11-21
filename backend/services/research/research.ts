@@ -210,12 +210,12 @@ export function validateResearch(
   const instrumentIds = input.instrumentIds ?? [];
   if (
     !Array.isArray(instrumentIds) ||
-    instrumentIds.length > 100 ||
+    instrumentIds.length > 1000 ||
     instrumentIds.some(
       (x) => typeof x !== "string" || !/^[A-Za-z0-9_:./!+-]{1,160}$/.test(x),
     )
   )
-    throw new Error("Choose at most 100 exact instrument identifiers.");
+    throw new Error("Choose at most 1,000 exact instrument identifiers.");
   return {
     name,
     description,
@@ -289,10 +289,207 @@ export function treeFromFormula(formula: string): RuleTree | null {
   }
   return convert(compileFormula(formula).ast);
 }
+export type ScanUniverseAccounting = {
+  discovered: number;
+  authorized: number;
+  eligible: number;
+  evaluated: number;
+  matched: number;
+  notMatched: number;
+  unknown: number;
+  excluded: number;
+  withheld: number;
+  errors: number;
+  coveragePct: number;
+};
+
+export type ScanBatchPlan = {
+  totalCandidates: number;
+  batchSize: number;
+  estimatedBatches: number;
+  executionMode: "INLINE" | "BOUNDED_CHUNKED";
+};
+
+function isValidIsoCalendarDate(dateStr: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d
+  );
+}
+
+/**
+ * Validates and parses a user-supplied private CSV OHLCV dataset for personal research.
+ * Never treated as an exchange-licensed public feed and never redistributed.
+ * Accepted header columns: symbol (or id), date, close, and optional open, high, low, volume.
+ */
+export function parsePrivateCsvDataset(
+  csvText: string,
+  nowMs = Date.now(),
+): {
+  datasets: ScanDataset[];
+  excluded: { id: string; reason: string }[];
+  asOf: string;
+  source: string;
+} {
+  if (typeof csvText !== "string" || !csvText.trim()) {
+    throw new Error("Paste or upload a non-empty CSV with symbol,date,open,high,low,close,volume.");
+  }
+  if (csvText.length > 500_000) {
+    throw new Error("Private CSV import is bounded to 500 KB per scan.");
+  }
+  const lines = csvText
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#"));
+  if (lines.length < 2) {
+    throw new Error("CSV must include a header row and at least one observation row.");
+  }
+
+  const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const symIdx = header.findIndex((h) => ["symbol", "id", "instrument", "ticker"].includes(h));
+  const dateIdx = header.indexOf("date");
+  const closeIdx = header.indexOf("close");
+  const openIdx = header.indexOf("open");
+  const highIdx = header.indexOf("high");
+  const lowIdx = header.indexOf("low");
+  const volIdx = header.indexOf("volume");
+
+  if (symIdx === -1 || dateIdx === -1 || closeIdx === -1) {
+    throw new Error("CSV header must contain at least: symbol,date,close (plus optional open,high,low,volume).");
+  }
+
+  const knownAt = new Date(nowMs).toISOString();
+  const bySymbol = new Map<
+    string,
+    {
+      dates: Set<string>;
+      bars: {
+        date: string;
+        eventAt: string;
+        knownAt: string;
+        open?: number;
+        high?: number;
+        low?: number;
+        close: number;
+        volume?: number;
+      }[];
+    }
+  >();
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",").map((c) => c.trim());
+    const rawSym = (cols[symIdx] ?? "").toUpperCase();
+    const dateStr = cols[dateIdx] ?? "";
+    if (!rawSym || !/^[A-Z0-9_:./!+-]{1,60}$/.test(rawSym)) {
+      throw new Error(`Row ${i + 1}: invalid instrument identifier "${cols[symIdx] ?? ""}".`);
+    }
+    const sym = rawSym.includes(":") ? rawSym : `CSV:${rawSym}`;
+    if (!isValidIsoCalendarDate(dateStr)) {
+      throw new Error(`Row ${i + 1} (${sym}): date "${dateStr}" must be a valid YYYY-MM-DD calendar date.`);
+    }
+    const eventMs = Date.parse(`${dateStr}T00:00:00.000Z`);
+    if (eventMs > nowMs + 86_400_000) {
+      throw new Error(`Row ${i + 1} (${sym}): future-dated bar "${dateStr}" is rejected.`);
+    }
+
+    const close = Number(cols[closeIdx]);
+    if (!Number.isFinite(close) || close <= 0) {
+      throw new Error(`Row ${i + 1} (${sym}): close must be a positive finite number.`);
+    }
+
+    let open: number | undefined;
+    let high: number | undefined;
+    let low: number | undefined;
+    let volume: number | undefined;
+
+    if (openIdx !== -1 && cols[openIdx] !== "" && cols[openIdx] !== undefined) {
+      open = Number(cols[openIdx]);
+      if (!Number.isFinite(open) || open <= 0) {
+        throw new Error(`Row ${i + 1} (${sym}): open must be a positive finite number.`);
+      }
+    }
+    if (highIdx !== -1 && cols[highIdx] !== "" && cols[highIdx] !== undefined) {
+      high = Number(cols[highIdx]);
+      if (!Number.isFinite(high) || high <= 0) {
+        throw new Error(`Row ${i + 1} (${sym}): high must be a positive finite number.`);
+      }
+    }
+    if (lowIdx !== -1 && cols[lowIdx] !== "" && cols[lowIdx] !== undefined) {
+      low = Number(cols[lowIdx]);
+      if (!Number.isFinite(low) || low <= 0) {
+        throw new Error(`Row ${i + 1} (${sym}): low must be a positive finite number.`);
+      }
+    }
+    if (volIdx !== -1 && cols[volIdx] !== "" && cols[volIdx] !== undefined) {
+      volume = Number(cols[volIdx]);
+      if (!Number.isFinite(volume) || volume < 0) {
+        throw new Error(`Row ${i + 1} (${sym}): volume cannot be negative or NaN.`);
+      }
+    }
+
+    if (high !== undefined && low !== undefined && high < low) {
+      throw new Error(`Row ${i + 1} (${sym}): impossible OHLC (high ${high} < low ${low}).`);
+    }
+    if (high !== undefined && (high < close || (open !== undefined && high < open))) {
+      throw new Error(`Row ${i + 1} (${sym}): impossible OHLC (high below open/close).`);
+    }
+    if (low !== undefined && (low > close || (open !== undefined && low > open))) {
+      throw new Error(`Row ${i + 1} (${sym}): impossible OHLC (low above open/close).`);
+    }
+
+    let bucket = bySymbol.get(sym);
+    if (!bucket) {
+      bucket = { dates: new Set(), bars: [] };
+      bySymbol.set(sym, bucket);
+    }
+    if (bucket.dates.has(dateStr)) {
+      throw new Error(`Row ${i + 1} (${sym}): duplicate date "${dateStr}" rejected.`);
+    }
+    bucket.dates.add(dateStr);
+    bucket.bars.push({
+      date: dateStr,
+      eventAt: `${dateStr}T00:00:00.000Z`,
+      knownAt,
+      ...(open !== undefined ? { open } : {}),
+      ...(high !== undefined ? { high } : {}),
+      ...(low !== undefined ? { low } : {}),
+      close,
+      ...(volume !== undefined ? { volume } : {}),
+    });
+  }
+
+  const datasets: ScanDataset[] = [];
+  for (const [instrumentId, bucket] of bySymbol.entries()) {
+    bucket.bars.sort((a, b) => a.date.localeCompare(b.date));
+    datasets.push({
+      instrumentId,
+      source: "Private User CSV (Personal Research Only)",
+      permitted: true,
+      frequency: "USER_IMPORTED_OHLCV",
+      maxAgeMs: 3650 * 86_400_000,
+      observations: bucket.bars.map(({ date: _d, ...obs }) => obs),
+    });
+  }
+
+  return {
+    datasets,
+    excluded: [],
+    asOf: knownAt,
+    source: "Private User CSV (Personal Research Only)",
+  };
+}
+
 export function preflightResearch(
   definition: ResearchDefinition,
   datasets: ScanDataset[],
   asOf: string,
+  sourceExclusions: { id: string; reason: string }[] = [],
 ) {
   const rule = compileFormula(definition.formula),
     result = evaluateScan(rule, datasets, asOf);
@@ -300,6 +497,31 @@ export function preflightResearch(
     !datasets.length ||
     result.eligible === 0 ||
     (definition.partialPolicy === "STRICT" && result.unknown > 0);
+  const discovered = datasets.length + sourceExclusions.length;
+  const authorized = datasets.filter((d) => d.permitted !== false).length;
+  const accounting: ScanUniverseAccounting = {
+    discovered,
+    authorized,
+    eligible: result.eligible,
+    evaluated: result.total,
+    matched: result.matches,
+    notMatched: result.failed,
+    unknown: result.unknown,
+    excluded: sourceExclusions.length,
+    withheld: 0,
+    errors: 0,
+    coveragePct:
+      discovered > 0
+        ? Math.round((result.eligible / discovered) * 1000) / 10
+        : 0,
+  };
+  const batchSize = 25;
+  const batchPlan: ScanBatchPlan = {
+    totalCandidates: discovered,
+    batchSize,
+    estimatedBatches: Math.max(1, Math.ceil(Math.max(1, discovered) / batchSize)),
+    executionMode: discovered > 50 ? "BOUNDED_CHUNKED" : "INLINE",
+  };
   return {
     version: RESEARCH_VERSION,
     asOf,
@@ -319,6 +541,8 @@ export function preflightResearch(
       .filter((r) => r.status === "UNKNOWN")
       .map((r) => ({ id: r.instrumentId, reasons: r.reasons })),
     results: result,
+    accounting,
+    batchPlan,
     quota: "30 daily scan requests; zero paid credits",
     sourceMode:
       definition.universe === "ECB_DAILY"

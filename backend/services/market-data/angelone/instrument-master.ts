@@ -6,6 +6,7 @@
  * - Caches OpenAPIScripMaster.json in memory (and optional local disk cache in Node adapter).
  */
 
+import { COMMON_INSTRUMENT_ALIASES, scoreCanonicalInstrument } from "../instrument-registry";
 import { paiseToRupees, parseAngelOneExpiry } from "./normalizer";
 import type { ExchangeCode, InstrumentMasterEntry, SegmentType } from "./types";
 
@@ -115,6 +116,108 @@ export const VERIFIED_SEED_INSTRUMENTS: readonly InstrumentMasterEntry[] = Objec
     instrumentType: "EQ",
   },
   {
+    id: "NSE:ICICIBANK",
+    exchange: "NSE",
+    segment: "EQUITY",
+    tradingSymbol: "ICICIBANK-EQ",
+    symbol: "ICICIBANK",
+    token: "4963",
+    name: "ICICI Bank (NSE)",
+    mic: "XNSE",
+    currency: "INR",
+    unit: "INR per share",
+    timezone: "Asia/Kolkata",
+    expiry: null,
+    lotSize: 1,
+    tickSize: 0.05,
+    instrumentType: "EQ",
+  },
+  {
+    id: "NSE:BHARTIARTL",
+    exchange: "NSE",
+    segment: "EQUITY",
+    tradingSymbol: "BHARTIARTL-EQ",
+    symbol: "BHARTIARTL",
+    token: "10604",
+    name: "Bharti Airtel (NSE)",
+    mic: "XNSE",
+    currency: "INR",
+    unit: "INR per share",
+    timezone: "Asia/Kolkata",
+    expiry: null,
+    lotSize: 1,
+    tickSize: 0.05,
+    instrumentType: "EQ",
+  },
+  {
+    id: "NSE:ITC",
+    exchange: "NSE",
+    segment: "EQUITY",
+    tradingSymbol: "ITC-EQ",
+    symbol: "ITC",
+    token: "1660",
+    name: "ITC Limited (NSE)",
+    mic: "XNSE",
+    currency: "INR",
+    unit: "INR per share",
+    timezone: "Asia/Kolkata",
+    expiry: null,
+    lotSize: 1,
+    tickSize: 0.05,
+    instrumentType: "EQ",
+  },
+  {
+    id: "NSE:KOTAKBANK",
+    exchange: "NSE",
+    segment: "EQUITY",
+    tradingSymbol: "KOTAKBANK-EQ",
+    symbol: "KOTAKBANK",
+    token: "1922",
+    name: "Kotak Mahindra Bank (NSE)",
+    mic: "XNSE",
+    currency: "INR",
+    unit: "INR per share",
+    timezone: "Asia/Kolkata",
+    expiry: null,
+    lotSize: 1,
+    tickSize: 0.05,
+    instrumentType: "EQ",
+  },
+  {
+    id: "NSE:LT",
+    exchange: "NSE",
+    segment: "EQUITY",
+    tradingSymbol: "LT-EQ",
+    symbol: "LT",
+    token: "11483",
+    name: "Larsen & Toubro (NSE)",
+    mic: "XNSE",
+    currency: "INR",
+    unit: "INR per share",
+    timezone: "Asia/Kolkata",
+    expiry: null,
+    lotSize: 1,
+    tickSize: 0.1,
+    instrumentType: "EQ",
+  },
+  {
+    id: "NSE:AXISBANK",
+    exchange: "NSE",
+    segment: "EQUITY",
+    tradingSymbol: "AXISBANK-EQ",
+    symbol: "AXISBANK",
+    token: "5900",
+    name: "Axis Bank (NSE)",
+    mic: "XNSE",
+    currency: "INR",
+    unit: "INR per share",
+    timezone: "Asia/Kolkata",
+    expiry: null,
+    lotSize: 1,
+    tickSize: 0.05,
+    instrumentType: "EQ",
+  },
+  {
     id: "NSE:NIFTY",
     exchange: "NSE",
     segment: "INDEX",
@@ -147,6 +250,23 @@ export const VERIFIED_SEED_INSTRUMENTS: readonly InstrumentMasterEntry[] = Objec
     lotSize: 1,
     tickSize: null,
     instrumentType: "AMXIDX",
+  },
+  {
+    id: "BSE:HDFCBANK",
+    exchange: "BSE",
+    segment: "EQUITY",
+    tradingSymbol: "HDFCBANK",
+    symbol: "HDFCBANK",
+    token: "500180",
+    name: "HDFC Bank (BSE)",
+    mic: "XBOM",
+    currency: "INR",
+    unit: "INR per share",
+    timezone: "Asia/Kolkata",
+    expiry: null,
+    lotSize: 1,
+    tickSize: 0.05,
+    instrumentType: "EQ",
   },
   {
     id: "BSE:SBIN",
@@ -238,8 +358,11 @@ export const VERIFIED_SEED_INSTRUMENTS: readonly InstrumentMasterEntry[] = Objec
 export const DEFAULT_OWNER_WATCH_IDS = [
   "NSE:NIFTY",
   "BSE:SENSEX",
+  "NSE:HDFCBANK",
   "NSE:SBIN",
   "NSE:RELIANCE",
+  "NSE:TCS",
+  "NSE:INFY",
   "BSE:SBIN",
   "BSE:RELIANCE",
   "MCX:GOLD04DEC26FUT",
@@ -483,6 +606,22 @@ export class InstrumentMaster {
       if (candidates.length > 0) return candidates[0];
     }
 
+    // Support bare symbol or common alias lookup (e.g., "HDFCBANK", "HDFC", "SBI", "NSE:HDFC") when unambiguous
+    if (!clean.includes(":")) {
+      const nseDirect = this.byId.get(`NSE:${clean.replace(/-(EQ|BE)$/i, "")}`);
+      if (nseDirect) return nseDirect;
+      for (const [canonicalId, aliases] of Object.entries(COMMON_INSTRUMENT_ALIASES)) {
+        if (aliases.some((a) => a.toUpperCase() === clean)) {
+          const hit = this.byId.get(canonicalId);
+          if (hit) return hit;
+        }
+      }
+    } else if (clean === "NSE:HDFC") {
+      return this.byId.get("NSE:HDFCBANK") ?? null;
+    } else if (clean === "BSE:HDFC") {
+      return this.byId.get("BSE:HDFCBANK") ?? null;
+    }
+
     return null;
   }
 
@@ -492,31 +631,45 @@ export class InstrumentMaster {
     segment?: SegmentType | "ALL";
     limit?: number;
   }): InstrumentMasterEntry[] {
-    const q = (options.q ?? "").trim().toLowerCase();
-    const limit = Math.max(1, Math.min(25, options.limit ?? 15));
+    const q = (options.q ?? "").trim();
+    const limit = Math.max(1, Math.min(100, options.limit ?? 20));
     const exchange = options.exchange && options.exchange !== "ALL" ? options.exchange : null;
     const segment = options.segment && options.segment !== "ALL" ? options.segment : null;
 
-    const matches: InstrumentMasterEntry[] = [];
-    // Prioritize verified seed entries first when query is empty or matches common symbols
+    // Prioritize verified seed entries first when query is empty, otherwise score deterministically
     const ordered = [
       ...VERIFIED_SEED_INSTRUMENTS.map((s) => this.byId.get(s.id) ?? s),
       ...this.entries,
     ];
     const seen = new Set<string>();
 
-    for (const item of ordered) {
+    if (!q) {
+      const matches: InstrumentMasterEntry[] = [];
+      for (const item of ordered) {
+        if (seen.has(item.id)) continue;
+        seen.add(item.id);
+        if (exchange && item.exchange !== exchange) continue;
+        if (segment && item.segment !== segment) continue;
+        matches.push(item);
+        if (matches.length >= limit) break;
+      }
+      return matches;
+    }
+
+    const scored: { item: InstrumentMasterEntry; score: number; index: number }[] = [];
+    for (let i = 0; i < ordered.length; i++) {
+      const item = ordered[i];
       if (seen.has(item.id)) continue;
       seen.add(item.id);
       if (exchange && item.exchange !== exchange) continue;
       if (segment && item.segment !== segment) continue;
-      if (q) {
-        const hay = `${item.id} ${item.symbol} ${item.tradingSymbol} ${item.name} ${item.token}`.toLowerCase();
-        if (!hay.includes(q)) continue;
+      const score = scoreCanonicalInstrument(q, item);
+      if (score > 0) {
+        scored.push({ item, score, index: i });
       }
-      matches.push(item);
-      if (matches.length >= limit) break;
     }
-    return matches;
+
+    scored.sort((a, b) => b.score - a.score || a.index - b.index);
+    return scored.slice(0, limit).map((s) => s.item);
   }
 }

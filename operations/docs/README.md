@@ -6,8 +6,14 @@ Start here if you are new to the project:
 - [Current Architecture](ARCHITECTURE.md)
 - [Engineering Rules (`AGENTS.md`)](../../AGENTS.md)
 
-## Active X3 / X2 Operating Guides
+## Active X4 / X3 / X2 Operating Guides
 
+- [X4 Full Product & Architecture Audit](X4_FULL_AUDIT.md)
+- [X4 Product & UX Specification](X4_PRODUCT_UX_SPEC.md)
+- [X4 Market Search, Canonical Discovery & Soul Scan 2.0 Architecture](X4_MARKET_SEARCH_AND_SCANNER.md)
+- [X4 Test & Verification Report](X4_TEST_REPORT.md)
+- [X4 Deployment & Live Smoke Report](X4_DEPLOYMENT_REPORT.md)
+- [X4 Execution Progress & Checkpoint Log](X4_PROGRESS.md)
 - [Market-Data Setup Guide (Windows, Secrets, Tunnel & Deploy)](MARKET_DATA_SETUP.md)
 - [Market-Data Architecture & Decision Record](MARKET_DATA_ARCHITECTURE.md)
 - [Market-Data Security & Secret Boundaries](MARKET_DATA_SECURITY.md)

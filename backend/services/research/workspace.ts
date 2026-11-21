@@ -18,6 +18,7 @@ import {
 import {
   validateResearch,
   preflightResearch,
+  parsePrivateCsvDataset,
   assessEvidence,
   replayResearch,
   type ResearchDefinition,
@@ -369,7 +370,46 @@ function researchDefinition(input: Record<string, unknown>) {
     throw new HttpError(400, (error as Error).message);
   }
 }
-async function scanSource(subject: string, definition: ResearchDefinition) {
+async function scanSource(
+  subject: string,
+  definition: ResearchDefinition,
+  customCsv?: unknown,
+) {
+  if (typeof customCsv === "string" && customCsv.trim().length > 0) {
+    let parsed;
+    try {
+      parsed = parsePrivateCsvDataset(customCsv);
+    } catch (err) {
+      throw new HttpError(400, (err as Error).message);
+    }
+    const filtered = definition.instrumentIds.length
+      ? parsed.datasets.filter((d) =>
+          definition.instrumentIds.includes(d.instrumentId) ||
+          definition.instrumentIds.includes(d.instrumentId.replace(/^CSV:/, "")),
+        )
+      : parsed.datasets;
+    return {
+      datasets: filtered,
+      excluded: parsed.excluded,
+      source: parsed.source,
+      pointInTime: false,
+      adjusted: false,
+      rights: { analysis: true, storage: true },
+      asOf: parsed.asOf,
+      lineage: filtered.map((d) => ({
+        instrumentId: d.instrumentId,
+        provider: parsed.source,
+        eventAt: d.observations.at(-1)?.eventAt?.slice(0, 10) ?? null,
+        retrievedAt: parsed.asOf,
+        adjustment: "USER_IMPORTED_RAW",
+        displayAllowed: true,
+        derivedDisplayAllowed: true,
+        rightsExpiresAt: null,
+        interval: definition.interval,
+        periodPolicy: "USER_IMPORTED_CSV_OBSERVATIONS",
+      })),
+    };
+  }
   const data = await researchUniverse(subject, {
     provider: definition.universe === "ECB_DAILY" ? "ECB" : "CONNECTED_MARKETS",
     instrumentIds: definition.instrumentIds,
@@ -499,11 +539,12 @@ export async function mutateWorkspace(
   }
   if (action === "preflight-scan") {
     const definition = researchDefinition(input),
-      source = await scanSource(subject, definition);
+      source = await scanSource(subject, definition, input.customCsv);
     const preflight = preflightResearch(
       definition,
       source.datasets,
       source.asOf,
+      source.excluded,
     );
     const projection = await projectResearchSnapshot(
       {
@@ -772,7 +813,7 @@ export async function mutateWorkspace(
         );
       return { id: prior.id, replayed: true };
     }
-    const data = await scanSource(subject, definition);
+    const data = await scanSource(subject, definition, input.customCsv);
     const datasets = data.datasets;
     if (!datasets.length)
       throw new HttpError(
@@ -782,7 +823,12 @@ export async function mutateWorkspace(
     await rate(subject + ":x1scans", 30, 86400000);
     const asOf = new Date().toISOString(),
       results = evaluateScan(rule, datasets, asOf);
-    const preflight = preflightResearch(definition, datasets, asOf);
+    const preflight = preflightResearch(
+      definition,
+      datasets,
+      asOf,
+      data.excluded,
+    );
     if (preflight.blocked)
       throw new HttpError(
         422,

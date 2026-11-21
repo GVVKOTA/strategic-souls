@@ -141,9 +141,9 @@ const LIMITS = {
   nodes: 256,
   depth: 24,
   lookback: 250,
-  datasets: 200,
+  datasets: 1000,
   observations: 5000,
-  steps: 250000,
+  steps: 1000000,
 };
 
 export class FormulaError extends Error {
