@@ -22,9 +22,12 @@ import {
   canShowDerived,
 } from "../../../backend/engines/chart-analytics";
 import { X2_INSTRUMENTS } from "../../../backend/services/market-data/instrument-registry";
+import type { NormalizedMarketQuote } from "../../../backend/services/market-data/angelone/types";
+import { fetchMarketQuotes } from "./private-market-client";
 type Props = {
   id: string;
   authenticated?: boolean;
+  isOwner?: boolean;
   onRequireAuth?: () => void;
   onClose?: () => void;
   onAnalyze?: (formula?: string, instrumentId?: string) => void;
@@ -51,12 +54,14 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 export default function AssetTerminal({
   id,
   authenticated = true,
+  isOwner = false,
   onRequireAuth,
   onClose,
   onAnalyze,
   notify,
 }: Props) {
   const [assetState, setAsset] = useState<AssetResearch | null>(null),
+    [ownerQuote, setOwnerQuote] = useState<NormalizedMarketQuote | null>(null),
     [layout, setLayout] = useState<ChartLayout>(emptyLayout),
     [interval, setInterval] = useState<Interval>("1d"),
     [tab, setTab] = useState("Chart"),
@@ -144,6 +149,23 @@ export default function AssetTerminal({
       clearTimeout(timeout);
     };
   }, [authenticated, id, interval, reload]);
+  useEffect(() => {
+    if (!authenticated || !isOwner || !/^(NSE|BSE|MCX):/i.test(id)) {
+      queueMicrotask(() => setOwnerQuote(null));
+      return;
+    }
+    let alive = true;
+    fetchMarketQuotes([id])
+      .then((res) => {
+        if (alive) setOwnerQuote(res.quotes[0] ?? null);
+      })
+      .catch(() => {
+        if (alive) setOwnerQuote(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [authenticated, isOwner, id, reload]);
   function change(next: Partial<ChartLayout["payload"]>) {
     requestKey.current = null;
     setSaveMessage("");
@@ -337,6 +359,31 @@ export default function AssetTerminal({
         </details>
       </div>
       {saveMessage && <p role="status">{saveMessage}</p>}
+      {ownerQuote && (
+        <div className="x31-terminal-quote" aria-label="Private broker quote snapshot">
+          <div>
+            <strong>
+              {ownerQuote.ltp !== null ? `₹${num(ownerQuote.ltp)}` : "Unavailable"}
+            </strong>
+            <span>
+              {ownerQuote.change !== null && ownerQuote.changePct !== null
+                ? `${ownerQuote.change >= 0 ? "+" : ""}${num(ownerQuote.change)} (${ownerQuote.changePct >= 0 ? "+" : ""}${ownerQuote.changePct.toFixed(2)}%)`
+                : "Change unavailable"}
+            </span>
+          </div>
+          <div>
+            <span className="x1-badge">{ownerQuote.qualityLabel}</span>
+            <span>
+              {ownerQuote.exchange} · {ownerQuote.tradingSymbol} (Token {ownerQuote.token})
+              {ownerQuote.expiry ? ` · Exp ${ownerQuote.expiry} · Lot ${ownerQuote.lotSize}` : ""}
+            </span>
+          </div>
+          <p className="x2-source-line">
+            Observed: {ownerQuote.exchangeTimestampIST ?? "Unavailable"} · Retrieved:{" "}
+            {ownerQuote.retrievalTimestampIST} · {ownerQuote.provider} (Private Owner Read-Only)
+          </p>
+        </div>
+      )}
       {error && (
         <p role="alert" className="x2-error">
           {error}{" "}

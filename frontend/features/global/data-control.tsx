@@ -6,6 +6,8 @@ import type {
   ProviderHealth,
   ProviderId,
 } from "../../../backend/services/market-data/data-types";
+import type { MarketHealthResponse } from "../../../backend/services/market-data/angelone/types";
+import { fetchMarketHealth, submitManualTotpUnlock } from "./private-market-client";
 type ProviderView = {
   id: ProviderId;
   label: string;
@@ -94,10 +96,41 @@ export default function DataControl({
       verified: false,
     }),
     [datasets, setDatasets] = useState<string[]>(["candles"]),
-    [enabled, setEnabled] = useState(false);
+    [enabled, setEnabled] = useState(false),
+    [brokerHealth, setBrokerHealth] = useState<MarketHealthResponse | null>(null),
+    [totpCode, setTotpCode] = useState(""),
+    [totpBusy, setTotpBusy] = useState(false);
   const active = useRef(false),
     key = useRef<string | null>(null);
   const current = state?.providers.find((p) => p.id === selected);
+  useEffect(() => {
+    let alive = true;
+    fetchMarketHealth()
+      .then((h) => {
+        if (alive) setBrokerHealth(h);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  async function unlockAngelSession(e: React.FormEvent) {
+    e.preventDefault();
+    if (totpBusy) return;
+    setTotpBusy(true);
+    setError("");
+    try {
+      await submitManualTotpUnlock(totpCode.trim());
+      setTotpCode("");
+      setBrokerHealth(await fetchMarketHealth());
+      window.dispatchEvent(new Event("x2-data-updated"));
+      notify?.("Angel One read-only session authenticated in adapter memory.");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setTotpBusy(false);
+    }
+  }
   useEffect(() => {
     let alive = true;
     request<Settings>()
@@ -227,6 +260,55 @@ export default function DataControl({
         <p role="alert" className="x2-error">
           {error}
         </p>
+      )}
+      {brokerHealth && (
+        <div className="x2-provider-status" aria-label="Angel One Private Read-Only Adapter">
+          <strong>
+            Angel One SmartAPI Read-Only Adapter ·{" "}
+            {brokerHealth.adapterReachable ? "REACHABLE" : "OFFLINE / UNCONFIGURED"}
+          </strong>
+          <span>Mode: {brokerHealth.mode} ({brokerHealth.accessScope})</span>
+          <span>Session state: {brokerHealth.authState}</span>
+          <span>
+            Active segments:{" "}
+            {brokerHealth.enabledExchanges.length
+              ? brokerHealth.enabledExchanges.join(", ")
+              : "None verified yet"}
+          </span>
+          <span>
+            Public quotes gate:{" "}
+            {brokerHealth.flags.publicExchangeQuotesEnabled
+              ? "ENABLED"
+              : "LOCKED OFF (private owner only)"}
+          </span>
+          <span>
+            ScripMaster indexed: {brokerHealth.scripMasterCount ?? "Not loaded"}
+          </span>
+          <span>
+            Last verified fetch: {brokerHealth.lastSuccessfulFetchAt ?? "None yet"}
+          </span>
+          <p>{brokerHealth.message}</p>
+          {brokerHealth.adapterReachable && (
+            <form className="x31-totp-form" onSubmit={(e) => void unlockAngelSession(e)}>
+              <label>
+                Manual 6-digit TOTP (ephemeral, never stored)
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="\d{6}"
+                  maxLength={6}
+                  autoComplete="one-time-code"
+                  placeholder="6-digit TOTP"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                />
+              </label>
+              <button type="submit" disabled={totpBusy || totpCode.length !== 6}>
+                {totpBusy ? "Authenticating…" : "Authenticate read-only session"}
+              </button>
+            </form>
+          )}
+        </div>
       )}
       {!state ? (
         <p role="status">{busy || "Settings unavailable. Reload to retry."}</p>

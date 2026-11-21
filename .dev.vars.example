@@ -1,0 +1,23 @@
+# Safe Cloudflare Worker local development variable template (.dev.vars.example).
+# Copy to gitignored `.dev.vars` (or run `npm run broker:setup`) for local Wrangler preview.
+# NEVER put Angel One MPIN, Client ID, API Key, or TOTP secret into .dev.vars or Cloudflare Worker Secrets!
+# Broker credentials live strictly inside the private adapter's gitignored `.secrets/angelone.env`.
+
+# Required to unlock owner-only Data Connections & private broker market-data routes
+X2_OWNER_SUBJECT=REPLACE_WITH_YOUR_LOCAL_OR_PROD_USER_ID
+
+# Runtime feature flags (safe defaults: private owner only, public exchange quotes OFF, demo OFF)
+MARKET_DATA_PROVIDER=angelone
+MARKET_DATA_MODE=private
+ENABLE_PRIVATE_BROKER_DATA=true
+ENABLE_PUBLIC_EXCHANGE_QUOTES=false
+MARKET_DATA_DEMO_MODE=false
+
+# Local dev ONLY: allow loopback HTTP to 127.0.0.1 private adapter (never set in production!)
+MARKET_DATA_ALLOW_LOOPBACK=true
+MARKET_DATA_ADAPTER_URL=http://127.0.0.1:8791
+MARKET_ADAPTER_AUTH_TOKEN=REPLACE_WITH_RANDOM_32_BYTE_SERVICE_TOKEN
+
+# Optional for remote production Named Cloudflare Tunnel + Cloudflare Access
+# CF_ACCESS_CLIENT_ID=
+# CF_ACCESS_CLIENT_SECRET=

@@ -8,6 +8,11 @@ Start here if you are new to the project:
 
 ## Active X3 / X2 Operating Guides
 
+- [Market-Data Setup Guide (Windows, Secrets, Tunnel & Deploy)](MARKET_DATA_SETUP.md)
+- [Market-Data Architecture & Decision Record](MARKET_DATA_ARCHITECTURE.md)
+- [Market-Data Security & Secret Boundaries](MARKET_DATA_SECURITY.md)
+- [Market-Data Licensing & Exchange Rights Matrix](MARKET_DATA_LICENSES.md)
+- [Market-Data Verification & Live Smoke Report](MARKET_DATA_VERIFICATION.md)
 - [Deployment & Rollback Runbook (GitHub + Cloudflare)](DEPLOYMENT_RUNBOOK.md)
 - [Future Market-Data API Key Setup & Non-Billing Tier Plan](FUTURE_API_KEY_SETUP.md)
 - [Cinematic UI, Typography, Motion, Loader & Natural-Color Earth Spec](visual/STRATEGIC_SOULS_CINEMATIC_UPGRADE.md)

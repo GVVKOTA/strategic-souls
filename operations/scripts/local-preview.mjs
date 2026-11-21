@@ -53,9 +53,11 @@ if (mode !== 'serve') {
   if (mode === 'setup') process.exit(0);
 }
 
+const devVarsPath = resolve('.dev.vars');
+const devEnvArgs = existsSync(devVarsPath) ? ['--env-file', devVarsPath] : [];
 const worker = spawn(process.execPath, [...args, 'dev', '--config', configPath, '--local',
   '--persist-to', statePath, '--ip', '127.0.0.1', '--port', String(workerPort),
-  '--inspector-port', '0'], { stdio: 'inherit' });
+  '--inspector-port', '0', ...devEnvArgs], { stdio: 'inherit' });
 let stopping = false;
 const server = createServer((req, res) => {
   const host = req.headers.host;
