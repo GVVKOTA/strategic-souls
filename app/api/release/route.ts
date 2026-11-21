@@ -7,11 +7,14 @@ export function GET(request: Request) {
   return Response.json(
     {
       product: "Strategic Souls",
-      release: "X6",
-      revisionMarker: "x6-apex-profile-avatars-community-earth-2026-11-21",
-      dashboards: ["Global", "Strategy", "Community", "Settings"],
+      release: "X5.1",
+      releaseName: "Obsidian Genome / The Research Network",
+      revisionMarker: "x5.1-obsidian-genome-2026-11-22",
+      dashboards: ["Global", "Strategy", "Community"],
       exchangeVenues: 24,
+      classicPresets: 50,
       avatarPresets: 50,
+      bannerPresets: 8,
       earthMapBasemap: "NASA GIBS Blue Marble Next Generation & VIIRS Black Marble (Public Domain)",
       auth: "Cloudflare Workers D1 session authentication (email/password; optional Google OAuth)",
       marketData: {

@@ -6,6 +6,8 @@ import {
   cagr,
   xirr,
   impliedVolatility,
+  manualHistoricalInvestment,
+  type ManualHistoricalInvestmentResult,
   type OptionInput,
 } from "../../../backend/engines/math";
 import { Panel, Empty, number, type Notice } from "../../components/workspace/shared";
@@ -20,6 +22,8 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
       volatility: 0.2,
     }),
     [result, setResult] = useState<ReturnType<typeof bsm> | null>(null),
+    [manualHist, setManualHist] =
+      useState<ManualHistoricalInvestmentResult | null>(null),
     [growth, setGrowth] = useState<string | null>(null);
   const calculate = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -68,12 +72,21 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
         setGrowth(
           `${number(r.rate * 100, 4)}% annual XIRR. ${r.warning || r.method}`,
         );
-      } else
-        setGrowth(
-          "Unavailable: no licensed, corporate-action-adjusted historical equity series is connected. Splits, dividends, delisted securities, FX and inflation cannot be inferred. No result calculated.",
-        );
+      } else {
+        const res = manualHistoricalInvestment({
+          amount: Number(f.get("amount")),
+          buyPrice: Number(f.get("buyPrice")),
+          sellPrice: Number(f.get("sellPrice")),
+          buyDate: String(f.get("buyDate") || ""),
+          sellDate: String(f.get("sellDate") || ""),
+          fees: Number(f.get("fees") || 0),
+        });
+        setManualHist(res);
+        setGrowth(null);
+      }
     } catch (error) {
       setGrowth(null);
+      setManualHist(null);
       notify((error as Error).message, true);
     }
   };
@@ -95,6 +108,7 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
                 setCalculator(c);
                 setGrowth(null);
                 setResult(null);
+                setManualHist(null);
               }}
             >
               {c}
@@ -186,24 +200,79 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
             </label>
           ) : (
             <>
-              <label>
-                Historical research question
-                <input
-                  name="question"
-                  defaultValue="What if I invested ₹100 in SBI in 2000?"
-                  maxLength={200}
-                />
-              </label>
-              <p className="x1-callout">
-                Corporate-action-adjusted prices, total-return history and the
-                requested interval must be verified before calculating.
+              <p className="x1-caption" style={{ marginTop: 0 }}>
+                Enter your own buy/sell prices, dates, and fees. Does NOT infer
+                splits, bonus issues, dividends, or tax. Automatic historical
+                corporate-action lookup remains gated until a licensed dataset
+                is connected.
               </p>
+              <div className="x1-form-grid">
+                <label>
+                  Invested amount
+                  <input
+                    type="number"
+                    name="amount"
+                    step="any"
+                    min="0.01"
+                    defaultValue="10000"
+                    required
+                  />
+                </label>
+                <label>
+                  Buy price / unit
+                  <input
+                    type="number"
+                    name="buyPrice"
+                    step="any"
+                    min="0.0001"
+                    defaultValue="250"
+                    required
+                  />
+                </label>
+                <label>
+                  Sell / current price
+                  <input
+                    type="number"
+                    name="sellPrice"
+                    step="any"
+                    min="0"
+                    defaultValue="425"
+                    required
+                  />
+                </label>
+                <label>
+                  Total fees / costs
+                  <input
+                    type="number"
+                    name="fees"
+                    step="any"
+                    min="0"
+                    defaultValue="25"
+                  />
+                </label>
+                <label>
+                  Buy date
+                  <input
+                    type="date"
+                    name="buyDate"
+                    defaultValue="2023-01-02"
+                    required
+                  />
+                </label>
+                <label>
+                  Sell / ending date
+                  <input
+                    type="date"
+                    name="sellDate"
+                    defaultValue="2026-01-02"
+                    required
+                  />
+                </label>
+              </div>
             </>
           )}
           <button className="x1-primary x1-motion-button" type="submit">
-            {calculator === "Historical investment"
-              ? "Check data availability"
-              : "Calculate"}
+            Calculate
             <ArrowRight size={16} />
           </button>
         </form>
@@ -250,6 +319,60 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
               input denomination.
             </p>
           </>
+        ) : manualHist ? (
+          <div role="status">
+            <div className="x1-result-summary">
+              <div>
+                <strong>{number(manualHist.netValue, 2)}</strong>
+                <span>Net ending value</span>
+              </div>
+              <div>
+                <strong>
+                  {manualHist.netReturnPct >= 0 ? "+" : ""}
+                  {number(manualHist.netReturnPct, 2)}%
+                </strong>
+                <span>Net return</span>
+              </div>
+            </div>
+            <dl className="x1-details">
+              <div>
+                <dt>Units purchased</dt>
+                <dd>{number(manualHist.units, 4)}</dd>
+              </div>
+              <div>
+                <dt>Gross value</dt>
+                <dd>{number(manualHist.grossValue, 2)}</dd>
+              </div>
+              <div>
+                <dt>Net profit / loss</dt>
+                <dd>{number(manualHist.netProfit, 2)}</dd>
+              </div>
+              <div>
+                <dt>Annualized CAGR</dt>
+                <dd>
+                  {manualHist.annualizedCagrPct !== null
+                    ? `${number(manualHist.annualizedCagrPct, 2)}%`
+                    : "Undefined"}
+                </dd>
+              </div>
+              <div>
+                <dt>Holding period</dt>
+                <dd>
+                  {Math.round(manualHist.holdingDays)} days (
+                  {number(manualHist.holdingYears, 2)} yrs)
+                </dd>
+              </div>
+              <div>
+                <dt>Explicit fees</dt>
+                <dd>{number(manualHist.fees, 2)}</dd>
+              </div>
+            </dl>
+            <ul className="x1-caption" style={{ paddingLeft: 18 }}>
+              {manualHist.limitations.map((lim) => (
+                <li key={lim}>{lim}</li>
+              ))}
+            </ul>
+          </div>
         ) : growth ? (
           <div role="status" className="x1-calculation-result">
             {growth}

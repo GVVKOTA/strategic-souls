@@ -123,7 +123,21 @@ const FUNCTIONS = new Set([
   "ema",
   "rsi",
   "macd",
+  "macdsignal",
+  "macdhist",
   "atr",
+  "bbupper",
+  "bblower",
+  "bbmid",
+  "bbwidth",
+  "rollingmin",
+  "rollingmax",
+  "rollingmedian",
+  "adx",
+  "plusdi",
+  "minusdi",
+  "stochk",
+  "stochd",
   "abs",
   "min",
   "max",
@@ -143,7 +157,7 @@ const LIMITS = {
   lookback: 250,
   datasets: 1000,
   observations: 5000,
-  steps: 1000000,
+  steps: 2500000,
 };
 
 export class FormulaError extends Error {
@@ -384,6 +398,79 @@ function inspectAst(ast: Ast): {
         );
       categories.add("Technical");
       return u[0];
+    }
+    if (a.name === "macdsignal" || a.name === "macdhist") {
+      if (n !== 4 || u[0] === "boolean")
+        throw new Error(
+          `${a.name}(series, fast, slow, signal) requires four arguments.`,
+        );
+      const fast = lookback(args[1], 2),
+        slow = lookback(args[2], 2);
+      lookback(args[3], 2);
+      if (fast >= slow)
+        throw new Error(
+          "MACD fast lookback must be smaller than slow lookback.",
+        );
+      categories.add("Technical");
+      return u[0];
+    }
+    if (a.name === "bbmid") {
+      if (n !== 2 || u[0] === "boolean")
+        throw new Error("bbmid(series, lookback) requires two arguments.");
+      lookback(args[1], 2);
+      categories.add("Technical");
+      return u[0];
+    }
+    if (a.name === "bbupper" || a.name === "bblower" || a.name === "bbwidth") {
+      if (n !== 3 || u[0] === "boolean" || u[2] === "boolean")
+        throw new Error(
+          `${a.name}(series, lookback, multiplier) requires three arguments.`,
+        );
+      lookback(args[1], 2);
+      if (args[2].kind !== "number" || args[2].value <= 0 || args[2].value > 10)
+        throw new Error("Bollinger multiplier must be a number in (0, 10].");
+      categories.add("Technical");
+      return a.name === "bbwidth" ? "percent" : u[0];
+    }
+    if (
+      a.name === "rollingmin" ||
+      a.name === "rollingmax" ||
+      a.name === "rollingmedian"
+    ) {
+      if (n !== 2 || u[0] === "boolean")
+        throw new Error(`${a.name}(series, lookback) requires two arguments.`);
+      lookback(args[1], 2);
+      categories.add("Technical");
+      return u[0];
+    }
+    if (a.name === "adx" || a.name === "plusdi" || a.name === "minusdi") {
+      if (n !== 1)
+        throw new Error(`${a.name}(lookback) requires one argument.`);
+      lookback(args[0], 2);
+      for (const field of ["high", "low", "close"]) dependencies.add(field);
+      categories.add("Technical");
+      return "percent";
+    }
+    if (a.name === "stochk") {
+      if (n !== 2)
+        throw new Error("stochk(kPeriod, smoothK) requires two arguments.");
+      lookback(args[0], 2);
+      lookback(args[1], 1);
+      for (const field of ["high", "low", "close"]) dependencies.add(field);
+      categories.add("Technical");
+      return "percent";
+    }
+    if (a.name === "stochd") {
+      if (n !== 3)
+        throw new Error(
+          "stochd(kPeriod, smoothK, smoothD) requires three arguments.",
+        );
+      lookback(args[0], 2);
+      lookback(args[1], 1);
+      lookback(args[2], 1);
+      for (const field of ["high", "low", "close"]) dependencies.add(field);
+      categories.add("Technical");
+      return "percent";
     }
     throw new Error("Unsupported function.");
   }
@@ -898,6 +985,180 @@ export function evaluateScan(
           value =
             ema(args[0], i, lookback(args[1], 2)) -
             ema(args[0], i, lookback(args[2], 2));
+        } else if (name === "macdsignal" || name === "macdhist") {
+          const fast = lookback(args[1], 2),
+            slow = lookback(args[2], 2),
+            sig = lookback(args[3], 2);
+          if (i + 1 < slow + sig - 1)
+            throw new MissingData(
+              `MACD(${fast},${slow},${sig}) requires at least ${slow + sig - 1} eligible observations.`,
+            );
+          const series = history(args[0], i, i + 1);
+          const emaArr = (period: number): (number | null)[] => {
+            const out: (number | null)[] = new Array(series.length).fill(null);
+            let acc =
+              series.slice(0, period).reduce((s, x) => s + x, 0) / period;
+            out[period - 1] = acc;
+            const alpha = 2 / (period + 1);
+            for (let j = period; j < series.length; j++) {
+              acc = alpha * series[j] + (1 - alpha) * acc;
+              out[j] = acc;
+            }
+            return out;
+          };
+          const eFast = emaArr(fast),
+            eSlow = emaArr(slow);
+          const macdSeries: number[] = [];
+          for (let j = slow - 1; j < series.length; j++) {
+            macdSeries.push(eFast[j]! - eSlow[j]!);
+          }
+          let sigVal =
+            macdSeries.slice(0, sig).reduce((s, x) => s + x, 0) / sig;
+          const sigAlpha = 2 / (sig + 1);
+          for (let j = sig; j < macdSeries.length; j++) {
+            sigVal = sigAlpha * macdSeries[j] + (1 - sigAlpha) * sigVal;
+          }
+          const latestMacd = macdSeries[macdSeries.length - 1];
+          value = name === "macdsignal" ? sigVal : latestMacd - sigVal;
+        } else if (name === "bbmid") {
+          const n = lookback(args[1], 2);
+          value = history(args[0], i, n).reduce((s, x) => s + x, 0) / n;
+        } else if (
+          name === "bbupper" ||
+          name === "bblower" ||
+          name === "bbwidth"
+        ) {
+          const n = lookback(args[1], 2);
+          const mult = (args[2] as { kind: "number"; value: number }).value;
+          const vals = history(args[0], i, n);
+          const mean = vals.reduce((s, x) => s + x, 0) / n;
+          const variance =
+            vals.reduce((s, x) => s + (x - mean) ** 2, 0) / n;
+          const sd = Math.sqrt(variance);
+          const upper = mean + mult * sd;
+          const lower = mean - mult * sd;
+          if (name === "bbupper") value = upper;
+          else if (name === "bblower") value = lower;
+          else {
+            if (mean === 0)
+              throw new MissingData(
+                "Bollinger bandwidth is undefined when midpoint is zero.",
+              );
+            value = ((upper - lower) / Math.abs(mean)) * 100;
+          }
+        } else if (
+          name === "rollingmin" ||
+          name === "rollingmax" ||
+          name === "rollingmedian"
+        ) {
+          const n = lookback(args[1], 2);
+          const vals = history(args[0], i, n);
+          if (name === "rollingmin") value = Math.min(...vals);
+          else if (name === "rollingmax") value = Math.max(...vals);
+          else {
+            const sorted = [...vals].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            value =
+              sorted.length % 2 === 1
+                ? sorted[mid]
+                : (sorted[mid - 1] + sorted[mid]) / 2;
+          }
+        } else if (name === "adx" || name === "plusdi" || name === "minusdi") {
+          const n = lookback(args[0], 2);
+          const minNeeded = name === "adx" ? 2 * n : n + 1;
+          if (i + 1 < minNeeded)
+            throw new MissingData(
+              `${name.toUpperCase()}(${n}) requires at least ${minNeeded} eligible OHLC observations.`,
+            );
+          const trs: number[] = [];
+          const plusDms: number[] = [];
+          const minusDms: number[] = [];
+          for (let at = 1; at <= i; at++) {
+            const h = field("high", at),
+              l = field("low", at),
+              prevH = field("high", at - 1),
+              prevL = field("low", at - 1),
+              prevC = field("close", at - 1);
+            if (h < l) throw new MissingData("OHLC high cannot be below low.");
+            const tr = Math.max(h - l, Math.abs(h - prevC), Math.abs(l - prevC));
+            const upMove = h - prevH;
+            const downMove = prevL - l;
+            const pDm = upMove > downMove && upMove > 0 ? upMove : 0;
+            const mDm = downMove > upMove && downMove > 0 ? downMove : 0;
+            trs.push(tr);
+            plusDms.push(pDm);
+            minusDms.push(mDm);
+          }
+          let smTr = trs.slice(0, n).reduce((s, x) => s + x, 0);
+          let smPdm = plusDms.slice(0, n).reduce((s, x) => s + x, 0);
+          let smMdm = minusDms.slice(0, n).reduce((s, x) => s + x, 0);
+          const dxs: number[] = [];
+          let lastPlusDi = 0;
+          let lastMinusDi = 0;
+          const pushDi = () => {
+            lastPlusDi = smTr === 0 ? 0 : (100 * smPdm) / smTr;
+            lastMinusDi = smTr === 0 ? 0 : (100 * smMdm) / smTr;
+            const sumDi = lastPlusDi + lastMinusDi;
+            dxs.push(
+              sumDi === 0 ? 0 : (100 * Math.abs(lastPlusDi - lastMinusDi)) / sumDi,
+            );
+          };
+          pushDi();
+          for (let j = n; j < trs.length; j++) {
+            smTr = smTr - smTr / n + trs[j];
+            smPdm = smPdm - smPdm / n + plusDms[j];
+            smMdm = smMdm - smMdm / n + minusDms[j];
+            pushDi();
+          }
+          if (name === "plusdi") value = lastPlusDi;
+          else if (name === "minusdi") value = lastMinusDi;
+          else {
+            if (dxs.length < n)
+              throw new MissingData(
+                `ADX(${n}) requires at least ${2 * n} eligible OHLC observations.`,
+              );
+            let adxVal = dxs.slice(0, n).reduce((s, x) => s + x, 0) / n;
+            for (let j = n; j < dxs.length; j++) {
+              adxVal = (adxVal * (n - 1) + dxs[j]) / n;
+            }
+            value = adxVal;
+          }
+        } else if (name === "stochk" || name === "stochd") {
+          const kPeriod = lookback(args[0], 2);
+          const smoothK = lookback(args[1], 1);
+          const smoothD = name === "stochd" ? lookback(args[2], 1) : 1;
+          const minNeeded = kPeriod + smoothK + smoothD - 2;
+          if (i + 1 < minNeeded)
+            throw new MissingData(
+              `Stochastic(${kPeriod},${smoothK},${smoothD}) requires at least ${minNeeded} eligible OHLC observations.`,
+            );
+          const rawKAt = (at: number): number => {
+            let hh = -Infinity;
+            let ll = Infinity;
+            for (let j = at - kPeriod + 1; j <= at; j++) {
+              const h = field("high", j);
+              const l = field("low", j);
+              if (h < l)
+                throw new MissingData("OHLC high cannot be below low.");
+              if (h > hh) hh = h;
+              if (l < ll) ll = l;
+            }
+            const c = field("close", at);
+            const span = hh - ll;
+            return span === 0 ? 50 : ((c - ll) / span) * 100;
+          };
+          const smoothKAt = (at: number): number => {
+            let sum = 0;
+            for (let j = at - smoothK + 1; j <= at; j++) sum += rawKAt(j);
+            return sum / smoothK;
+          };
+          if (name === "stochk") {
+            value = smoothKAt(i);
+          } else {
+            let sumD = 0;
+            for (let j = i - smoothD + 1; j <= i; j++) sumD += smoothKAt(j);
+            value = sumD / smoothD;
+          }
         } else {
           const n = lookback(
             args[1],

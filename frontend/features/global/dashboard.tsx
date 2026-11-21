@@ -19,7 +19,17 @@ import {
   Wallet,
   RefreshCw,
   RotateCcw,
+  Image as ImageIcon,
+  SlidersHorizontal,
 } from "lucide-react";
+import {
+  BANNER_PRESETS,
+  resolveBannerPreset,
+} from "../../../backend/services/profile/banners";
+import type {
+  PortfolioBackdropSettings,
+  UserProfileSnapshot,
+} from "../../../backend/services/profile/profile";
 import {
   EXCHANGES,
   exchangeSession,
@@ -31,14 +41,13 @@ import {
   searchCanonicalInstruments,
 } from "../../../backend/services/market-data/instrument-registry";
 import { INSTRUMENTS } from "../../../backend/services/market-data/instruments";
-import type { DataPoint, MarketSnapshot } from "../../../backend/services/market-data/market-data";
+import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import { CURRENCIES } from "../../../backend/engines/portfolio";
 import {
   Panel,
   Empty,
   SourceLink,
   Modal,
-  Sparkline,
   WorkspaceSkeleton,
   api,
   number,
@@ -49,6 +58,8 @@ import {
 } from "../../components/workspace/shared";
 import ScrollTabs from "../../components/workspace/scroll-tabs";
 import PrivateMarketPanel from "./private-market-panel";
+import MarketOverviewGrid from "./market-grid";
+import EconomicCalendar from "./economic-calendar";
 import type { MapFocusTarget } from "../earth/world-conflict-map";
 const AssetTerminal = lazy(() => import("./asset-terminal"));
 const GlobeCanvas = lazy(() => import("./globe-canvas"));
@@ -113,6 +124,11 @@ type Props = {
   initialPanel?: string;
   onNavigate?: (view: "Global" | "Strategy" | "Community") => void;
   earthQuality?: "auto" | "balanced" | "reduced";
+  portfolioBackdrop?: PortfolioBackdropSettings;
+  privateTickerEnabled?: boolean;
+  privateTickerMode?: "HOLDINGS" | "WATCHLIST";
+  onProfileSynced?: (profile: UserProfileSnapshot) => void;
+  sectionJump?: { target: string; nonce: number } | null;
 };
 export function assetName(id: string, data: MarketSnapshot | null) {
   return (
@@ -164,41 +180,6 @@ export function AssetDialog({
   );
 }
 
-function DataCard({
-  point,
-  history,
-  open,
-}: {
-  point?: DataPoint;
-  history?: number[];
-  open: () => void;
-}) {
-  return (
-    <button className="x1-data-card" onClick={open}>
-      <span className="x1-data-card-top">
-        {point?.label || "Source loading"}
-        <ArrowUpRight size={15} />
-      </span>
-      <strong>
-        {number(point?.value, point?.assetClass === "FX" ? 4 : 2)}
-        <small>{point?.assetClass === "BOND_YIELD" ? "%" : ""}</small>
-      </strong>
-      <span className="x1-caption">
-        {point?.state === "PUBLISHED_EOD"
-          ? "DAILY REFERENCE"
-          : point?.state.replaceAll("_", " ") || "CONNECTING"}{" "}
-        · {point?.provider || "Official data"}
-      </span>
-      {history && (
-        <Sparkline values={history} label="Daily reference observations" />
-      )}
-      <span className="x1-caption">
-        As of {point?.sourceDate || "unavailable"} ·{" "}
-        {point?.unit || "No observation"}
-      </span>
-    </button>
-  );
-}
 export default function Global({
   data,
   workspace,
@@ -214,6 +195,11 @@ export default function Global({
   initialPanel,
   onNavigate,
   earthQuality = "auto",
+  portfolioBackdrop,
+  privateTickerEnabled = false,
+  privateTickerMode = "HOLDINGS",
+  onProfileSynced,
+  sectionJump,
 }: Props) {
   const [panel, setPanelState] = useState(initialPanel || "Overview"),
     [selected, setSelected] = useState<Exchange | null>(
@@ -245,25 +231,132 @@ export default function Global({
       "list" | "portfolio" | "transaction" | "rename" | null
     >(null),
     [busy, setBusy] = useState(false),
-    [journeyHidden, setJourneyHidden] = useState(false);
+    [backdropEditorOpen, setBackdropEditorOpen] = useState(false),
+    [backdropDraft, setBackdropDraft] = useState<PortfolioBackdropSettings>(
+      portfolioBackdrop ?? {
+        presetId: "b01",
+        position: "center",
+        overlay: 0.72,
+        blur: 4,
+      },
+    ),
+    [uploadMessage, setUploadMessage] = useState("");
 
   useEffect(() => {
-    try {
-      if (window.localStorage.getItem("ss-journey-hidden") === "1")
-        queueMicrotask(() => setJourneyHidden(true));
-    } catch {
-      /* Storage is optional. */
-    }
-  }, []);
+    if (!portfolioBackdrop) return;
+    queueMicrotask(() => setBackdropDraft(portfolioBackdrop));
+  }, [portfolioBackdrop]);
 
-  const dismissJourney = () => {
-    setJourneyHidden(true);
-    try {
-      window.localStorage.setItem("ss-journey-hidden", "1");
-    } catch {
-      /* Storage is optional. */
+  const marketsRef = useRef<HTMLDivElement>(null);
+  const portfolioSectionRef = useRef<HTMLDivElement>(null);
+  const calendarSectionRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!sectionJump) return;
+    const t = sectionJump.target;
+    if (t === "Portfolio" || t === "Watchlists" || t === "Market Explorer") {
+      queueMicrotask(() => setPanelState(t));
+      return;
     }
-  };
+    queueMicrotask(() => setPanelState("Overview"));
+    window.setTimeout(() => {
+      if (t === "Markets") {
+        marketsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else if (t === "My Portfolio") {
+        portfolioSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else if (t === "Economic Calendar") {
+        calendarSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else if (t === "Strategic Globe") {
+        earthSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }, 60);
+  }, [sectionJump]);
+
+  async function saveBackdropSettings() {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api<{ ok: boolean; profile: UserProfileSnapshot }>(
+        "/api/profile",
+        {
+          action: "update-profile",
+          portfolioBackdrop: backdropDraft,
+        },
+      );
+      onProfileSynced?.(res.profile);
+      setBackdropEditorOpen(false);
+      notify("Portfolio backdrop saved.");
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Could not save backdrop.", true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleTickerSetting(
+    nextEnabled: boolean,
+    nextMode: "HOLDINGS" | "WATCHLIST" = privateTickerMode,
+  ) {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api<{ ok: boolean; profile: UserProfileSnapshot }>(
+        "/api/profile",
+        {
+          action: "update-preferences",
+          privateTickerEnabled: nextEnabled,
+          privateTickerMode: nextMode,
+        },
+      );
+      onProfileSynced?.(res.profile);
+      notify(
+        nextEnabled
+          ? `Private ${nextMode === "HOLDINGS" ? "Holdings" : "Watchlist"} ticker enabled across your dashboards.`
+          : "Private ticker hidden.",
+      );
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Could not update ticker preference.", true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleBackdropFileUpload(file: File | null) {
+    if (!file) return;
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    setUploadMessage("");
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("purpose", "portfolio-backdrop");
+    try {
+      const res = await fetch("/api/media/upload", {
+        method: "POST",
+        body: fd,
+      });
+      const json = (await res.json()) as { error?: string; code?: string };
+      if (!res.ok) {
+        setUploadMessage(
+          json.error ||
+            "Object storage (R2) is not configured yet. Choose one of the 8 curated Obsidian backdrops below.",
+        );
+        return;
+      }
+      setUploadMessage("Backdrop uploaded.");
+    } catch {
+      setUploadMessage(
+        "Upload failed. Choose one of the 8 curated Obsidian backdrops below.",
+      );
+    }
+  }
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches)
       queueMicrotask(() => setAuto(false));
@@ -453,227 +546,17 @@ export default function Global({
         </header>
       )}
       {panel === "Overview" && (
-        <>
-          <section className="x6-hero" aria-label="Strategic Souls overview">
-            <h1>Strategic Souls</h1>
-            <p className="x6-hero-sub">
-              Research into evidence. Inspect official daily macro benchmarks,
-              explore SS Earth &amp; global geopolitical context, and test
-              transparent Soul Scan hypotheses.
-            </p>
-            <div className="x6-hero-actions">
-              <button
-                type="button"
-                className="x1-primary x1-motion-button"
-                onClick={() => onNavigate?.("Strategy")}
-              >
-                Run a Soul Scan
-                <ArrowRight size={16} />
-              </button>
-              <button
-                type="button"
-                className="x1-secondary x1-motion-button"
-                onClick={() =>
-                  earthSectionRef.current?.scrollIntoView({
-                    behavior: "smooth",
-                    block: "start",
-                  })
-                }
-              >
-                <Globe2 size={16} />
-                Explore SS Earth
-              </button>
-              <button
-                type="button"
-                className="x1-secondary x1-motion-button"
-                onClick={refreshData}
-                disabled={refreshing}
-                aria-busy={refreshing}
-              >
-                <RefreshCw size={15} />
-                {refreshing ? "Refreshing…" : "Refresh"}
-              </button>
-            </div>
-            <div className="x6-starter-row" aria-label="Executable research starters">
-              <button
-                type="button"
-                className="x6-starter-chip"
-                onClick={() =>
-                  analyze("close > sma(close, 20)", "ECB:USDINR", "ECB_DAILY")
-                }
-              >
-                <span>Scan USD/INR Momentum (ECB)</span>
-                <ArrowRight size={13} />
-              </button>
-              <button
-                type="button"
-                className="x6-starter-chip"
-                onClick={() =>
-                  analyze("rsi(close, 14) < 40", "ECB:EURUSD", "ECB_DAILY")
-                }
-              >
-                <span>Scan EUR/USD Pullback (ECB)</span>
-                <ArrowRight size={13} />
-              </button>
-              <button
-                type="button"
-                className="x6-starter-chip"
-                onClick={() =>
-                  analyze("close > sma(close, 20)", "", "CUSTOM_CSV")
-                }
-              >
-                <span>Try 5-Stock Indian Equity Test Fixture</span>
-                <ArrowRight size={13} />
-              </button>
-              <button
-                type="button"
-                className="x6-starter-chip"
-                onClick={() => openAsset("NSE:HDFCBANK")}
-              >
-                <span>NSE:HDFCBANK</span>
-                <ArrowUpRight size={13} />
-              </button>
-              <button
-                type="button"
-                className="x6-starter-chip"
-                onClick={() => openAsset("NSE:NIFTY")}
-              >
-                <span>NSE:NIFTY</span>
-                <ArrowUpRight size={13} />
-              </button>
-              <button
-                type="button"
-                className="x6-starter-chip"
-                onClick={() => openAsset("MCX:GOLD04DEC26FUT")}
-              >
-                <span>MCX Gold</span>
-                <ArrowUpRight size={13} />
-              </button>
-            </div>
-          </section>
-          <div className="x1-private-brief">
-            <button onClick={() => setPanel("Watchlists")}>
-              <Star size={15} />
-              <span>Watchlists</span>
-              <strong>{workspace ? lists.length : "—"}</strong>
-              <ArrowRight size={14} />
-            </button>
-            <button onClick={() => setPanel("Portfolio")}>
-              <Wallet size={15} />
-              <span>Portfolios</span>
-              <strong>{workspace ? portfolios.length : "—"}</strong>
-              <ArrowRight size={14} />
-            </button>
-          </div>
-          {!journeyHidden && (
-            <section className="x3-journey" aria-label="Research workflow guide">
-              <div className="x3-journey-head">
-                <strong>Start your research cycle</strong>
-                <button
-                  type="button"
-                  className="x1-text-button"
-                  onClick={dismissJourney}
-                >
-                  Hide guide
-                </button>
-              </div>
-              <div className="x3-journey-steps">
-                <button
-                  type="button"
-                  className="x3-journey-step is-done"
-                  onClick={() => setPanel("Market Explorer")}
-                >
-                  <small>Step 01 · Global</small>
-                  <span>Explore markets &amp; Earth</span>
-                </button>
-                <button
-                  type="button"
-                  className={
-                    "x3-journey-step " + (lists.length > 0 ? "is-done" : "")
-                  }
-                  onClick={() => setPanel("Watchlists")}
-                >
-                  <small>
-                    Step 02 · {lists.length > 0 ? "Saved" : "Private"}
-                  </small>
-                  <span>Create a watchlist</span>
-                </button>
-                <button
-                  type="button"
-                  className="x3-journey-step"
-                  onClick={() => onNavigate?.("Strategy")}
-                >
-                  <small>Step 03 · Strategy</small>
-                  <span>Build a guided Soul</span>
-                </button>
-                <button
-                  type="button"
-                  className={
-                    "x3-journey-step " +
-                    ((workspace?.scans?.length ?? 0) > 0 ? "is-done" : "")
-                  }
-                  onClick={() => onNavigate?.("Strategy")}
-                >
-                  <small>
-                    Step 04 ·{" "}
-                    {(workspace?.scans?.length ?? 0) > 0
-                      ? `${workspace!.scans.length} saved`
-                      : "Immutable"}
-                  </small>
-                  <span>Review scan evidence</span>
-                </button>
-                <button
-                  type="button"
-                  className="x3-journey-step"
-                  onClick={() => onNavigate?.("Community")}
-                >
-                  <small>Step 05 · Opt-in</small>
-                  <span>Join a Research Room</span>
-                </button>
-              </div>
-            </section>
-          )}
-          <div className="x1-metrics">
-            <DataCard
-              point={
-                data?.quotes.find((q) => q.id.includes("USDINR")) ||
-                data?.quotes[0]
-              }
-              history={data?.fxHistory
-                .find((h) => h.id.includes("USDINR"))
-                ?.points.map((p) => p.close)}
-              open={() =>
-                openAsset(
-                  data?.quotes.find((q) => q.id.includes("USDINR"))?.id ||
-                    "ECB:USDINR",
-                )
-              }
-            />
-            <DataCard
-              point={
-                data?.quotes.find((q) => q.id.includes("EURUSD")) ||
-                data?.quotes[1]
-              }
-              history={data?.fxHistory
-                .find((h) => h.id.includes("EURUSD"))
-                ?.points.map((p) => p.close)}
-              open={() =>
-                openAsset(
-                  data?.quotes.find((q) => q.id.includes("EURUSD"))?.id ||
-                    "ECB:EURUSD",
-                )
-              }
-            />
-            <DataCard
-              point={data?.yields.find((q) => q.id.includes("10Y"))}
-              open={() =>
-                openAsset(
-                  data?.yields.find((q) => q.id.includes("10Y"))?.id ||
-                    "UST:10Y",
-                )
-              }
+        <div className="x51-global-stack">
+          {/* 1. MARKETS — 9 Rearrangeable Cards (3×3 on Desktop & Mobile) */}
+          <div ref={marketsRef}>
+            <MarketOverviewGrid
+              authenticated={authenticated}
+              onOpenAsset={openAsset}
+              onRequireAuth={onRequireAuth}
+              notify={notify}
             />
           </div>
+
           {authenticated && isOwner && (
             <PrivateMarketPanel
               isOwner={isOwner}
@@ -684,14 +567,153 @@ export default function Global({
               notify={notify}
             />
           )}
+
+          {/* 2. MY PORTFOLIO — Summary Preview + Dedicated Full Portfolio View */}
+          <section ref={portfolioSectionRef} aria-labelledby="x51-portfolio-heading">
+            <div className="x51-section-head">
+              <div>
+                <h2 id="x51-portfolio-heading">My Portfolio</h2>
+                <p className="x51-section-sub">
+                  Private manual ledger · Never shared publicly · Cost basis only
+                </p>
+              </div>
+              <div className="x1-actions" style={{ gap: 6 }}>
+                <button
+                  type="button"
+                  className="x1-secondary"
+                  style={{ minHeight: 38, padding: "0 11px", fontSize: "0.82rem" }}
+                  onClick={() => setPanel("Watchlists")}
+                >
+                  <Star size={14} />
+                  <span>Watchlists ({workspace ? lists.length : 0})</span>
+                </button>
+                <button
+                  type="button"
+                  className="x51-accent-btn"
+                  style={{ minHeight: 38, padding: "0 12px", fontSize: "0.82rem" }}
+                  onClick={() => setPanel("Portfolio")}
+                >
+                  <Wallet size={14} />
+                  <span>Open Portfolio</span>
+                  <ArrowRight size={14} />
+                </button>
+              </div>
+            </div>
+            {portfolios.length > 0 && portfolio ? (
+              <div className="x51-holdings-table">
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    flexWrap: "wrap",
+                    gap: 10,
+                    padding: "12px 14px",
+                    borderBottom: "1px solid var(--x51-hairline)",
+                    background: "var(--x51-surface-elevated)",
+                  }}
+                >
+                  <div>
+                    <strong>{portfolio.name}</strong>{" "}
+                    <span className="x51-pill x51-pill-green">Manual Ledger</span>{" "}
+                    <span className="x51-pill">Broker: Not Connected</span>
+                  </div>
+                  <div className="x1-caption" style={{ fontVariantNumeric: "tabular-nums" }}>
+                    Cost basis:{" "}
+                    <strong>
+                      {portfolio.payload.currency} {number(portfolio.summary.investedCost)}
+                    </strong>{" "}
+                    · Cash:{" "}
+                    <strong>
+                      {portfolio.payload.currency} {number(portfolio.summary.cash)}
+                    </strong>
+                  </div>
+                </div>
+                {portfolio.summary.holdings.length > 0 ? (
+                  portfolio.summary.holdings.slice(0, 5).map((h) => (
+                    <button
+                      key={h.symbol}
+                      type="button"
+                      className="x51-holding-row"
+                      onClick={() => openAsset(h.symbol)}
+                    >
+                      <strong>{h.symbol}</strong>
+                      <span>Qty {number(h.quantity, 4)}</span>
+                      <span>
+                        Avg {portfolio.payload.currency} {number(h.averageCost)}
+                      </span>
+                      <span className="x1-caption">
+                        Basis {number(h.basis)}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <div style={{ padding: "14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span className="x1-caption">
+                      No holdings recorded yet in {portfolio.name}.
+                    </span>
+                    <button
+                      type="button"
+                      className="x1-secondary"
+                      style={{ minHeight: 36, fontSize: "0.82rem" }}
+                      onClick={() => {
+                        setPanel("Portfolio");
+                        openEditor("transaction");
+                      }}
+                    >
+                      <Plus size={14} />
+                      <span>Record transaction</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="x51-empty-cta">
+                <p className="x1-caption" style={{ margin: 0 }}>
+                  Track private manual holdings and cash movements in INR, USD,
+                  EUR, or GBP — with customizable Obsidian backdrops and an
+                  opt-in private ticker.
+                </p>
+                <button
+                  type="button"
+                  className="x1-secondary"
+                  style={{ flexShrink: 0 }}
+                  onClick={() => {
+                    if (!authenticated) {
+                      onRequireAuth?.();
+                      return;
+                    }
+                    setPanel("Portfolio");
+                    setEdit("portfolio");
+                  }}
+                >
+                  <Plus size={14} />
+                  <span>
+                    {authenticated ? "Create manual portfolio" : "Sign in to track portfolio"}
+                  </span>
+                </button>
+              </div>
+            )}
+          </section>
+
+          {/* 3. ECONOMIC CALENDAR — Official Statutory Schedules */}
+          <div ref={calendarSectionRef}>
+            <EconomicCalendar
+              authenticated={authenticated}
+              onRequireAuth={onRequireAuth}
+              notify={notify}
+            />
+          </div>
+
+          {/* 4. STRATEGIC GLOBE — 3D Photoreal Earth + 2D Satellite World Map */}
           <section
             className="x6-earth-showcase"
             ref={earthSectionRef}
-            aria-label="SS Earth 3D Globe and World Map"
+            aria-label="Strategic Globe 3D Earth and World Map"
           >
             <Panel
-              title="SS Earth · 3D Globe & Global Exchanges"
-              kicker="The world, connected by geography"
+              title="Strategic Globe · 3D Earth & Global Exchanges"
+              kicker="Geography, sessions & sourced world intelligence"
               className="x1-globe-panel"
               action={
                 <div className="x1-segment" aria-label="Exchange view">
@@ -830,12 +852,22 @@ export default function Global({
                   >
                     {tourActive ? "Stop tour" : "Explore Earth"}
                   </button>
+                  {zoom >= 1.25 && selected && (
+                    <button
+                      type="button"
+                      className="x51-globe-zoom-cta"
+                      onClick={() => investigateOnMap(selected)}
+                    >
+                      <MapPin size={15} />
+                      <span>Open 2D Satellite Map · {selected.city}</span>
+                    </button>
+                  )}
                   <span className="x1-globe-hint">
                     {rendererFallback
                       ? "Natural-color static image"
                       : tourActive
                         ? "Touring 4 global hubs"
-                        : "Drag to rotate"}
+                        : "Drag to rotate · Zoom for 2D map"}
                   </span>
                 </div>
               ) : (
@@ -1155,7 +1187,7 @@ export default function Global({
                 </div>
               </div>
             </div>
-        </>
+        </div>
       )}
       {panel === "Watchlists" && (
         <div className="x1-work-grid">
@@ -1346,26 +1378,237 @@ export default function Global({
       )}
       {panel === "Portfolio" && (
         <>
-          <div className="x1-panel-head">
-            <div className="x1-list-tabs">
-              {portfolios.map((p) => (
-                <button
-                  key={p.id}
-                  aria-pressed={portfolio?.id === p.id}
-                  onClick={() => setPortfolioId(p.id)}
-                >
-                  {p.name} · {p.payload.currency}
-                </button>
-              ))}
-            </div>
-            <button
-              className="x1-secondary x1-motion-button"
-              onClick={() => openEditor("portfolio")}
-            >
-              <Plus size={16} />
-              New portfolio
-            </button>
-          </div>
+          {(() => {
+            const activePreset = resolveBannerPreset(backdropDraft.presetId);
+            return (
+              <div className="x51-portfolio-hero">
+                <div
+                  className="x51-portfolio-backdrop-layer"
+                  style={{
+                    background: activePreset.gradient,
+                    backgroundPosition: backdropDraft.position,
+                    filter:
+                      backdropDraft.blur > 0
+                        ? `blur(${backdropDraft.blur}px)`
+                        : undefined,
+                  }}
+                  aria-hidden="true"
+                />
+                <div
+                  className="x51-portfolio-scrim"
+                  style={{
+                    background: `rgba(7, 8, 9, ${backdropDraft.overlay})`,
+                  }}
+                  aria-hidden="true"
+                />
+                <div className="x51-portfolio-hero-inner">
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      flexWrap: "wrap",
+                      gap: 10,
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <h2 style={{ margin: 0 }}>My Private Portfolio</h2>
+                        <span className="x51-pill x51-pill-green">Manual Ledger</span>
+                        <span className="x51-pill">Linked Broker: Not Connected</span>
+                      </div>
+                      <p className="x1-caption" style={{ margin: "4px 0 0" }}>
+                        Private to your account · Never exposed on public profiles ·
+                        Cost basis &amp; cash flows only
+                      </p>
+                    </div>
+                    <div className="x1-actions" style={{ gap: 8 }}>
+                      <button
+                        type="button"
+                        className="x1-secondary"
+                        style={{ minHeight: 38, fontSize: "0.82rem" }}
+                        onClick={() => setBackdropEditorOpen((v) => !v)}
+                      >
+                        <ImageIcon size={14} />
+                        <span>{backdropEditorOpen ? "Close Backdrop" : "Customize Backdrop"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="x1-secondary"
+                        style={{ minHeight: 38, fontSize: "0.82rem" }}
+                        disabled={busy}
+                        onClick={() =>
+                          void toggleTickerSetting(!privateTickerEnabled)
+                        }
+                      >
+                        <SlidersHorizontal size={14} />
+                        <span>
+                          {privateTickerEnabled
+                            ? "Hide Private Ticker"
+                            : "Show Private Ticker"}
+                        </span>
+                      </button>
+                      <button
+                        className="x1-secondary x1-motion-button"
+                        onClick={() => openEditor("portfolio")}
+                      >
+                        <Plus size={16} />
+                        New portfolio
+                      </button>
+                    </div>
+                  </div>
+
+                  {backdropEditorOpen && (
+                    <div
+                      style={{
+                        border: "1px solid var(--x51-hairline-strong)",
+                        borderRadius: 12,
+                        padding: 14,
+                        background: "rgba(16, 18, 21, 0.94)",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 12,
+                      }}
+                    >
+                      <strong style={{ fontSize: "0.9rem" }}>
+                        Obsidian Portfolio Backdrop (contrast-guarded)
+                      </strong>
+                      <div className="x51-backdrop-swatches">
+                        {BANNER_PRESETS.map((preset) => (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            className={
+                              "x51-backdrop-swatch" +
+                              (backdropDraft.presetId === preset.id
+                                ? " is-active"
+                                : "")
+                            }
+                            style={{ background: preset.gradient }}
+                            onClick={() =>
+                              setBackdropDraft((d) => ({
+                                ...d,
+                                presetId: preset.id,
+                              }))
+                            }
+                          >
+                            {preset.name}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="x1-form-grid">
+                        <label>
+                          Crop alignment
+                          <select
+                            value={backdropDraft.position}
+                            onChange={(e) =>
+                              setBackdropDraft((d) => ({
+                                ...d,
+                                position: e.target.value as
+                                  | "top"
+                                  | "center"
+                                  | "bottom",
+                              }))
+                            }
+                          >
+                            <option value="top">Top</option>
+                            <option value="center">Center</option>
+                            <option value="bottom">Bottom</option>
+                          </select>
+                        </label>
+                        <label>
+                          Dark overlay ({Math.round(backdropDraft.overlay * 100)}%)
+                          <input
+                            type="range"
+                            min={0.45}
+                            max={0.92}
+                            step={0.02}
+                            value={backdropDraft.overlay}
+                            onChange={(e) =>
+                              setBackdropDraft((d) => ({
+                                ...d,
+                                overlay: Number(e.target.value),
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Subtle blur ({backdropDraft.blur}px)
+                          <input
+                            type="range"
+                            min={0}
+                            max={14}
+                            step={1}
+                            value={backdropDraft.blur}
+                            onChange={(e) =>
+                              setBackdropDraft((d) => ({
+                                ...d,
+                                blur: Number(e.target.value),
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          Custom image upload (R2-gated)
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp"
+                            onChange={(e) =>
+                              void handleBackdropFileUpload(
+                                e.target.files?.[0] ?? null,
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                      {uploadMessage && (
+                        <p className="x1-caption" role="status" style={{ margin: 0 }}>
+                          {uploadMessage}
+                        </p>
+                      )}
+                      <div className="x1-actions" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
+                        <label className="x1-caption" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                          Ticker stream:
+                          <select
+                            value={privateTickerMode}
+                            onChange={(e) =>
+                              void toggleTickerSetting(
+                                true,
+                                e.target.value as "HOLDINGS" | "WATCHLIST",
+                              )
+                            }
+                          >
+                            <option value="HOLDINGS">My Holdings</option>
+                            <option value="WATCHLIST">My Watchlists</option>
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          className="x1-primary"
+                          disabled={busy}
+                          onClick={() => void saveBackdropSettings()}
+                        >
+                          {busy ? "Saving…" : "Save Backdrop"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="x1-list-tabs">
+                    {portfolios.map((p) => (
+                      <button
+                        key={p.id}
+                        aria-pressed={portfolio?.id === p.id}
+                        onClick={() => setPortfolioId(p.id)}
+                      >
+                        {p.name} · {p.payload.currency}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
           {portfolio ? (
             <>
               <div className="x1-metrics x1-ledger-metrics">
@@ -1398,31 +1641,33 @@ export default function Global({
                 }
               >
                 {portfolio.summary.holdings.length ? (
-                  <div className="x1-table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Instrument</th>
-                          <th>Quantity</th>
-                          <th>Average cost</th>
-                          <th>Cost basis</th>
-                          <th>Market value</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {portfolio.summary.holdings.map((h) => (
-                          <tr key={h.symbol}>
-                            <td>{h.symbol}</td>
-                            <td>{number(h.quantity, 4)}</td>
-                            <td>{number(h.averageCost)}</td>
-                            <td>{number(h.basis)}</td>
-                            <td>
-                              <span className="x1-caption">Not connected</span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className="x51-holdings-table">
+                    {portfolio.summary.holdings.map((h) => (
+                      <button
+                        key={h.symbol}
+                        type="button"
+                        className="x51-holding-row"
+                        onClick={() => openAsset(h.symbol)}
+                        title={`Inspect ${h.symbol} in Asset Detail`}
+                      >
+                        <div>
+                          <strong>{h.symbol}</strong>
+                          <div className="x1-caption">
+                            Tap for Chart &amp; Analysis
+                          </div>
+                        </div>
+                        <span>Qty {number(h.quantity, 4)}</span>
+                        <span>
+                          Avg {portfolio.payload.currency} {number(h.averageCost)}
+                        </span>
+                        <div>
+                          <strong>
+                            {portfolio.payload.currency} {number(h.basis)}
+                          </strong>
+                          <div className="x1-caption">Live MTM: Not connected</div>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 ) : (
                   <Empty title="Begin with your first transaction">

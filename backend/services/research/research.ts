@@ -26,7 +26,7 @@ export type ResearchDefinition = {
   formula: string;
   mode: "SIMPLE" | "ADVANCED";
   universe: "ECB_DAILY" | "CONNECTED_MARKETS";
-  interval: "1d" | "1wk" | "1mo";
+  interval: "30m" | "1h" | "1d" | "1wk" | "1mo";
   partialPolicy: "STRICT" | "ALLOW_UNKNOWN";
   outcome: OutcomeDefinition;
   instrumentIds: string[];
@@ -184,7 +184,7 @@ export function validateResearch(
     partialPolicy = input.partialPolicy ?? "STRICT";
   if (universe !== "ECB_DAILY" && universe !== "CONNECTED_MARKETS")
     throw new Error("Choose a supported universe.");
-  if (!["1d", "1wk", "1mo"].includes(String(interval)))
+  if (!["30m", "1h", "1d", "1wk", "1mo"].includes(String(interval)))
     throw new Error("Choose a supported timeframe.");
   if (partialPolicy !== "STRICT" && partialPolicy !== "ALLOW_UNKNOWN")
     throw new Error("Choose a partial-data policy.");

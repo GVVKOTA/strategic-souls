@@ -344,7 +344,8 @@ export type ScanRun = {
   digest: string;
   created_at: string;
   payload: {
-    rule: { formula: string };
+    rule: { formula: string; presetId?: string | null };
+    interval?: string;
     results: {
       asOf: string;
       total: number;
@@ -358,8 +359,11 @@ export type ScanRun = {
         reasons: string[];
         latestEventAt: string | null;
         source: string;
+        metrics?: Record<string, number | null>;
+        patternFit?: number;
       }[];
     };
+    soulGenome?: import("../../../backend/engines/soul-genome").SoulGenomeReport;
     knownAtPolicy: string;
   };
 };
@@ -369,6 +373,7 @@ export type WorkspaceState = {
   scanHistoryHasMore?: boolean;
   scanHistoryNextBefore?: string | null;
   scanEventsHasMore?: boolean;
+  scanQuota?: import("../../../backend/services/research/scan-quota").ScanQuotaSummary;
   portfolios: (WorkspaceRecord & { summary: PortfolioSummary })[];
   transactions: {
     id: string;

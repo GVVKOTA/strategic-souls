@@ -492,3 +492,83 @@ export function historicalInvestment(input: HistoricalInvestmentInput): {
     ],
   };
 }
+
+export type ManualHistoricalInvestmentInput = {
+  amount: number;
+  buyPrice: number;
+  sellPrice: number;
+  buyDate: string;
+  sellDate: string;
+  fees?: number;
+};
+
+export type ManualHistoricalInvestmentResult = {
+  units: number;
+  grossValue: number;
+  netValue: number;
+  netProfit: number;
+  netReturnPct: number;
+  annualizedCagrPct: number | null;
+  holdingDays: number;
+  holdingYears: number;
+  fees: number;
+  limitations: string[];
+};
+
+/**
+ * Deterministic manual historical-investment calculator from user-entered buy/sell prices & fees.
+ * Explicitly does NOT assume stock splits, bonus issues, dividends, or taxes.
+ */
+export function manualHistoricalInvestment(
+  input: ManualHistoricalInvestmentInput,
+): ManualHistoricalInvestmentResult {
+  const fees = input.fees ?? 0;
+  if (
+    !input ||
+    ![input.amount, input.buyPrice, input.sellPrice, fees].every(Number.isFinite) ||
+    input.amount <= 0 ||
+    input.buyPrice <= 0 ||
+    input.sellPrice < 0 ||
+    fees < 0 ||
+    input.amount > 1e15 ||
+    input.buyPrice > 1e15 ||
+    input.sellPrice > 1e15
+  ) {
+    throw new Error(
+      "Enter positive investment amount and buy price, non-negative sell price, and non-negative fees.",
+    );
+  }
+  const startMs = calendarDate(input.buyDate);
+  const endMs = calendarDate(input.sellDate);
+  if (endMs <= startMs) {
+    throw new Error("Sell date must be after buy date.");
+  }
+  const holdingDays = (endMs - startMs) / 86_400_000;
+  const holdingYears = holdingDays / 365;
+  const units = input.amount / input.buyPrice;
+  const grossValue = units * input.sellPrice;
+  const netValue = grossValue - fees;
+  const netProfit = netValue - input.amount;
+  const netReturnPct = (netProfit / input.amount) * 100;
+  const annualizedCagrPct =
+    netValue > 0 && holdingYears > 0 && holdingYears <= 1000
+      ? cagr(input.amount, netValue, holdingYears) * 100
+      : null;
+
+  return {
+    units,
+    grossValue,
+    netValue,
+    netProfit,
+    netReturnPct,
+    annualizedCagrPct,
+    holdingDays,
+    holdingYears,
+    fees,
+    limitations: [
+      "Calculated strictly from user-entered buy/sell prices and explicit fees.",
+      "Stock splits, dividends, bonus shares, taxes, and inflation are NOT assumed or inferred.",
+      "Automatic corporate-action total-return lookup remains unavailable until a licensed historical equity feed is connected.",
+    ],
+  };
+}

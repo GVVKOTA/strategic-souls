@@ -760,7 +760,7 @@ export default function WorldConflictMap({
   return (
     <Panel
       title="World Conflict & Geopolitical Map"
-      kicker="SS Earth · Real NASA GIBS satellite basemap + sourced conflict intelligence"
+      kicker="Strategic Globe · Real NASA GIBS satellite basemap + sourced conflict intelligence"
       className="x6-world-map-panel"
       action={
         <div className="x1-actions">
@@ -1162,7 +1162,7 @@ export default function WorldConflictMap({
 
       {/* Compact Learn Mode Disclosure */}
       {learnOpen && (
-        <div className="x6-status-callout" role="note" aria-label="How to read SS Earth">
+        <div className="x6-status-callout" role="note" aria-label="How to read Strategic Globe">
           <strong>How to read the World Conflict &amp; Satellite Map</strong>
           <p>
             <strong>Red markers</strong> represent verified geolocated conflict events

@@ -57,6 +57,13 @@
       "when": 1795187000000,
       "tag": "0007_standalone_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1795287000000,
+      "tag": "0008_x51_foundation",
+      "breakpoints": true
     }
   ]
 }

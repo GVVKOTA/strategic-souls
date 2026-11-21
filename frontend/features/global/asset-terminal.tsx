@@ -22,6 +22,8 @@ import {
   canShowDerived,
 } from "../../../backend/engines/chart-analytics";
 import { X2_INSTRUMENTS } from "../../../backend/services/market-data/instrument-registry";
+import { getEconomicCalendarEvents } from "../../../backend/services/market-data/economic-calendar";
+import type { PublishedSoulCard } from "../../../backend/services/community/research-network";
 import type { NormalizedMarketQuote } from "../../../backend/services/market-data/angelone/types";
 import { fetchMarketQuotes } from "./private-market-client";
 type Props = {
@@ -83,7 +85,9 @@ export default function AssetTerminal({
     [peer, setPeer] = useState<AssetResearch | null>(null),
     [peerBusy, setPeerBusy] = useState(false),
     [reload, setReload] = useState(0),
-    [chartWidth, setChartWidth] = useState(760);
+    [chartWidth, setChartWidth] = useState(760),
+    [ideas, setIdeas] = useState<PublishedSoulCard[]>([]),
+    [ideasLoading, setIdeasLoading] = useState(false);
   const asset = assetState?.id === id ? assetState : null;
   const surface = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -166,6 +170,40 @@ export default function AssetTerminal({
       alive = false;
     };
   }, [authenticated, isOwner, id, reload]);
+  useEffect(() => {
+    if (tab !== "Ideas") return;
+    let alive = true;
+    queueMicrotask(() => {
+      if (alive) setIdeasLoading(true);
+    });
+    json<{ posts: PublishedSoulCard[] }>(
+      `/api/community/network?view=web&symbol=${encodeURIComponent(id)}`,
+    )
+      .then((res) => {
+        if (alive) setIdeas(res.posts ?? []);
+      })
+      .catch(() => {
+        if (alive) setIdeas([]);
+      })
+      .finally(() => {
+        if (alive) setIdeasLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [tab, id]);
+
+  const relatedMacro = useMemo(() => {
+    const country = id.startsWith("NSE:") || id.startsWith("BSE:") || id.startsWith("MCX:") || id === "ECB:USDINR"
+      ? "IN"
+      : id.startsWith("UST:") || id === "GLOBAL:SPX" || id === "GLOBAL:NDX"
+        ? "US"
+        : id.startsWith("ECB:")
+          ? "EU"
+          : "ALL";
+    return getEconomicCalendarEvents({ range: "upcoming", country }).events.slice(0, 5);
+  }, [id]);
+
   function change(next: Partial<ChartLayout["payload"]>) {
     requestKey.current = null;
     setSaveMessage("");
@@ -393,13 +431,11 @@ export default function AssetTerminal({
       <nav className="x2-research-tabs" aria-label="Asset research views">
         {[
           "Chart",
-          "Technicals",
           "Fundamentals",
-          "Statements",
-          "Events",
-          "Derivatives",
-          "Compare",
-          "Source",
+          "Technicals",
+          "Analysis",
+          "Ideas",
+          "News",
         ].map((t) => (
           <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)}>
             {t}
@@ -1100,77 +1136,288 @@ export default function AssetTerminal({
                   </tbody>
                 </table>
               </div>
+              <details style={{ marginTop: 14 }}>
+                <summary>Peer / Benchmark Relative Comparison</summary>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+                  <label>
+                    Peer / benchmark
+                    <select
+                      value={peerId}
+                      onChange={(e) => setPeerId(e.target.value)}
+                    >
+                      {X2_INSTRUMENTS.map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    onClick={compare}
+                    disabled={peerBusy || !derivedAllowed}
+                    aria-busy={peerBusy}
+                  >
+                    {peerBusy ? "Loading comparison…" : "Compare sources"}
+                  </button>
+                </div>
+                {peer && (
+                  <>
+                    <h4>{peer.name}</h4>
+                    <p>
+                      {peer.state} · {peer.provider} · {peer.references.length}{" "}
+                      observations
+                    </p>
+                    {comparison.length > 1 && (
+                      <div className="x2-indicator-panel">
+                        <strong>
+                          Same-date price context · rebased to 100 ·{" "}
+                          {comparison.length} observations
+                        </strong>
+                        <p>
+                          Solid: {asset?.name} ({asset?.currency}). Dashed:{" "}
+                          {peer.name} ({peer.currency}). No FX conversion or
+                          total-return adjustment is implied.
+                        </p>
+                        <svg
+                          viewBox={`0 0 ${chartWidth} 180`}
+                          role="img"
+                          aria-label="Matched-date normalized instrument and peer price comparison"
+                        >
+                          {(["left", "right"] as const).map((key, index) => {
+                            const lo = Math.min(
+                                ...comparison.flatMap((p) => [p.left, p.right]),
+                              ),
+                              hi = Math.max(
+                                ...comparison.flatMap((p) => [p.left, p.right]),
+                              );
+                            return (
+                              <path
+                                key={key}
+                                d={comparison
+                                  .map(
+                                    (p, i) =>
+                                      `${i ? "L" : "M"}${25 + (i / (comparison.length - 1)) * (chartWidth - 50)},${10 + ((hi - p[key]) / (hi - lo || 1)) * 150}`,
+                                  )
+                                  .join(" ")}
+                                className="x2-series"
+                                strokeDasharray={index ? "6 4" : undefined}
+                              />
+                            );
+                          })}
+                        </svg>
+                        <p>
+                          {comparison[0].date} — {comparison.at(-1)!.date}
+                        </p>
+                      </div>
+                    )}
+                    <div className="x2-table-scroll">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Metric</th>
+                            <th>Selected</th>
+                            <th>Peer</th>
+                            <th>Comparability</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {comparableMetrics(
+                            derivedAllowed && canShowDerived(peer)
+                              ? (asset?.fundamentals ?? [])
+                              : [],
+                            peer.fundamentals,
+                          ).map((m) => (
+                            <tr key={m.metric}>
+                              <td>{m.metric}</td>
+                              <td>{num(m.left)}</td>
+                              <td>{num(m.right)}</td>
+                              <td>{m.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </details>
             </>
           )}
-          {tab === "Fundamentals" &&
-            (asset?.fundamentals.length ? (
-              <div className="x2-table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Metric</th>
-                      <th>Value</th>
-                      <th>Period</th>
-                      <th>Filing known at</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {asset.fundamentals.map((f) => (
-                      <tr key={f.metric}>
-                        <td>{f.metric}</td>
-                        <td>
-                          {num(f.value)} {f.unit}
-                        </td>
-                        <td>{f.period}</td>
-                        <td>{f.knownAt ?? "Unknown — no PIT use"}</td>
+          {tab === "Fundamentals" && (
+            <>
+              {asset?.instrument?.type === "FUTURE" ? (
+                <p>
+                  Derivative Contract Specifications: expiry{" "}
+                  {asset.instrument.expiry}; lot {asset.instrument.lotSize};
+                  tick {asset.instrument.tickSize}; {asset.instrument.unit}.
+                  Equity ratios (P/E, EPS) do not apply to commodity futures.
+                </p>
+              ) : asset?.fundamentals.length ? (
+                <div className="x2-table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th>Value</th>
+                        <th>Period</th>
+                        <th>Filing known at</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {asset.fundamentals.map((f) => (
+                        <tr key={f.metric}>
+                          <td>{f.metric}</td>
+                          <td>
+                            {num(f.value)} {f.unit}
+                          </td>
+                          <td>{f.period}</td>
+                          <td>{f.knownAt ?? "Unknown — no PIT use"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p>
+                  {id.startsWith("ECB:") ||
+                  id.startsWith("UST:") ||
+                  id.startsWith("GLOBAL:")
+                    ? "Asset-class specific profile: Company ratios (P/E, EPS, Balance Sheet) do not apply to FX, sovereign yields, spot commodities, or market indices."
+                    : "No licensed equity fundamentals feed is connected yet. Missing financial ratios are never fabricated or substituted with zeros."}
+                </p>
+              )}
+              {asset?.statements.length ? (
+                asset.statements.map((s) => (
+                  <details key={s.kind + s.period} style={{ marginTop: 10 }}>
+                    <summary>
+                      {s.kind} · {s.period} · {s.currency}
+                    </summary>
+                    <p>
+                      {s.basis} · filing {s.knownAt ?? "Unavailable"}
+                    </p>
+                    <div className="x2-table-scroll">
+                      <table>
+                        <tbody>
+                          {Object.entries(s.values).map(([k, v]) => (
+                            <tr key={k}>
+                              <th>{k}</th>
+                              <td>{num(v)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                ))
+              ) : null}
+            </>
+          )}
+          {tab === "Analysis" && (
+            <>
+              <div className="x51-genome-grid">
+                <div className="x51-genome-card">
+                  <h4>Source &amp; Data Rights Lineage</h4>
+                  <dl style={{ margin: 0 }}>
+                    <dt>Provider</dt>
+                    <dd>{asset?.provider ?? "Catalog entry"}</dd>
+                    <dt>State</dt>
+                    <dd>{asset?.state ?? "UNAVAILABLE"}</dd>
+                    <dt>Retrieved</dt>
+                    <dd>{asset?.retrievedAt ?? "Unavailable"}</dd>
+                    <dt>Rights</dt>
+                    <dd>
+                      Analysis:{" "}
+                      {asset?.capabilities.analysis ? "Permitted" : "Restricted"}{" "}
+                      · Storage:{" "}
+                      {asset?.capabilities.storage ? "Permitted" : "Restricted"}
+                    </dd>
+                  </dl>
+                  {asset?.sourceUrl && (
+                    <a
+                      href={asset.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Official source documentation
+                    </a>
+                  )}
+                </div>
+                <div className="x51-genome-card">
+                  <h4>Upcoming Related Macro Releases</h4>
+                  {relatedMacro.length > 0 ? (
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {relatedMacro.map((ev) => (
+                        <li key={ev.eventId} style={{ marginBottom: 6 }}>
+                          <strong>{ev.title}</strong> ({ev.scheduledDate}) ·{" "}
+                          <a
+                            href={ev.primarySourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            {ev.canonicalSourceId}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="x1-caption">No upcoming scheduled macro releases matched.</p>
+                  )}
+                </div>
               </div>
-            ) : (
-              <p>
-                No licensed company fundamentals. Company statements do not
-                apply to FX, yields, indices or commodity futures.
+              {asset?.limitations?.length ? (
+                <ul style={{ marginTop: 12 }}>
+                  {asset.limitations.map((l) => (
+                    <li key={l}>{l}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          )}
+          {tab === "Ideas" && (
+            <div>
+              <p className="x1-caption" style={{ marginTop: 0 }}>
+                Published Community Souls referencing <strong>{id}</strong>.
+                Ideas are independent educational research notes, not advice.
               </p>
-            ))}
-          {tab === "Statements" &&
-            (asset?.statements.length ? (
-              asset.statements.map((s) => (
-                <details key={s.kind + s.period}>
-                  <summary>
-                    {s.kind} · {s.period} · {s.currency}
-                  </summary>
-                  <p>
-                    {s.basis} · filing {s.knownAt ?? "Unavailable"}
-                  </p>
-                  <div className="x2-table-scroll">
-                    <table>
-                      <tbody>
-                        {Object.entries(s.values).map(([k, v]) => (
-                          <tr key={k}>
-                            <th>{k}</th>
-                            <td>{num(v)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-              ))
-            ) : (
-              <p>
-                Income, balance-sheet and cash-flow data are unavailable.
-                Period/basis/filing lineage will accompany an entitled source.
-              </p>
-            ))}
-          {tab === "Events" &&
+              {ideasLoading ? (
+                <p role="status">Loading Community Ideas for {id}…</p>
+              ) : ideas.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {ideas.map((post) => (
+                    <article key={post.id} className="x51-soul-card">
+                      <div className="x51-soul-card-head">
+                        <strong>
+                          {post.title} · @{post.authorHandle}
+                        </strong>
+                        <span className="x51-pill x51-pill-green">
+                          {post.mode} · {post.timeframe}
+                        </span>
+                      </div>
+                      <p className="x1-caption" style={{ margin: 0 }}>
+                        {post.summary}
+                      </p>
+                      <code className="x51-soul-formula">{post.formula}</code>
+                      <p className="x1-caption" style={{ margin: 0 }}>
+                        {post.evidenceStatus} · {post.sourceAttribution}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="x1-callout">
+                  No researchers have published a Community Soul matching{" "}
+                  <strong>{id}</strong> yet. Run a scan in Strategy Builder and
+                  use One-Click Post Soul to share your research.
+                </div>
+              )}
+            </div>
+          )}
+          {tab === "News" &&
             (asset?.events.length ? (
               asset.events.map((e) => (
-                <article key={e.sourceUrl + e.date}>
+                <article key={e.sourceUrl + e.date} style={{ marginBottom: 10 }}>
                   <span>
                     {e.date} · {e.type}
-                  </span>
+                  </span>{" "}
                   <a
                     href={e.sourceUrl}
                     target="_blank"
@@ -1181,170 +1428,23 @@ export default function AssetTerminal({
                 </article>
               ))
             ) : (
-              <p>
-                No entitled event/news feed for this instrument. No earnings
-                date or event is guessed.
-              </p>
+              <div className="x1-callout">
+                <p style={{ margin: "0 0 8px" }}>
+                  No licensed news or corporate-event feed is currently
+                  connected for <strong>{id}</strong>. Strategic Souls never
+                  fabricates headlines or guesses earnings dates.
+                </p>
+                {asset?.sourceUrl && (
+                  <a
+                    href={asset.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open official {asset.provider} reference page
+                  </a>
+                )}
+              </div>
             ))}
-          {tab === "Derivatives" && (
-            <>
-              <p>
-                {asset?.instrument?.type === "FUTURE"
-                  ? `Contract expiry ${asset.instrument.expiry}; lot ${asset.instrument.lotSize}; tick ${asset.instrument.tickSize}; ${asset.instrument.unit}.`
-                  : "Select an exact entitled derivative contract to inspect its expiry, lot, tick and unit."}
-              </p>
-              <p>
-                Option chains, skew and provider Greeks are not connected by the
-                implemented history adapters. Formula Lab remains available for
-                theoretical BSM/Greeks/IV and user-assumed payoffs; theoretical
-                values are not executable quotes.
-              </p>
-            </>
-          )}
-          {tab === "Compare" && (
-            <>
-              <label>
-                Peer / benchmark
-                <select
-                  value={peerId}
-                  onChange={(e) => setPeerId(e.target.value)}
-                >
-                  {X2_INSTRUMENTS.map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                onClick={compare}
-                disabled={peerBusy || !derivedAllowed}
-                aria-busy={peerBusy}
-              >
-                {peerBusy ? "Loading comparison…" : "Compare sources"}
-              </button>
-              {peer && (
-                <>
-                  <h3>{peer.name}</h3>
-                  <p>
-                    {peer.state} · {peer.provider} · {peer.references.length}{" "}
-                    observations
-                  </p>
-                  {comparison.length > 1 && (
-                    <div className="x2-indicator-panel">
-                      <strong>
-                        Same-date price context · rebased to 100 ·{" "}
-                        {comparison.length} observations
-                      </strong>
-                      <p>
-                        Solid: {asset?.name} ({asset?.currency}). Dashed:{" "}
-                        {peer.name} ({peer.currency}). No FX conversion or
-                        total-return adjustment is implied.
-                      </p>
-                      <svg
-                        viewBox={`0 0 ${chartWidth} 180`}
-                        role="img"
-                        aria-label="Matched-date normalized instrument and peer price comparison"
-                      >
-                        {(["left", "right"] as const).map((key, index) => {
-                          const lo = Math.min(
-                              ...comparison.flatMap((p) => [p.left, p.right]),
-                            ),
-                            hi = Math.max(
-                              ...comparison.flatMap((p) => [p.left, p.right]),
-                            );
-                          return (
-                            <path
-                              key={key}
-                              d={comparison
-                                .map(
-                                  (p, i) =>
-                                    `${i ? "L" : "M"}${25 + (i / (comparison.length - 1)) * (chartWidth - 50)},${10 + ((hi - p[key]) / (hi - lo || 1)) * 150}`,
-                                )
-                                .join(" ")}
-                              className="x2-series"
-                              strokeDasharray={index ? "6 4" : undefined}
-                            />
-                          );
-                        })}
-                      </svg>
-                      <p>
-                        {comparison[0].date} — {comparison.at(-1)!.date}
-                      </p>
-                    </div>
-                  )}
-                  <div className="x2-table-scroll">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Metric</th>
-                          <th>Selected</th>
-                          <th>Peer</th>
-                          <th>Comparability</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {comparableMetrics(
-                          derivedAllowed && canShowDerived(peer)
-                            ? (asset?.fundamentals ?? [])
-                            : [],
-                          peer.fundamentals,
-                        ).map((m) => (
-                          <tr key={m.metric}>
-                            <td>{m.metric}</td>
-                            <td>{num(m.left)}</td>
-                            <td>{num(m.right)}</td>
-                            <td>{m.reason}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  {!peer.fundamentals.length && (
-                    <p>
-                      No comparable licensed financial metrics. Missing data is
-                      not a zero valuation.
-                    </p>
-                  )}
-                </>
-              )}
-            </>
-          )}
-          {tab === "Source" && (
-            <>
-              <dl>
-                <dt>Source</dt>
-                <dd>{asset?.provider}</dd>
-                <dt>Retrieved</dt>
-                <dd>{asset?.retrievedAt ?? "Unavailable"}</dd>
-                <dt>State</dt>
-                <dd>{asset?.state}</dd>
-                <dt>Version</dt>
-                <dd>{asset?.schemaVersion}</dd>
-                <dt>Point-in-time vintage</dt>
-                <dd>Unavailable — historical probability/backtests gated</dd>
-                <dt>Analysis / retention</dt>
-                <dd>
-                  {asset?.capabilities.analysis ? "Permitted" : "Not entitled"}{" "}
-                  / {asset?.capabilities.storage ? "Permitted" : "Not entitled"}
-                </dd>
-              </dl>
-              {asset?.sourceUrl && (
-                <a
-                  href={asset.sourceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Official source / documentation
-                </a>
-              )}
-              <ul>
-                {asset?.limitations.map((l) => (
-                  <li key={l}>{l}</li>
-                ))}
-              </ul>
-            </>
-          )}
         </>
       )}
     </section>

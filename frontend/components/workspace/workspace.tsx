@@ -21,6 +21,9 @@ import {
   FolderArchive,
   Settings2,
   UserRound,
+  MoreVertical,
+  Bell,
+  Search,
 } from "lucide-react";
 import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import type {
@@ -31,7 +34,9 @@ import type {
 } from "../../../backend/services/profile/profile";
 import Global, { AssetDialog } from "../../features/global/dashboard";
 const Strategy = lazy(() => import("./strategy"));
-const Community = lazy(() => import("../../features/community/dashboard"));
+const CommunityNetwork = lazy(
+  () => import("../../features/community/research-network-shell"),
+);
 const SettingsView = lazy(() => import("../../features/account/settings-view"));
 import AvatarBadge from "../../features/account/avatar-badge";
 import AccountQuickPanel, {
@@ -39,6 +44,7 @@ import AccountQuickPanel, {
 } from "../../features/account/account-quick-panel";
 import EclipseIntro from "./eclipse-intro";
 import UniversalSearch from "./universal-search";
+import PrivateHoldingsTicker from "./private-ticker";
 const DataControl = lazy(() => import("../../features/global/data-control"));
 import AuthPanel, {
   type AuthSessionResponse,
@@ -47,11 +53,29 @@ import { api, Modal, WorkspaceSkeleton, type WorkspaceState } from "./shared";
 
 type View = "Global" | "Strategy" | "Community" | "Settings";
 
+const GLOBAL_THOUGHTS = [
+  "Process outlasts prediction: check data quality and cutoff dates before reacting to price movement.",
+  "A zero-match scan is honest evidence, not a failed run.",
+];
+
 export default function X1Workspace() {
   const [view, setView] = useState<View>("Global"),
     [settingsSection, setSettingsSection] = useState<SettingsSection>("profile"),
-    [communityTab, setCommunityTab] = useState<"explore" | "rooms" | "saved">("explore"),
+    [communityTab, setCommunityTab] = useState<"web" | "chats" | "groups">("web"),
+    [communitySavedOnly, setCommunitySavedOnly] = useState(false),
     [communityTabNonce, setCommunityTabNonce] = useState(0),
+    [communitySearch, setCommunitySearch] = useState(""),
+    [sectionDrawerOpen, setSectionDrawerOpen] = useState(false),
+    [contextHelpOpen, setContextHelpOpen] = useState(false),
+    [thoughtDismissed, setThoughtDismissed] = useState(false),
+    [bellOpen, setBellOpen] = useState(false),
+    [followRequests, setFollowRequests] = useState<
+      { handle: string; displayName: string; avatarId: string; createdAt: string }[]
+    >([]),
+    [globalSectionJump, setGlobalSectionJump] = useState<{
+      target: string;
+      nonce: number;
+    } | null>(null),
     [quickMenuOpen, setQuickMenuOpen] = useState(false),
     [profileRevision, setProfileRevision] = useState(0),
     [data, setData] = useState<MarketSnapshot | null>(null),
@@ -328,6 +352,12 @@ export default function X1Workspace() {
             bio: profile.bio,
             discoverable: profile.social.discoverable,
             unreadNotifications: profile.unreadNotifications,
+            genderSymbol: profile.genderSymbol,
+            instagramHandle: profile.instagramHandle,
+            bannerPresetId: profile.bannerPresetId,
+            portfolioBackdrop: profile.portfolioBackdrop,
+            defaultPostAudience: profile.defaultPostAudience,
+            counts: profile.counts,
             preferences: profile.preferences,
           }
         : prev,
@@ -343,6 +373,61 @@ export default function X1Workspace() {
       /* Storage is optional. */
     }
   }, []);
+
+  const loadFollowRequests = useCallback(async () => {
+    if (!authRef.current.authenticated) return;
+    try {
+      const res = await api<{
+        requests: {
+          handle: string;
+          displayName: string;
+          avatarId: string;
+          createdAt: string;
+        }[];
+      }>("/api/community/network?view=follow-requests");
+      setFollowRequests(res.requests ?? []);
+    } catch {
+      /* Ignore when unauthenticated */
+    }
+  }, []);
+
+  async function respondFollowRequest(
+    handle: string,
+    decision: "APPROVE" | "DECLINE",
+  ) {
+    try {
+      await api("/api/community/network", {
+        action: "respond-follow",
+        handle,
+        decision,
+      });
+      setFollowRequests((prev) => prev.filter((r) => r.handle !== handle));
+      notify(
+        decision === "APPROVE"
+          ? `Approved follow request from @${handle}.`
+          : `Declined follow request from @${handle}.`,
+      );
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Action failed.", true);
+    }
+  }
+
+  async function hidePrivateTicker() {
+    if (!isSignedIn) return;
+    try {
+      const res = await api<{ ok: boolean; profile: UserProfileSnapshot }>(
+        "/api/profile",
+        {
+          action: "update-preferences",
+          privateTickerEnabled: false,
+        },
+      );
+      handleProfileSynced(res.profile);
+      notify("Private ticker hidden.");
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Could not hide ticker.", true);
+    }
+  }
 
   const analyze = (
     formula = "close > sma(close, 20)",
@@ -473,59 +558,223 @@ export default function X1Workspace() {
       </aside>
       <div className="x1-content">
         <header className="x1-topbar">
-          <a
-            className="x2-header-logo"
-            href="/"
-            aria-label="Strategic Souls home"
-            onClick={(e) => {
-              e.preventDefault();
-              navigate("Global");
-            }}
-          >
-            <img src="/gvv-approved.jpg" alt="" width="44" height="44" />
-          </a>
-          <UniversalSearch
-            data={data}
-            authenticated={isSignedIn && accepted === true}
-            onAsset={setAsset}
-            onCommunity={(query) => {
-              navigate("Community");
-              window.dispatchEvent(
-                new CustomEvent("x2-community-search", { detail: query }),
-              );
-              window.history.replaceState(
-                null,
-                "",
-                "/?view=community&q=" + encodeURIComponent(query),
-              );
-            }}
-          />
-          {isOwner && (
-            <button
-              className="x1-icon-button"
-              aria-label="Data Control Center"
-              onClick={() => setDataControl(true)}
-            >
-              <Settings2 size={19} />
-            </button>
+          {/* GLOBAL HEADER: 3-dot Sections Drawer + Universal Search + bordered ? Help + Avatar */}
+          {view === "Global" && (
+            <>
+              <div className="x51-topbar-left">
+                <button
+                  type="button"
+                  className="x51-menu-btn"
+                  aria-label="Open Global sections menu"
+                  aria-expanded={sectionDrawerOpen}
+                  onClick={() => setSectionDrawerOpen((v) => !v)}
+                >
+                  <MoreVertical size={18} />
+                </button>
+              </div>
+              <div className="x51-topbar-search-wrap">
+                <UniversalSearch
+                  data={data}
+                  authenticated={isSignedIn && accepted === true}
+                  onAsset={setAsset}
+                  onCommunity={(query) => {
+                    setCommunitySearch(query);
+                    setCommunityTab("web");
+                    setCommunitySavedOnly(false);
+                    setCommunityTabNonce((n) => n + 1);
+                    navigate("Community");
+                  }}
+                />
+              </div>
+              <div className="x51-topbar-right">
+                {isOwner && (
+                  <button
+                    className="x1-icon-button"
+                    aria-label="Data Control Center"
+                    onClick={() => setDataControl(true)}
+                  >
+                    <Settings2 size={18} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="x51-help-btn"
+                  aria-label="Global help and research guide"
+                  onClick={() => setContextHelpOpen(true)}
+                >
+                  ?
+                </button>
+              </div>
+            </>
           )}
-          <button
-            className="x1-top-source"
-            onClick={() => {
-              setGlobalPanel("Market Explorer");
-              navigate("Global");
-            }}
-          >
-            <i />
-            <span>
-              {data?.providers.some((p) => p.state === "CONNECTED")
-                ? "Daily sources connected"
-                : data
-                  ? "Sources unavailable"
-                  : "Checking sources"}
-            </span>
-            <ArrowUpRight size={14} />
-          </button>
+
+          {/* STRATEGY HEADER: 3-dot Sections Drawer + Centered "Strategy Builder" (NO global search!) + bordered ? Help + Avatar */}
+          {view === "Strategy" && (
+            <>
+              <div className="x51-topbar-left">
+                <button
+                  type="button"
+                  className="x51-menu-btn"
+                  aria-label="Open Strategy sections menu"
+                  aria-expanded={sectionDrawerOpen}
+                  onClick={() => setSectionDrawerOpen((v) => !v)}
+                >
+                  <MoreVertical size={18} />
+                </button>
+              </div>
+              <div className="x51-topbar-center">
+                <h1 className="x51-topbar-title">Strategy Builder</h1>
+              </div>
+              <div className="x51-topbar-right">
+                <button
+                  type="button"
+                  className="x51-help-btn"
+                  aria-label="Strategy Builder help and quotas"
+                  onClick={() => setContextHelpOpen(true)}
+                >
+                  ?
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* COMMUNITY HEADER: Body ID (@handle) Search + Notification Bell (with Follow Requests) + Avatar */}
+          {view === "Community" && (
+            <>
+              <div className="x51-topbar-search-wrap">
+                <label className="x51-body-search">
+                  <Search size={16} aria-hidden="true" />
+                  <input
+                    type="search"
+                    aria-label="Search Body ID or Souls"
+                    value={communitySearch}
+                    onChange={(e) => setCommunitySearch(e.target.value)}
+                    placeholder="Search @BodyID, researcher, or Soul…"
+                  />
+                </label>
+              </div>
+              <div className="x51-topbar-right">
+                <div className="x51-bell-wrap">
+                  <button
+                    type="button"
+                    className="x51-bell-btn"
+                    aria-label="Notifications and follow requests"
+                    aria-expanded={bellOpen}
+                    onClick={() => {
+                      const next = !bellOpen;
+                      setBellOpen(next);
+                      if (next) void loadFollowRequests();
+                    }}
+                  >
+                    <Bell size={18} />
+                    {((authUser?.unreadNotifications ?? 0) +
+                      followRequests.length) > 0 && (
+                      <span className="x51-bell-badge">
+                        {(authUser?.unreadNotifications ?? 0) +
+                          followRequests.length}
+                      </span>
+                    )}
+                  </button>
+                  {bellOpen && (
+                    <div
+                      className="x51-bell-dropdown"
+                      role="dialog"
+                      aria-label="Notifications & follow requests"
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <strong>Notifications</strong>
+                        <button
+                          type="button"
+                          className="x1-text-button"
+                          onClick={() => {
+                            setBellOpen(false);
+                            openSettings("notifications");
+                          }}
+                        >
+                          All settings
+                        </button>
+                      </div>
+                      {followRequests.length > 0 ? (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          <span className="x1-caption">
+                            Pending Follow Requests ({followRequests.length})
+                          </span>
+                          {followRequests.map((req) => (
+                            <div
+                              key={req.handle}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                gap: 8,
+                                padding: 8,
+                                borderRadius: 8,
+                                background: "var(--x51-surface-card)",
+                                border: "1px solid var(--x51-hairline)",
+                              }}
+                            >
+                              <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                                <AvatarBadge avatarId={req.avatarId} size={26} alt="" />
+                                <span style={{ fontSize: "0.82rem", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  @{req.handle}
+                                </span>
+                              </div>
+                              <div style={{ display: "flex", gap: 4 }}>
+                                <button
+                                  type="button"
+                                  className="x51-chip is-active"
+                                  style={{ minHeight: 28, padding: "2px 8px" }}
+                                  onClick={() =>
+                                    void respondFollowRequest(req.handle, "APPROVE")
+                                  }
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  type="button"
+                                  className="x51-chip"
+                                  style={{ minHeight: 28, padding: "2px 8px" }}
+                                  onClick={() =>
+                                    void respondFollowRequest(req.handle, "DECLINE")
+                                  }
+                                >
+                                  Decline
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="x1-caption" style={{ margin: 0 }}>
+                          {isSignedIn
+                            ? (authUser?.unreadNotifications ?? 0) > 0
+                              ? `${authUser?.unreadNotifications} unread activity alert(s). Open Notifications settings to view and clear.`
+                              : "No pending follow requests or unread alerts."
+                            : "Sign in to receive in-app follow requests and Soul comment notifications."}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* SETTINGS HEADER */}
+          {view === "Settings" && (
+            <>
+              <div className="x51-topbar-center">
+                <h1 className="x51-topbar-title">Account &amp; Preferences</h1>
+              </div>
+            </>
+          )}
+
           <div className="x6-account-anchor">
             {isSignedIn ? (
               <button
@@ -571,6 +820,9 @@ export default function X1Workspace() {
               displayName={authUser?.displayName}
               handle={authUser?.handle}
               avatarId={authUser?.avatarId}
+              genderSymbol={authUser?.genderSymbol}
+              instagramHandle={authUser?.instagramHandle}
+              counts={authUser?.counts}
               discoverable={authUser?.discoverable}
               unreadNotifications={authUser?.unreadNotifications ?? 0}
               motionPref={motionPref}
@@ -578,17 +830,28 @@ export default function X1Workspace() {
               busy={busy}
               onOpenSettings={openSettings}
               onOpenSaved={() => {
-                setCommunityTab("saved");
+                setCommunityTab("web");
+                setCommunitySavedOnly(true);
                 setCommunityTabNonce((n) => n + 1);
                 navigate("Community");
               }}
-              onOpenHelp={() => setAbout(true)}
+              onOpenHelp={() => setContextHelpOpen(true)}
               onSignIn={() => setAuthModal("signin")}
               onRegister={() => setAuthModal("register")}
               onSignOut={() => void handleSignOut()}
             />
           </div>
         </header>
+
+        {/* Opt-In Private Holdings / Watchlist Ticker (OFF by default; owner-only across all 3 dashboards) */}
+        <PrivateHoldingsTicker
+          enabled={!!authUser?.preferences?.privateTickerEnabled}
+          mode={authUser?.preferences?.privateTickerMode ?? "HOLDINGS"}
+          authenticated={isSignedIn && accepted === true}
+          workspace={workspace}
+          onOpenAsset={setAsset}
+          onHide={() => void hidePrivateTicker()}
+        />
         <main id="x1-main" tabIndex={-1} className="x1-main">
           {sessionError && (
             <div role="alert" className="x1-callout">
@@ -710,6 +973,11 @@ export default function X1Workspace() {
                   initialPanel={globalPanel}
                   onNavigate={navigate}
                   earthQuality={earthQuality}
+                  portfolioBackdrop={authUser?.portfolioBackdrop}
+                  privateTickerEnabled={!!authUser?.preferences?.privateTickerEnabled}
+                  privateTickerMode={authUser?.preferences?.privateTickerMode ?? "HOLDINGS"}
+                  onProfileSynced={handleProfileSynced}
+                  sectionJump={globalSectionJump}
                 />
               ) : view === "Strategy" ? (
                 <Strategy
@@ -732,13 +1000,19 @@ export default function X1Workspace() {
                   initialInstrument={initialInstrument}
                   initialUniversePreset={initialUniversePreset}
                   initialPanel={strategyPanel}
+                  onOpenCommunityWeb={() => {
+                    setCommunityTab("web");
+                    setCommunitySavedOnly(false);
+                    setCommunityTabNonce((n) => n + 1);
+                    navigate("Community");
+                  }}
                   share={(formula) => {
                     setSharedFormula(formula);
-                    setCommunityTab("rooms");
+                    setCommunityTab("groups");
                     setCommunityTabNonce((n) => n + 1);
                     navigate("Community");
                     notify(
-                      "Method ready. Open a Research Room to create a shared Soul.",
+                      "Method ready. Open a Research Room in Groups to create a shared Soul.",
                     );
                   }}
                 />
@@ -755,7 +1029,7 @@ export default function X1Workspace() {
                   <section className="x1-panel">
                     <h2>Sign in to access Settings &amp; Preferences</h2>
                     <p className="x1-caption">
-                      Profile settings, 50 preset avatars, and privacy preferences are private to your account.
+                      Profile settings, 50 preset avatars, banners, and privacy preferences are private to your account.
                     </p>
                     <div className="x1-actions">
                       <button
@@ -777,17 +1051,25 @@ export default function X1Workspace() {
                   </section>
                 )
               ) : (
-                <Community
+                <CommunityNetwork
                   authenticated={isSignedIn && accepted === true}
                   onRequireAuth={() => setAuthModal("signin")}
                   notify={notify}
                   sharedFormula={sharedFormula}
-                  currentUserAvatarId={authUser?.avatarId}
-                  currentUserDisplayName={authUser?.displayName}
+                  searchQuery={communitySearch}
+                  currentUser={authUser}
                   profileRevision={profileRevision}
                   initialTab={communityTab}
+                  savedOnlyRequested={communitySavedOnly}
                   tabNonce={communityTabNonce}
                   onOpenSettings={openSettings}
+                  onProfileSynced={handleProfileSynced}
+                  onOpenAsset={setAsset}
+                  onCopyToStrategy={(formula) => {
+                    setInitialFormula(formula);
+                    setStrategyPanel("Soul Scan");
+                    navigate("Strategy");
+                  }}
                 />
               )}
             </div>
@@ -913,6 +1195,181 @@ export default function X1Workspace() {
           </Suspense>
         </Modal>
       )}
+      {/* Left Section Navigation Drawer (Global / Strategy vertical three-dot button) */}
+      {sectionDrawerOpen && (
+        <>
+          <div
+            className="x51-drawer-backdrop"
+            aria-hidden="true"
+            onClick={() => setSectionDrawerOpen(false)}
+          />
+          <aside
+            className="x51-drawer"
+            role="dialog"
+            aria-label={`${view} sections`}
+          >
+            <div className="x51-drawer-head">
+              <h3>{view === "Strategy" ? "Strategy Builder" : "Global Sections"}</h3>
+              <button
+                type="button"
+                className="x1-icon-button"
+                aria-label="Close sections drawer"
+                onClick={() => setSectionDrawerOpen(false)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="x51-drawer-list">
+              {view === "Strategy"
+                ? (
+                    [
+                      ["Soul Scan", "Classic (50 rules) & Advanced Soul Genome"],
+                      ["Formula Lab", "Standalone BSM, IV, CAGR, XIRR & Historical"],
+                    ] as const
+                  ).map(([sec, desc]) => (
+                    <button
+                      key={sec}
+                      type="button"
+                      className={
+                        "x51-drawer-item" +
+                        (strategyPanel === sec ? " is-active" : "")
+                      }
+                      onClick={() => {
+                        setStrategyPanel(sec);
+                        setSectionDrawerOpen(false);
+                      }}
+                    >
+                      <span>
+                        <strong>{sec}</strong>
+                        <small>{desc}</small>
+                      </span>
+                      <ArrowRight size={14} />
+                    </button>
+                  ))
+                : (
+                    [
+                      ["Markets", "9 customizable cards (3×3 matrix)"],
+                      ["My Portfolio", "Summary & dedicated private ledger"],
+                      ["Economic Calendar", "Official RBI, FOMC, BLS, ECB schedules"],
+                      ["Strategic Globe", "Photoreal 3D Earth + 2D Satellite Map"],
+                      ["Watchlists", "Private saved instrument lists"],
+                      ["Market Explorer", "Source health & official references"],
+                    ] as const
+                  ).map(([sec, desc]) => (
+                    <button
+                      key={sec}
+                      type="button"
+                      className="x51-drawer-item"
+                      onClick={() => {
+                        setGlobalSectionJump({ target: sec, nonce: Date.now() });
+                        setSectionDrawerOpen(false);
+                      }}
+                    >
+                      <span>
+                        <strong>{sec}</strong>
+                        <small>{desc}</small>
+                      </span>
+                      <ArrowRight size={14} />
+                    </button>
+                  ))}
+            </div>
+          </aside>
+        </>
+      )}
+
+      {/* Contextual Help Modal (Global & Strategy bordered ? button) */}
+      {contextHelpOpen && (
+        <Modal
+          title={
+            view === "Strategy"
+              ? "Strategy Builder · Help & Allowances"
+              : "Global Workspace · Help & Data Rights"
+          }
+          onClose={() => setContextHelpOpen(false)}
+        >
+          {!thoughtDismissed && (
+            <div className="x1-callout" style={{ justifyContent: "space-between", marginBottom: 12 }}>
+              <span>{GLOBAL_THOUGHTS[view === "Strategy" ? 1 : 0]}</span>
+              <button
+                type="button"
+                className="x1-text-button"
+                onClick={() => setThoughtDismissed(true)}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          {view === "Strategy" ? (
+            <dl className="x1-details">
+              <div>
+                <dt>Classic Mode</dt>
+                <dd>
+                  50 deterministic technical presets across RSI, Moving
+                  Averages, MACD, Volatility &amp; Breakouts, and Trend &amp;
+                  Volume. 8 completed scans per IST civil day (00:00 IST reset).
+                </dd>
+              </div>
+              <div>
+                <dt>Advanced Mode</dt>
+                <dd>
+                  Discover (natural-language Blueprint), Build (visual blocks +
+                  AST), and Draw (interactive shape similarity + Soul Genome). 1
+                  completed scan per rolling 60 minutes. Failed runs never
+                  deduct quota.
+                </dd>
+              </div>
+              <div>
+                <dt>Formula Lab</dt>
+                <dd>
+                  Standalone calculator suite (Options &amp; Greeks, IV, CAGR,
+                  XIRR, and manual Historical Investment). Never nested inside
+                  Classic/Advanced.
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <dl className="x1-details">
+              <div>
+                <dt>9-Card Markets Grid</dt>
+                <dd>
+                  Always 3×3 across desktop and mobile. Tap Customize 9 to
+                  reorder or swap any canonical instrument. Quality badges
+                  separate official/delayed/not-connected feeds from exchange
+                  open/closed sessions.
+                </dd>
+              </div>
+              <div>
+                <dt>Economic Calendar</dt>
+                <dd>
+                  Official RBI, MoSPI, FOMC, BLS, BEA, EIA, and ECB schedules in
+                  your chosen IANA timezone (IST default). Never fabricates
+                  actuals or consensus.
+                </dd>
+              </div>
+              <div>
+                <dt>Strategic Globe</dt>
+                <dd>
+                  Interactive 3D Earth (NASA Blue/Black Marble) paired with a
+                  synchronized 2D NASA GIBS satellite world map.
+                </dd>
+              </div>
+            </dl>
+          )}
+          <div className="x1-actions">
+            <button
+              type="button"
+              className="x1-secondary"
+              onClick={() => {
+                setContextHelpOpen(false);
+                setAbout(true);
+              }}
+            >
+              About Strategic Souls X5.1
+            </button>
+          </div>
+        </Modal>
+      )}
+
       {about && (
         <Modal title="About Strategic Souls" onClose={() => setAbout(false)}>
           <p>
@@ -922,8 +1379,9 @@ export default function X1Workspace() {
             <div>
               <dt>Release</dt>
               <dd>
-                X6 · Apex Edition (Profile Control Center, 50 Avatars, Research
-                Rooms &amp; SS Earth World Map)
+                X5.1 · Obsidian Genome / The Research Network (9-Card Markets,
+                Economic Calendar, 50-Preset Classic &amp; Advanced Soul Genome,
+                Strategic Globe &amp; Community Research Network)
               </dd>
             </div>
             <div>

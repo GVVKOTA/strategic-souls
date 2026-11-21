@@ -17,12 +17,15 @@ import {
   UserRound,
 } from "lucide-react";
 import type {
+  BannerPosition,
   DensityPreference,
   EarthQualityPreference,
+  GenderSymbolOption,
   MotionPreference,
   UserProfileSnapshot,
 } from "../../../backend/services/profile/profile";
 import { resolveAvatarPreset } from "../../../backend/services/profile/avatars";
+import { BANNER_PRESETS, resolveBannerPreset } from "../../../backend/services/profile/banners";
 import { api, moment, type Notice } from "../../components/workspace/shared";
 import AvatarBadge from "./avatar-badge";
 import AvatarStudio from "./avatar-studio";
@@ -51,7 +54,7 @@ const SECTIONS: {
   {
     id: "appearance",
     label: "Appearance & Accessibility",
-    desc: "Motion, information density & Earth rendering budget",
+    desc: "Motion, density, private ticker & Strategic Globe graphics budget",
     icon: Palette,
   },
   {
@@ -93,6 +96,14 @@ export default function SettingsView({
   const [displayName, setDisplayName] = useState("");
   const [handle, setHandle] = useState("");
   const [bio, setBio] = useState("");
+  const [bannerPresetId, setBannerPresetId] = useState("b01");
+  const [bannerPosition, setBannerPosition] = useState<BannerPosition>("center");
+  const [bannerOverlay, setBannerOverlay] = useState(0.65);
+  const [genderSymbol, setGenderSymbol] = useState<GenderSymbolOption>("HIDDEN");
+  const [instagramHandle, setInstagramHandle] = useState("");
+  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [interestsText, setInterestsText] = useState("");
+  const [bannerUploadMsg, setBannerUploadMsg] = useState("");
 
   // Account erasure confirmation state
   const [eraseOpen, setEraseOpen] = useState(false);
@@ -121,6 +132,13 @@ export default function SettingsView({
       setDisplayName(res.profile.displayName);
       setHandle(res.profile.handle ?? "");
       setBio(res.profile.bio);
+      setBannerPresetId(res.profile.bannerPresetId ?? "b01");
+      setBannerPosition(res.profile.bannerPosition ?? "center");
+      setBannerOverlay(res.profile.bannerOverlay ?? 0.65);
+      setGenderSymbol(res.profile.genderSymbol ?? "HIDDEN");
+      setInstagramHandle(res.profile.instagramHandle ?? "");
+      setWebsiteUrl(res.profile.websiteUrl ?? "");
+      setInterestsText((res.profile.researchInterests ?? []).join(", "));
       onProfileSynced(res.profile);
     } catch (err) {
       setError(
@@ -140,6 +158,13 @@ export default function SettingsView({
         setDisplayName(res.profile.displayName);
         setHandle(res.profile.handle ?? "");
         setBio(res.profile.bio);
+        setBannerPresetId(res.profile.bannerPresetId ?? "b01");
+        setBannerPosition(res.profile.bannerPosition ?? "center");
+        setBannerOverlay(res.profile.bannerOverlay ?? 0.65);
+        setGenderSymbol(res.profile.genderSymbol ?? "HIDDEN");
+        setInstagramHandle(res.profile.instagramHandle ?? "");
+        setWebsiteUrl(res.profile.websiteUrl ?? "");
+        setInterestsText((res.profile.researchInterests ?? []).join(", "));
         setError("");
         onProfileSynced(res.profile);
       })
@@ -163,6 +188,11 @@ export default function SettingsView({
     setBusy(true);
     setError("");
     try {
+      const researchInterests = interestsText
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 6);
       const res = await api<{ ok: boolean; profile: UserProfileSnapshot }>(
         "/api/profile",
         {
@@ -170,12 +200,26 @@ export default function SettingsView({
           displayName,
           handle: handle.trim() || undefined,
           bio,
+          bannerPresetId,
+          bannerPosition,
+          bannerOverlay,
+          genderSymbol,
+          instagramHandle: instagramHandle.trim(),
+          websiteUrl: websiteUrl.trim(),
+          researchInterests,
         },
       );
       setProfile(res.profile);
       setDisplayName(res.profile.displayName);
       setHandle(res.profile.handle ?? "");
       setBio(res.profile.bio);
+      setBannerPresetId(res.profile.bannerPresetId ?? "b01");
+      setBannerPosition(res.profile.bannerPosition ?? "center");
+      setBannerOverlay(res.profile.bannerOverlay ?? 0.65);
+      setGenderSymbol(res.profile.genderSymbol ?? "HIDDEN");
+      setInstagramHandle(res.profile.instagramHandle ?? "");
+      setWebsiteUrl(res.profile.websiteUrl ?? "");
+      setInterestsText((res.profile.researchInterests ?? []).join(", "));
       onProfileSynced(res.profile);
       notify("Profile saved across your workspace.");
     } catch (err) {
@@ -192,6 +236,8 @@ export default function SettingsView({
       motion?: MotionPreference;
       density?: DensityPreference;
       earthQuality?: EarthQualityPreference;
+      privateTickerEnabled?: boolean;
+      privateTickerMode?: "HOLDINGS" | "WATCHLIST";
       social?: Partial<UserProfileSnapshot["social"]>;
     },
     successText: string,
@@ -436,15 +482,150 @@ export default function SettingsView({
                       />
                     </label>
 
+                    <div className="x1-form-grid">
+                      <label>
+                        Gender symbol (optional · hidden by default)
+                        <select
+                          value={genderSymbol}
+                          onChange={(e) =>
+                            setGenderSymbol(e.target.value as GenderSymbolOption)
+                          }
+                        >
+                          <option value="HIDDEN">Hidden (Default)</option>
+                          <option value="MALE">Male (♂)</option>
+                          <option value="FEMALE">Female (♀)</option>
+                        </select>
+                      </label>
+                      <label>
+                        Instagram handle (optional)
+                        <input
+                          value={instagramHandle}
+                          maxLength={32}
+                          onChange={(e) => setInstagramHandle(e.target.value)}
+                          placeholder="username (without @)"
+                        />
+                      </label>
+                      <label>
+                        Website / research URL (optional)
+                        <input
+                          type="url"
+                          value={websiteUrl}
+                          maxLength={200}
+                          onChange={(e) => setWebsiteUrl(e.target.value)}
+                          placeholder="https://example.com"
+                        />
+                      </label>
+                      <label>
+                        Research interests (comma-separated, max 6)
+                        <input
+                          value={interestsText}
+                          maxLength={180}
+                          onChange={(e) => setInterestsText(e.target.value)}
+                          placeholder="Macro, Indian Equities, Volatility, FX"
+                        />
+                      </label>
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <span className="x1-caption">
+                        Profile Banner (8 Obsidian presets · R2 image upload gated until configured)
+                      </span>
+                      <div className="x51-backdrop-swatches">
+                        {BANNER_PRESETS.map((b) => (
+                          <button
+                            key={b.id}
+                            type="button"
+                            className={
+                              "x51-backdrop-swatch" +
+                              (bannerPresetId === b.id ? " is-active" : "")
+                            }
+                            style={{ background: b.gradient }}
+                            onClick={() => setBannerPresetId(b.id)}
+                          >
+                            {b.name}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="x1-form-grid">
+                        <label>
+                          Banner alignment
+                          <select
+                            value={bannerPosition}
+                            onChange={(e) =>
+                              setBannerPosition(e.target.value as BannerPosition)
+                            }
+                          >
+                            <option value="top">Top</option>
+                            <option value="center">Center</option>
+                            <option value="bottom">Bottom</option>
+                          </select>
+                        </label>
+                        <label>
+                          Custom banner upload (R2-gated)
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              setBannerUploadMsg("");
+                              const fd = new FormData();
+                              fd.append("file", file);
+                              fd.append("purpose", "profile-banner");
+                              try {
+                                const r = await fetch("/api/media/upload", {
+                                  method: "POST",
+                                  body: fd,
+                                });
+                                const j = (await r.json()) as { error?: string };
+                                setBannerUploadMsg(
+                                  r.ok
+                                    ? "Banner uploaded."
+                                    : j.error ||
+                                        "Object storage (R2) is not configured yet. Use one of the 8 Obsidian banners above.",
+                                );
+                              } catch {
+                                setBannerUploadMsg(
+                                  "Upload unavailable. Use one of the 8 Obsidian banners above.",
+                                );
+                              }
+                            }}
+                          />
+                        </label>
+                      </div>
+                      {bannerUploadMsg && (
+                        <p className="x1-caption" role="status" style={{ margin: 0 }}>
+                          {bannerUploadMsg}
+                        </p>
+                      )}
+                    </div>
+
                     <div className="x6-community-preview-box">
                       <span className="x1-kicker">Community preview</span>
+                      <div
+                        style={{
+                          height: 54,
+                          borderRadius: 8,
+                          marginBottom: 8,
+                          background: resolveBannerPreset(bannerPresetId).gradient,
+                          backgroundPosition: bannerPosition,
+                        }}
+                        aria-hidden="true"
+                      />
                       <div className="x6-preview-row">
                         <AvatarBadge avatarId={profile.avatarId} size={42} ring alt="" />
                         <div>
-                          <strong>{displayName || profile.displayName}</strong>
+                          <strong>
+                            {displayName || profile.displayName}
+                            {genderSymbol === "MALE"
+                              ? " ♂"
+                              : genderSymbol === "FEMALE"
+                                ? " ♀"
+                                : ""}
+                          </strong>
                           <small>
-                            {handle ? `@${handle}` : "@handle_not_set"} ·{" "}
-                            {profile.social.discoverable ? "Discoverable" : "Private"}
+                            {handle ? `@${handle}` : "@BodyID_not_set"} ·{" "}
+                            {profile.social.discoverable ? "Discoverable" : "Private"} · Portfolio hidden
                           </small>
                         </div>
                       </div>
@@ -544,12 +725,41 @@ export default function SettingsView({
 
                   <div className="x6-setting-row">
                     <div>
-                      <strong>SS Earth graphics budget</strong>
+                      <strong>Private Holdings Ticker (opt-in)</strong>
+                      <p className="x1-caption">
+                        OFF by default. Streams ONLY your private manual holdings or watchlist across dashboards; never visible to guests or public profiles.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="x1-secondary"
+                      role="switch"
+                      aria-checked={!!profile.preferences.privateTickerEnabled}
+                      disabled={busy}
+                      onClick={() =>
+                        void savePreferences(
+                          {
+                            privateTickerEnabled:
+                              !profile.preferences.privateTickerEnabled,
+                          },
+                          !profile.preferences.privateTickerEnabled
+                            ? "Private Holdings Ticker enabled."
+                            : "Private Holdings Ticker hidden.",
+                        )
+                      }
+                    >
+                      {profile.preferences.privateTickerEnabled ? "On" : "Off"}
+                    </button>
+                  </div>
+
+                  <div className="x6-setting-row">
+                    <div>
+                      <strong>Strategic Globe graphics budget</strong>
                       <p className="x1-caption">
                         Adapts 3D globe texture resolution and pixel ratio for smoother battery life on mobile devices.
                       </p>
                     </div>
-                    <div className="x1-segment" role="group" aria-label="SS Earth graphics quality">
+                    <div className="x1-segment" role="group" aria-label="Strategic Globe graphics quality">
                       {(
                         [
                           ["auto", "Auto"],
@@ -565,7 +775,7 @@ export default function SettingsView({
                           onClick={() =>
                             void savePreferences(
                               { earthQuality: val },
-                              `Earth graphics preference saved (${label}).`,
+                              `Strategic Globe graphics preference saved (${label}).`,
                             )
                           }
                         >

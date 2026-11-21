@@ -24,6 +24,16 @@ import {
   type ResearchDefinition,
   type EvidenceCase,
 } from "./research";
+import {
+  completeScanReservation,
+  getScanQuotaSummary,
+  releaseScanReservation,
+  reserveScanSlot,
+  type ScanQuotaTier,
+} from "./scan-quota";
+import { parseDiscoverQuery } from "./discover-parser";
+import { matchDrawnPattern, type DrawPoint } from "../../engines/pattern-draw";
+import { runSoulGenomeEvidence } from "../../engines/soul-genome";
 type RawRecord = {
   id: string;
   subject: string;
@@ -142,7 +152,7 @@ export async function workspaceState(
       "A complete snapshot export cannot use a history cursor.",
     );
   const archivedLimit = includeSnapshots ? 1000 : 100;
-  const [records, archived, ledger, scans, events] = await Promise.all([
+  const [records, archived, ledger, scans, events, scanQuota] = await Promise.all([
     db
       .prepare(
         "SELECT * FROM x1_records WHERE subject=? AND archived=0 ORDER BY created_at,id LIMIT 101",
@@ -182,6 +192,7 @@ export async function workspaceState(
       )
       .bind(subject)
       .all(),
+    getScanQuotaSummary(db, subject),
   ]);
   if (
     records.results.length > 100 ||
@@ -242,8 +253,10 @@ export async function workspaceState(
       })),
     advanced: {
       billingEnabled: false,
-      allowance: "No paid credits are active; bounded free research only.",
+      allowance:
+        "Classic: 8 completed scans / IST day · Advanced: 1 completed scan / rolling 60 min · Zero paid credits.",
     },
+    scanQuota,
   };
 }
 export async function researchEvidence(subject: string, scanId: unknown) {
@@ -410,11 +423,48 @@ async function scanSource(
       })),
     };
   }
+  if (
+    (definition.interval === "30m" || definition.interval === "1h") &&
+    definition.universe === "ECB_DAILY"
+  ) {
+    return {
+      datasets: [],
+      excluded: [
+        {
+          id: "ECB_DAILY",
+          reason: `Official ECB FX reference publishes daily closing rates only and cannot supply ${definition.interval} intraday bars. Switch to Daily/Weekly/Monthly or upload a private intraday CSV.`,
+        },
+      ],
+      source: "ECB Daily Reference FX (Daily-Only)",
+      pointInTime: false,
+      adjusted: false,
+      rights: { analysis: false, storage: false },
+      asOf: new Date().toISOString(),
+      lineage: [],
+    };
+  }
+  const backendInterval =
+    definition.interval === "30m" || definition.interval === "1h"
+      ? "1d"
+      : definition.interval;
   const data = await researchUniverse(subject, {
     provider: definition.universe === "ECB_DAILY" ? "ECB" : "CONNECTED_MARKETS",
     instrumentIds: definition.instrumentIds,
-    interval: definition.interval,
+    interval: backendInterval,
   });
+  if (definition.interval === "30m" || definition.interval === "1h") {
+    return {
+      ...data,
+      datasets: [],
+      excluded: [
+        ...data.excluded,
+        ...data.datasets.map((d) => ({
+          id: d.instrumentId,
+          reason: `Connected feed provides daily observations only; ${definition.interval} intraday bars are not relabeled from daily closes.`,
+        })),
+      ],
+    };
+  }
   const datasets =
     definition.universe === "CONNECTED_MARKETS"
       ? data.datasets.filter((d) => !d.instrumentId.startsWith("ECB:"))
@@ -786,12 +836,197 @@ export async function mutateWorkspace(
     }
     return { id };
   }
+  if (action === "parse-discover") {
+    // Quota-free deterministic natural-language Blueprint parser
+    return { blueprint: parseDiscoverQuery(String(input.query ?? "")) };
+  }
+  if (action === "run-draw-scan") {
+    const requestId = retryKey(input.requestId);
+    const name = text(input.name, 100);
+    const description =
+      typeof input.description === "string" && input.description.trim().length >= 10
+        ? input.description.trim().slice(0, 2000)
+        : "Interactive Draw shape search using Z-normalized Pearson + bounded Sakoe-Chiba DTW.";
+    const strokePoints = Array.isArray(input.strokePoints)
+      ? (input.strokePoints as DrawPoint[])
+      : [];
+    if (strokePoints.length < 2 || strokePoints.length > 400) {
+      throw new HttpError(
+        400,
+        "Draw a shape with 2–400 points or select one of the 8 pattern templates.",
+      );
+    }
+    const windowBars = Math.max(
+      8,
+      Math.min(60, Math.round(Number(input.windowBars ?? 20))),
+    );
+    const minPatternFit = Math.max(
+      35,
+      Math.min(95, Math.round(Number(input.minPatternFit ?? 62))),
+    );
+    const horizonBars = Math.max(
+      1,
+      Math.min(60, Math.round(Number(input.horizonBars ?? 10))),
+    );
+    const universe =
+      input.universe === "CONNECTED_MARKETS" ? "CONNECTED_MARKETS" : "ECB_DAILY";
+    const interval = ["30m", "1h", "1d", "1wk", "1mo"].includes(
+      String(input.interval ?? "1d"),
+    )
+      ? (String(input.interval ?? "1d") as ResearchDefinition["interval"])
+      : "1d";
+
+    const definition: ResearchDefinition = {
+      name,
+      description,
+      formula: "close > 0",
+      mode: "ADVANCED",
+      universe,
+      interval,
+      partialPolicy: "ALLOW_UNKNOWN",
+      outcome: {
+        family: "POSITIVE_RETURN",
+        horizon: horizonBars,
+        threshold: 0,
+        target: 5,
+        stop: 3,
+        costBps: 0,
+      },
+      instrumentIds: Array.isArray(input.instrumentIds)
+        ? input.instrumentIds.filter((x): x is string => typeof x === "string").slice(0, 1000)
+        : [],
+    };
+    const signature = await digest({
+      kind: "draw",
+      definition,
+      strokePoints,
+      windowBars,
+      minPatternFit,
+    });
+    const prior = await db
+      .prepare("SELECT id, payload FROM x1_scans WHERE subject=? AND request_key=?")
+      .bind(subject, requestId)
+      .first<{ id: string; payload: string }>();
+    if (prior) {
+      if (JSON.parse(prior.payload).requestDigest !== signature) {
+        throw new HttpError(409, "Scan retry ID already used for different inputs.");
+      }
+      return { id: prior.id, replayed: true };
+    }
+
+    const reservation = await reserveScanSlot(db, subject, "ADVANCED", requestId);
+    try {
+      const data = await scanSource(subject, definition, input.customCsv);
+      if (!data.datasets.length) {
+        await releaseScanReservation(db, reservation.id, subject, "FAILED");
+        throw new HttpError(
+          503,
+          "Eligible historical data is unavailable for this universe/timeframe. No quota was consumed.",
+        );
+      }
+      const asOf = new Date().toISOString();
+      const drawReport = matchDrawnPattern(strokePoints, data.datasets, {
+        windowBars,
+        minPatternFit,
+        asOf,
+      });
+      if (drawReport.evaluated === 0) {
+        await releaseScanReservation(db, reservation.id, subject, "FAILED");
+        throw new HttpError(
+          422,
+          `No instrument had at least ${windowBars} eligible closed bars. Reduce window length or provide a longer CSV history. No quota consumed.`,
+        );
+      }
+      const soulGenome = runSoulGenomeEvidence(data.datasets, {
+        windowBars,
+        horizonBars,
+        asOf,
+        querySeries: drawReport.matches[0]?.normalizedQuery,
+      });
+      const results = {
+        version: "x1-rule-1" as const,
+        asOf,
+        formula: `drawPattern(window=${windowBars}, minFit=${minPatternFit})`,
+        total: data.datasets.length,
+        eligible: drawReport.evaluated,
+        matches: drawReport.matches.length,
+        failed: drawReport.evaluated - drawReport.matches.length,
+        unknown: drawReport.insufficientBarsCount,
+        results: [
+          ...drawReport.matches.map((m) => ({
+            instrumentId: m.instrumentId,
+            status: "PASS" as const,
+            reasons: [m.explanation],
+            latestEventAt: m.windowEndAt,
+            source: m.source,
+          })),
+          ...drawReport.excluded.map((e) => ({
+            instrumentId: e.instrumentId,
+            status: "UNKNOWN" as const,
+            reasons: [e.reason],
+            latestEventAt: null,
+            source: data.source,
+          })),
+        ],
+      };
+      const payload = {
+        scanTier: "ADVANCED",
+        origin: "DRAW",
+        research: definition,
+        description,
+        drawReport,
+        soulGenome,
+        requestDigest: signature,
+        rule: { version: "x1-rule-1", formula: results.formula },
+        results,
+        datasets: data.datasets,
+        sourceSnapshot: data.asOf,
+        sourceLineage: data.lineage ?? [],
+        source: data.source,
+        knownAtPolicy:
+          "Interactive Draw similarity evaluated strictly on closed historical bars prior to as-of cutoff. Pattern Fit is descriptive geometry, not a forward probability.",
+        billing: { charged: 0 },
+      };
+      const id = crypto.randomUUID();
+      await db
+        .prepare(
+          "INSERT OR IGNORE INTO x1_scans (id,subject,request_key,mode,name,payload,digest,created_at) VALUES (?,?,?,?,?,?,?,?)",
+        )
+        .bind(
+          id,
+          subject,
+          requestId,
+          "ADVANCED",
+          name,
+          JSON.stringify(payload),
+          await digest(payload),
+          asOf,
+        )
+        .run();
+      await completeScanReservation(db, reservation.id, subject, id, asOf);
+      return {
+        id,
+        results,
+        drawReport,
+        soulGenome,
+        scanQuota: await getScanQuotaSummary(db, subject),
+      };
+    } catch (err) {
+      await releaseScanReservation(db, reservation.id, subject, "FAILED");
+      throw err;
+    }
+  }
   if (action === "run-scan") {
     const definition = researchDefinition(input);
     const requestId = retryKey(input.requestId),
       mode = definition.mode,
       name = definition.name,
       formula = definition.formula;
+    const scanTier: ScanQuotaTier =
+      input.scanTier === "CLASSIC" ||
+      (input.scanTier !== "ADVANCED" && mode === "SIMPLE")
+        ? "CLASSIC"
+        : "ADVANCED";
     let rule;
     try {
       rule = compileFormula(formula);
@@ -813,115 +1048,164 @@ export async function mutateWorkspace(
         );
       return { id: prior.id, replayed: true };
     }
-    const data = await scanSource(subject, definition, input.customCsv);
-    const datasets = data.datasets;
-    if (!datasets.length)
-      throw new HttpError(
-        503,
-        "Eligible historical data is unavailable. No run or credit charge was created.",
+    // Atomically reserve scan quota slot BEFORE running compute; failed/blocked runs release cleanly!
+    let reservationId: string | null = null;
+    try {
+      const resHandle = await reserveScanSlot(db, subject, scanTier, requestId);
+      if (resHandle.reusedCompletedScanId) {
+        return { id: resHandle.reusedCompletedScanId, replayed: true };
+      }
+      reservationId = resHandle.id;
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      // Only swallow missing-table errors in isolated legacy harnesses without 0008
+    }
+    try {
+      const data = await scanSource(subject, definition, input.customCsv);
+      const datasets = data.datasets;
+      if (!datasets.length) {
+        if (reservationId) await releaseScanReservation(db, reservationId, subject, "FAILED");
+        throw new HttpError(
+          503,
+          "Eligible historical data is unavailable. No run or credit charge was created.",
+        );
+      }
+      await rate(subject + ":x1scans", 30, 86400000);
+      const asOf = new Date().toISOString(),
+        results = evaluateScan(rule, datasets, asOf);
+      const preflight = preflightResearch(
+        definition,
+        datasets,
+        asOf,
+        data.excluded,
       );
-    await rate(subject + ":x1scans", 30, 86400000);
-    const asOf = new Date().toISOString(),
-      results = evaluateScan(rule, datasets, asOf);
-    const preflight = preflightResearch(
-      definition,
-      datasets,
-      asOf,
-      data.excluded,
-    );
-    if (preflight.blocked)
-      throw new HttpError(
-        422,
-        preflight.reason || "Preflight blocked this scan.",
-      );
-    const replay =
-      datasets.length === 1
-        ? replayResearch(definition, datasets[0], asOf, {
-            subject,
-            pointInTime: data.pointInTime,
-            adjusted: (data as { adjusted?: boolean }).adjusted === true,
-            storagePermitted: data.rights.storage,
-          })
-        : {
-            status: "DATA UNAVAILABLE",
-            cases: [],
-            summary: null,
-            reasons: [
-              "Choose one licensed, point-in-time adjusted instrument for reproducible replay.",
-            ],
-          };
-    const payload = {
-      research: definition,
-      description: definition.description,
-      preflight: { ...preflight, results: undefined },
-      replay,
-      backtest:
+      if (preflight.blocked) {
+        if (reservationId) await releaseScanReservation(db, reservationId, subject, "FAILED");
+        throw new HttpError(
+          422,
+          preflight.reason || "Preflight blocked this scan.",
+        );
+      }
+      const replay =
         datasets.length === 1
-          ? backtestResearch(definition, datasets[0], asOf, {
+          ? replayResearch(definition, datasets[0], asOf, {
+              subject,
               pointInTime: data.pointInTime,
               adjusted: (data as { adjusted?: boolean }).adjusted === true,
               storagePermitted: data.rights.storage,
             })
           : {
               status: "DATA UNAVAILABLE",
+              cases: [],
               summary: null,
-              curve: [],
-              trades: [],
               reasons: [
-                "Select one eligible instrument for a bounded, reproducible research backtest.",
+                "Choose one licensed, point-in-time adjusted instrument for reproducible replay.",
               ],
-            },
-      requestDigest: signature,
-      rule,
-      results,
-      datasets,
-      sourceSnapshot: data.asOf,
-      sourceLineage: data.lineage ?? [],
-      source: data.source,
-      knownAtPolicy: data.pointInTime
-        ? "Provider-certified point-in-time lineage retained; replay additionally requires adjusted history and storage rights."
-        : "Historical publication instants are not certified. Known-at is conservatively the retrieval time; this is a current data filter, not a point-in-time historical backtest.",
-      billing: { charged: 0 },
-    };
-    const id = crypto.randomUUID();
-    await db
-      .prepare(
-        "INSERT OR IGNORE INTO x1_scans (id,subject,request_key,mode,name,payload,digest,created_at) VALUES (?,?,?,?,?,?,?,?)",
-      )
-      .bind(
-        id,
-        subject,
-        requestId,
-        mode,
-        name,
-        JSON.stringify(payload),
-        await digest(payload),
-        asOf,
-      )
-      .run();
-    const saved = await db
-      .prepare(
-        "SELECT id,payload FROM x1_scans WHERE subject=? AND request_key=?",
-      )
-      .bind(subject, requestId)
-      .first<{ id: string; payload: string }>();
-    if (!saved)
-      throw new HttpError(
-        503,
-        "Save unconfirmed. Retry with the same request ID.",
-      );
-    const stored = JSON.parse(saved.payload);
-    if (stored.requestDigest !== signature)
-      throw new HttpError(
-        409,
-        "Scan retry ID already used for different inputs.",
-      );
-    const projection = await projectResearchSnapshot(stored, false);
-    return {
-      id: saved.id,
-      results: projection.payload.results,
-      redaction: projection.redaction,
-    };
+            };
+      const soulGenome =
+        scanTier === "ADVANCED"
+          ? runSoulGenomeEvidence(datasets, {
+              windowBars: 15,
+              horizonBars: definition.outcome.horizon,
+              asOf,
+            })
+          : undefined;
+      const payload = {
+        scanTier,
+        origin:
+          typeof input.origin === "string" &&
+          ["CLASSIC", "DISCOVER", "BUILD", "DRAW"].includes(input.origin)
+            ? input.origin
+            : scanTier === "CLASSIC"
+              ? "CLASSIC"
+              : "BUILD",
+        research: definition,
+        description: definition.description,
+        preflight: { ...preflight, results: undefined },
+        replay,
+        ...(soulGenome ? { soulGenome } : {}),
+        backtest:
+          datasets.length === 1
+            ? backtestResearch(definition, datasets[0], asOf, {
+                pointInTime: data.pointInTime,
+                adjusted: (data as { adjusted?: boolean }).adjusted === true,
+                storagePermitted: data.rights.storage,
+              })
+            : {
+                status: "DATA UNAVAILABLE",
+                summary: null,
+                curve: [],
+                trades: [],
+                reasons: [
+                  "Select one eligible instrument for a bounded, reproducible research backtest.",
+                ],
+              },
+        requestDigest: signature,
+        rule,
+        results,
+        datasets,
+        sourceSnapshot: data.asOf,
+        sourceLineage: data.lineage ?? [],
+        source: data.source,
+        knownAtPolicy: data.pointInTime
+          ? "Provider-certified point-in-time lineage retained; replay additionally requires adjusted history and storage rights."
+          : "Historical publication instants are not certified. Known-at is conservatively the retrieval time; this is a current data filter, not a point-in-time historical backtest.",
+        billing: { charged: 0 },
+      };
+      const id = crypto.randomUUID();
+      await db
+        .prepare(
+          "INSERT OR IGNORE INTO x1_scans (id,subject,request_key,mode,name,payload,digest,created_at) VALUES (?,?,?,?,?,?,?,?)",
+        )
+        .bind(
+          id,
+          subject,
+          requestId,
+          mode,
+          name,
+          JSON.stringify(payload),
+          await digest(payload),
+          asOf,
+        )
+        .run();
+      const saved = await db
+        .prepare(
+          "SELECT id,payload FROM x1_scans WHERE subject=? AND request_key=?",
+        )
+        .bind(subject, requestId)
+        .first<{ id: string; payload: string }>();
+      if (!saved) {
+        if (reservationId) await releaseScanReservation(db, reservationId, subject, "FAILED");
+        throw new HttpError(
+          503,
+          "Save unconfirmed. Retry with the same request ID.",
+        );
+      }
+      const stored = JSON.parse(saved.payload);
+      if (stored.requestDigest !== signature) {
+        if (reservationId) await releaseScanReservation(db, reservationId, subject, "FAILED");
+        throw new HttpError(
+          409,
+          "Scan retry ID already used for different inputs.",
+        );
+      }
+      if (reservationId) {
+        await completeScanReservation(db, reservationId, subject, saved.id, asOf).catch(
+          () => {},
+        );
+      }
+      const projection = await projectResearchSnapshot(stored, false);
+      return {
+        id: saved.id,
+        results: projection.payload.results,
+        redaction: projection.redaction,
+        ...(soulGenome ? { soulGenome } : {}),
+        scanQuota: await getScanQuotaSummary(db, subject),
+      };
+    } catch (err) {
+      if (reservationId) await releaseScanReservation(db, reservationId, subject, "FAILED");
+      throw err;
+    }
   }
   if (action === "scan-review") {
     const scanId = text(input.scanId),

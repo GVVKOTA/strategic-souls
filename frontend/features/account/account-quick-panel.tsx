@@ -31,6 +31,9 @@ type Props = {
   displayName?: string | null;
   handle?: string | null;
   avatarId?: string | null;
+  genderSymbol?: "MALE" | "FEMALE" | "HIDDEN";
+  instagramHandle?: string;
+  counts?: { followers: number; following: number; publishedSouls: number };
   discoverable?: boolean;
   unreadNotifications?: number;
   motionPref: "system" | "minimal" | "full";
@@ -56,6 +59,9 @@ export default function AccountQuickPanel({
   displayName,
   handle,
   avatarId,
+  genderSymbol = "HIDDEN",
+  instagramHandle = "",
+  counts,
   discoverable,
   unreadNotifications = 0,
   motionPref,
@@ -128,15 +134,48 @@ export default function AccountQuickPanel({
                 alt={`${displayName || "Researcher"} avatar`}
               />
               <div className="x6-quick-identity">
-                <strong>{displayName || "Researcher"}</strong>
+                <strong>
+                  {displayName || "Researcher"}
+                  {genderSymbol === "MALE" ? " ♂" : genderSymbol === "FEMALE" ? " ♀" : ""}
+                </strong>
                 <span className="x6-quick-handle">
-                  {handle ? `@${handle}` : "No @handle set yet"}
+                  {handle ? `@${handle}` : "No @BodyID set yet"}
                 </span>
                 <span className="x6-quick-status">
-                  {discoverable ? "Discoverable profile" : "Private profile"}
+                  {discoverable ? "Discoverable profile" : "Private profile"} · Portfolio hidden
                 </span>
               </div>
             </div>
+
+            {counts && (
+              <div
+                className="x51-profile-stats"
+                style={{
+                  borderTop: "1px solid var(--x51-hairline)",
+                  borderBottom: "1px solid var(--x51-hairline)",
+                  margin: "6px 0",
+                }}
+              >
+                <div>
+                  <strong>{counts.followers}</strong>
+                  <span>Followers</span>
+                </div>
+                <div>
+                  <strong>{counts.following}</strong>
+                  <span>Following</span>
+                </div>
+                <div>
+                  <strong>{counts.publishedSouls}</strong>
+                  <span>Souls</span>
+                </div>
+              </div>
+            )}
+
+            {instagramHandle && (
+              <p className="x1-caption" style={{ margin: "2px 0 6px", textAlign: "center" }}>
+                IG: @{instagramHandle}
+              </p>
+            )}
 
             <div className="x6-quick-shortcuts" role="group" aria-label="Quick shortcuts">
               <button

@@ -19,10 +19,27 @@ export type AuthSessionResponse = {
     bio?: string;
     discoverable?: boolean;
     unreadNotifications?: number;
+    genderSymbol?: "MALE" | "FEMALE" | "HIDDEN";
+    instagramHandle?: string;
+    bannerPresetId?: string;
+    portfolioBackdrop?: {
+      presetId: string;
+      position: "top" | "center" | "bottom";
+      overlay: number;
+      blur: number;
+    };
+    defaultPostAudience?: "PUBLIC" | "FOLLOWERS" | "GROUP";
+    counts?: {
+      followers: number;
+      following: number;
+      publishedSouls: number;
+    };
     preferences?: {
       motion: "system" | "minimal" | "full";
       density: "comfortable" | "compact";
       earthQuality: "auto" | "balanced" | "reduced";
+      privateTickerEnabled?: boolean;
+      privateTickerMode?: "HOLDINGS" | "WATCHLIST";
     };
   } | null;
 };

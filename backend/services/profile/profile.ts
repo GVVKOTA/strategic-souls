@@ -6,6 +6,48 @@ import {
   isValidAvatarPresetId,
   normalizeAvatarId,
 } from "./avatars";
+import {
+  DEFAULT_BANNER_ID,
+  isValidBannerPresetId,
+  resolveBannerPreset,
+} from "./banners";
+
+async function getSocialCounts(subject: string): Promise<{
+  followers: number;
+  following: number;
+  publishedSouls: number;
+}> {
+  const db = database();
+  try {
+    const [followersRow, followingRow, soulsRow] = await Promise.all([
+      db
+        .prepare(
+          "SELECT count(*) AS n FROM x51_follows WHERE target_subject=? AND state='ACTIVE'",
+        )
+        .bind(subject)
+        .first<{ n: number }>(),
+      db
+        .prepare(
+          "SELECT count(*) AS n FROM x51_follows WHERE follower_subject=? AND state='ACTIVE'",
+        )
+        .bind(subject)
+        .first<{ n: number }>(),
+      db
+        .prepare(
+          "SELECT count(*) AS n FROM x51_web_souls WHERE author_subject=? AND deleted_at IS NULL",
+        )
+        .bind(subject)
+        .first<{ n: number }>(),
+    ]);
+    return {
+      followers: Number(followersRow?.n ?? 0),
+      following: Number(followingRow?.n ?? 0),
+      publishedSouls: Number(soulsRow?.n ?? 0),
+    };
+  } catch {
+    return { followers: 0, following: 0, publishedSouls: 0 };
+  }
+}
 
 const CONSENT_VERSION = "2026-11-14-v4";
 const PROFILE_RECORD_KIND = "account-profile";
@@ -13,16 +55,36 @@ const PROFILE_RECORD_KIND = "account-profile";
 export type MotionPreference = "system" | "minimal" | "full";
 export type DensityPreference = "comfortable" | "compact";
 export type EarthQualityPreference = "auto" | "balanced" | "reduced";
+export type GenderSymbolOption = "MALE" | "FEMALE" | "HIDDEN";
+export type BannerPosition = "top" | "center" | "bottom";
+
+export type PortfolioBackdropSettings = {
+  presetId: string;
+  position: BannerPosition;
+  overlay: number;
+  blur: number;
+};
 
 export type UiPreferences = {
   motion: MotionPreference;
   density: DensityPreference;
   earthQuality: EarthQualityPreference;
+  privateTickerEnabled?: boolean;
+  privateTickerMode?: "HOLDINGS" | "WATCHLIST";
 };
 
 export type StoredProfileRecord = {
   avatarKind: "preset";
   avatarPresetId: string;
+  bannerPresetId?: string;
+  bannerPosition?: BannerPosition;
+  bannerOverlay?: number;
+  genderSymbol?: GenderSymbolOption;
+  instagramHandle?: string;
+  websiteUrl?: string;
+  researchInterests?: string[];
+  portfolioBackdrop?: PortfolioBackdropSettings;
+  defaultPostAudience?: "PUBLIC" | "FOLLOWERS" | "GROUP";
   preferences: UiPreferences;
   updatedAt: string;
 };
@@ -42,6 +104,20 @@ export type UserProfileSnapshot = {
   bio: string;
   avatarKind: "preset";
   avatarId: string;
+  bannerPresetId: string;
+  bannerPosition: BannerPosition;
+  bannerOverlay: number;
+  genderSymbol: GenderSymbolOption;
+  instagramHandle: string;
+  websiteUrl: string;
+  researchInterests: string[];
+  portfolioBackdrop: PortfolioBackdropSettings;
+  defaultPostAudience: "PUBLIC" | "FOLLOWERS" | "GROUP";
+  counts: {
+    followers: number;
+    following: number;
+    publishedSouls: number;
+  };
   hasCommunityProfile: boolean;
   preferences: UiPreferences;
   social: SocialSettingsSnapshot;
@@ -57,10 +133,19 @@ export type UserProfileSnapshot = {
   updatedAt: string | null;
 };
 
+export const DEFAULT_PORTFOLIO_BACKDROP: PortfolioBackdropSettings = {
+  presetId: DEFAULT_BANNER_ID,
+  position: "center",
+  overlay: 0.72,
+  blur: 4,
+};
+
 export const DEFAULT_UI_PREFERENCES: UiPreferences = {
   motion: "system",
   density: "comfortable",
   earthQuality: "auto",
+  privateTickerEnabled: false,
+  privateTickerMode: "HOLDINGS",
 };
 
 const DEFAULT_SOCIAL: SocialSettingsSnapshot = {
@@ -81,7 +166,87 @@ function parsePreferences(raw: unknown): UiPreferences {
     obj.earthQuality === "balanced" || obj.earthQuality === "reduced"
       ? obj.earthQuality
       : "auto";
-  return { motion, density, earthQuality };
+  const privateTickerEnabled = obj.privateTickerEnabled === true;
+  const privateTickerMode =
+    obj.privateTickerMode === "WATCHLIST" ? "WATCHLIST" : "HOLDINGS";
+  return {
+    motion,
+    density,
+    earthQuality,
+    privateTickerEnabled,
+    privateTickerMode,
+  };
+}
+
+function parseGenderSymbol(raw: unknown): GenderSymbolOption {
+  return raw === "MALE" || raw === "FEMALE" ? raw : "HIDDEN";
+}
+
+function parseBannerPosition(raw: unknown): BannerPosition {
+  return raw === "top" || raw === "bottom" ? raw : "center";
+}
+
+function sanitizeInstagram(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const cleaned = raw.trim().replace(/^@/, "");
+  if (!cleaned) return "";
+  if (!/^[A-Za-z0-9._]{1,30}$/.test(cleaned)) {
+    throw new HttpError(
+      400,
+      "Instagram handle may contain 1–30 letters, numbers, dots, or underscores.",
+    );
+  }
+  return cleaned;
+}
+
+function sanitizeWebsite(raw: unknown): string {
+  if (typeof raw !== "string" || !raw.trim()) return "";
+  const trimmed = raw.trim();
+  if (trimmed.length > 200) {
+    throw new HttpError(400, "Website URL must be 200 characters or fewer.");
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:") {
+      throw new Error("HTTPS required");
+    }
+    return parsed.toString();
+  } catch {
+    throw new HttpError(400, "Website link must be a valid https:// URL.");
+  }
+}
+
+function sanitizeInterests(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return [
+    ...new Set(
+      raw
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.trim().slice(0, 28))
+        .filter((x) => x.length >= 2),
+    ),
+  ].slice(0, 6);
+}
+
+function parsePortfolioBackdrop(raw: unknown): PortfolioBackdropSettings {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_PORTFOLIO_BACKDROP };
+  const o = raw as Record<string, unknown>;
+  const overlay =
+    typeof o.overlay === "number" && Number.isFinite(o.overlay)
+      ? Math.max(0.4, Math.min(0.92, o.overlay))
+      : DEFAULT_PORTFOLIO_BACKDROP.overlay;
+  const blur =
+    typeof o.blur === "number" && Number.isFinite(o.blur)
+      ? Math.max(0, Math.min(16, Math.round(o.blur)))
+      : DEFAULT_PORTFOLIO_BACKDROP.blur;
+  return {
+    presetId: resolveBannerPreset(
+      typeof o.presetId === "string" ? o.presetId : null,
+    ).id,
+    position: parseBannerPosition(o.position),
+    overlay,
+    blur,
+  };
 }
 
 function profileRecordId(subject: string): string {
@@ -103,6 +268,27 @@ async function readStoredProfileRecord(
     return {
       avatarKind: "preset",
       avatarPresetId: normalizeAvatarId(parsed.avatarPresetId),
+      bannerPresetId: resolveBannerPreset(
+        typeof parsed.bannerPresetId === "string" ? parsed.bannerPresetId : null,
+      ).id,
+      bannerPosition: parseBannerPosition(parsed.bannerPosition),
+      bannerOverlay:
+        typeof parsed.bannerOverlay === "number" &&
+        Number.isFinite(parsed.bannerOverlay)
+          ? Math.max(0.35, Math.min(0.92, parsed.bannerOverlay))
+          : 0.65,
+      genderSymbol: parseGenderSymbol(parsed.genderSymbol),
+      instagramHandle:
+        typeof parsed.instagramHandle === "string" ? parsed.instagramHandle : "",
+      websiteUrl:
+        typeof parsed.websiteUrl === "string" ? parsed.websiteUrl : "",
+      researchInterests: sanitizeInterests(parsed.researchInterests),
+      portfolioBackdrop: parsePortfolioBackdrop(parsed.portfolioBackdrop),
+      defaultPostAudience:
+        parsed.defaultPostAudience === "FOLLOWERS" ||
+        parsed.defaultPostAudience === "GROUP"
+          ? parsed.defaultPostAudience
+          : "PUBLIC",
       preferences: parsePreferences(parsed.preferences),
       updatedAt:
         typeof parsed.updatedAt === "string" ? parsed.updatedAt : row.updated_at,
@@ -167,10 +353,16 @@ export async function getSessionProfileMeta(subject: string): Promise<{
   bio: string;
   discoverable: boolean;
   unreadNotifications: number;
+  genderSymbol: GenderSymbolOption;
+  instagramHandle: string;
+  bannerPresetId: string;
+  portfolioBackdrop: PortfolioBackdropSettings;
+  defaultPostAudience: "PUBLIC" | "FOLLOWERS" | "GROUP";
+  counts: { followers: number; following: number; publishedSouls: number };
   preferences: UiPreferences;
 }> {
   const db = database();
-  const [bodyRow, stored, prefsRow, unreadRow] = await Promise.all([
+  const [bodyRow, stored, prefsRow, unreadRow, counts] = await Promise.all([
     db
       .prepare("SELECT handle, bio, avatar FROM x1_bodies WHERE subject = ?")
       .bind(subject)
@@ -191,6 +383,7 @@ export async function getSessionProfileMeta(subject: string): Promise<{
       .bind(subject)
       .first<{ count: number }>()
       .catch(() => null),
+    getSocialCounts(subject),
   ]);
 
   // Prefer the dedicated account-profile preset when saved; fall back to x1_bodies.avatar, then default a01.
@@ -203,6 +396,13 @@ export async function getSessionProfileMeta(subject: string): Promise<{
     bio: bodyRow?.bio ?? "",
     discoverable: !!prefsRow?.discoverable,
     unreadNotifications: Number(unreadRow?.count ?? 0),
+    genderSymbol: stored?.genderSymbol ?? "HIDDEN",
+    instagramHandle: stored?.instagramHandle ?? "",
+    bannerPresetId: stored?.bannerPresetId ?? DEFAULT_BANNER_ID,
+    portfolioBackdrop:
+      stored?.portfolioBackdrop ?? { ...DEFAULT_PORTFOLIO_BACKDROP },
+    defaultPostAudience: stored?.defaultPostAudience ?? "PUBLIC",
+    counts,
     preferences: stored?.preferences ?? { ...DEFAULT_UI_PREFERENCES },
   };
 }
@@ -216,7 +416,7 @@ export async function getPrivateProfile(user: {
 }): Promise<UserProfileSnapshot> {
   const db = database();
   const subject = user.userId;
-  const [acc, bodyRow, stored, socialRow, notificationsRes, blockedRes] =
+  const [acc, bodyRow, stored, socialRow, notificationsRes, blockedRes, counts] =
     await Promise.all([
       account(subject).catch(() => null),
       db
@@ -265,6 +465,7 @@ export async function getPrivateProfile(user: {
         .bind(subject)
         .all<{ handle: string; displayName: string }>()
         .catch(() => ({ results: [] })),
+      getSocialCounts(subject),
     ]);
 
   const notifications = notificationsRes.results ?? [];
@@ -292,6 +493,17 @@ export async function getPrivateProfile(user: {
     bio: bodyRow?.bio ?? "",
     avatarKind: "preset",
     avatarId,
+    bannerPresetId: stored?.bannerPresetId ?? DEFAULT_BANNER_ID,
+    bannerPosition: stored?.bannerPosition ?? "center",
+    bannerOverlay: stored?.bannerOverlay ?? 0.65,
+    genderSymbol: stored?.genderSymbol ?? "HIDDEN",
+    instagramHandle: stored?.instagramHandle ?? "",
+    websiteUrl: stored?.websiteUrl ?? "",
+    researchInterests: stored?.researchInterests ?? [],
+    portfolioBackdrop:
+      stored?.portfolioBackdrop ?? { ...DEFAULT_PORTFOLIO_BACKDROP },
+    defaultPostAudience: stored?.defaultPostAudience ?? "PUBLIC",
+    counts,
     hasCommunityProfile: !!bodyRow,
     preferences: stored?.preferences ?? { ...DEFAULT_UI_PREFERENCES },
     social,
@@ -340,9 +552,14 @@ export async function mutatePrivateProfile(
     }
 
     const nextRecord: StoredProfileRecord = {
+      ...(existingRecord ?? {
+        avatarKind: "preset",
+        avatarPresetId: DEFAULT_AVATAR_ID,
+        preferences: { ...DEFAULT_UI_PREFERENCES },
+        updatedAt: now,
+      }),
       avatarKind: "preset",
       avatarPresetId: rawId,
-      preferences: existingRecord?.preferences ?? { ...DEFAULT_UI_PREFERENCES },
       updatedAt: now,
     };
 
@@ -442,10 +659,65 @@ export async function mutatePrivateProfile(
       }
     }
 
+    const nextBannerId =
+      input.bannerPresetId !== undefined
+        ? isValidBannerPresetId(input.bannerPresetId)
+          ? input.bannerPresetId.trim().toLowerCase()
+          : (() => {
+              throw new HttpError(
+                400,
+                "Choose a supported Strategic Souls banner preset (b01–b08).",
+              );
+            })()
+        : existingRecord?.bannerPresetId ?? DEFAULT_BANNER_ID;
+
+    const nextBannerPos =
+      input.bannerPosition !== undefined
+        ? parseBannerPosition(input.bannerPosition)
+        : existingRecord?.bannerPosition ?? "center";
+
+    const nextBannerOverlay =
+      typeof input.bannerOverlay === "number" &&
+      Number.isFinite(input.bannerOverlay)
+        ? Math.max(0.35, Math.min(0.92, input.bannerOverlay))
+        : existingRecord?.bannerOverlay ?? 0.65;
+
+    const nextGenderSymbol =
+      input.genderSymbol !== undefined
+        ? parseGenderSymbol(input.genderSymbol)
+        : existingRecord?.genderSymbol ?? "HIDDEN";
+
+    const nextInstagram =
+      input.instagramHandle !== undefined
+        ? sanitizeInstagram(input.instagramHandle)
+        : existingRecord?.instagramHandle ?? "";
+
+    const nextWebsite =
+      input.websiteUrl !== undefined
+        ? sanitizeWebsite(input.websiteUrl)
+        : existingRecord?.websiteUrl ?? "";
+
+    const nextInterests =
+      input.researchInterests !== undefined
+        ? sanitizeInterests(input.researchInterests)
+        : existingRecord?.researchInterests ?? [];
+
     await upsertStoredProfileRecord(subject, {
+      ...(existingRecord ?? {
+        avatarKind: "preset",
+        avatarPresetId: currentAvatarId,
+        preferences: { ...DEFAULT_UI_PREFERENCES },
+        updatedAt: now,
+      }),
       avatarKind: "preset",
       avatarPresetId: currentAvatarId,
-      preferences: existingRecord?.preferences ?? { ...DEFAULT_UI_PREFERENCES },
+      bannerPresetId: nextBannerId,
+      bannerPosition: nextBannerPos,
+      bannerOverlay: nextBannerOverlay,
+      genderSymbol: nextGenderSymbol,
+      instagramHandle: nextInstagram,
+      websiteUrl: nextWebsite,
+      researchInterests: nextInterests,
       updatedAt: now,
     });
 
@@ -460,11 +732,37 @@ export async function mutatePrivateProfile(
       ...(typeof input.earthQuality === "string"
         ? { earthQuality: input.earthQuality }
         : {}),
+      ...(typeof input.privateTickerEnabled === "boolean"
+        ? { privateTickerEnabled: input.privateTickerEnabled }
+        : {}),
+      ...(typeof input.privateTickerMode === "string"
+        ? { privateTickerMode: input.privateTickerMode }
+        : {}),
     });
 
+    const nextPortfolioBackdrop =
+      input.portfolioBackdrop !== undefined
+        ? parsePortfolioBackdrop(input.portfolioBackdrop)
+        : existingRecord?.portfolioBackdrop ?? { ...DEFAULT_PORTFOLIO_BACKDROP };
+
+    const nextAudience =
+      input.defaultPostAudience === "PUBLIC" ||
+      input.defaultPostAudience === "FOLLOWERS" ||
+      input.defaultPostAudience === "GROUP"
+        ? input.defaultPostAudience
+        : existingRecord?.defaultPostAudience ?? "PUBLIC";
+
     await upsertStoredProfileRecord(subject, {
+      ...(existingRecord ?? {
+        avatarKind: "preset",
+        avatarPresetId: DEFAULT_AVATAR_ID,
+        preferences: nextPrefs,
+        updatedAt: now,
+      }),
       avatarKind: "preset",
       avatarPresetId: existingRecord?.avatarPresetId ?? DEFAULT_AVATAR_ID,
+      portfolioBackdrop: nextPortfolioBackdrop,
+      defaultPostAudience: nextAudience,
       preferences: nextPrefs,
       updatedAt: now,
     });
