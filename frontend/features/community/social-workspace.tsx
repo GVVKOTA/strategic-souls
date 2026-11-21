@@ -13,6 +13,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { api, Empty, Modal, Panel, moment, type Notice } from "../../components/workspace/shared";
+import AvatarBadge from "../account/avatar-badge";
 
 export type SocialView =
   "Discover" | "Messages" | "Saved" | "Notifications" | "Privacy";
@@ -151,9 +152,7 @@ async function read<T>(
 function Identity({ body }: { body: Body }) {
   return (
     <span className="x2-social-identity">
-      <span aria-hidden="true" className="x2-social-avatar">
-        {body.displayName.slice(0, 2).toUpperCase()}
-      </span>
+      <AvatarBadge avatarId={body.avatar} size={36} ring alt="" />
       <span>
         <strong>{body.displayName}</strong>
         <small>@{body.handle}</small>
@@ -359,15 +358,15 @@ export function SocialWorkspace({
       )}
       {loading && <p role="status">Loading research network…</p>}
       {home && !home.body ? (
-        <Empty title="Create your Body profile first to search & connect">
-          Click &ldquo;Create your research profile (Body)&rdquo; above to choose
-          your @handle and display name. Member search requires an active Body,
-          and your profile remains private unless you opt into discovery.
+        <Empty title="Set a @handle in your Profile to search & connect">
+          Open Settings → Profile (or click Set up Profile above) to choose your
+          @handle and pick from 50 avatars. Your profile stays private unless you
+          opt into discovery.
         </Empty>
       ) : (
         <>
           {view === "Discover" && (
-            <Panel title="Discover People, Groups & Souls">
+            <Panel title="Search Researchers, Rooms & Shared Souls">
               <form
                 className="x2-social-search"
                 onSubmit={(e) => e.preventDefault()}
@@ -375,11 +374,11 @@ export function SocialWorkspace({
                 <label>
                   <Search size={17} />
                   <input
-                    aria-label="Search Bodies groups and Souls"
+                    aria-label="Search researchers, Research Rooms and Souls"
                     type="search"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search @handle, display name, group or Soul…"
+                    placeholder="Search @handle, display name, Research Room, or Soul…"
                     maxLength={80}
                   />
                 </label>
@@ -389,15 +388,15 @@ export function SocialWorkspace({
                   onChange={(e) => setKind(e.target.value)}
                 >
                   <option value="all">All research</option>
-                  <option value="bodies">People (@Bodies)</option>
-                  <option value="groups">Groups</option>
+                  <option value="bodies">Researchers (@handle)</option>
+                  <option value="groups">Research Rooms</option>
                   <option value="souls">Shared Souls</option>
                 </select>
               </form>
               {home && !home.preferences.discoverable && (
                 <div className="x1-callout">
                   <span>
-                    Your Body <strong>@{home.body?.handle}</strong> is currently{" "}
+                    Your profile <strong>@{home.body?.handle}</strong> is currently{" "}
                     <strong>hidden from search</strong>. Other members cannot find
                     you by @handle until you enable discovery.
                   </span>
@@ -412,22 +411,22 @@ export function SocialWorkspace({
                           ...home.preferences,
                           discoverable: true,
                         },
-                        "Your Body is now discoverable by @handle.",
+                        "Your profile is now discoverable by @handle.",
                       )
                     }
                   >
-                    Let other members find my Body
+                    Make profile discoverable
                   </button>
                 </div>
               )}
               {searching && <p role="status">Searching permitted research…</p>}
               <details className="x2-social-info">
-                <summary>ⓘ How @handle discovery and privacy work</summary>
+                <summary>How @handle discovery and privacy work</summary>
                 <p>
-                  Only members who turn on <em>Let other members find my Body</em>{" "}
-                  and discoverable group directories appear in search. Internal
-                  user IDs are never public handles. Shared Souls require current
-                  group membership.
+                  Only members who enable profile discovery and discoverable
+                  Research Room directories appear in search. Internal account
+                  IDs and emails are never searchable. Shared Souls require
+                  current room membership.
                 </p>
               </details>
               {results && (
@@ -468,7 +467,7 @@ export function SocialWorkspace({
                       <p>{g.description}</p>
                       {g.joined ? (
                         <button onClick={() => onOpenGroup(g.id)}>
-                          Open group
+                          Open Research Room
                           <ArrowRight size={15} />
                         </button>
                       ) : (
@@ -477,7 +476,7 @@ export function SocialWorkspace({
                           onClick={() =>
                             mutate(
                               { action: "request-join", groupId: g.id },
-                              "Join request saved. An administrator must accept.",
+                              "Join request saved. A room administrator must accept.",
                             )
                           }
                         >
@@ -513,8 +512,8 @@ export function SocialWorkspace({
                     !results.souls.length && (
                       <p className="x1-caption">
                         {search.trim()
-                          ? `No discoverable Body, Group, or shared Soul matched "${search.trim()}". Profiles are private by default unless the member turns on "Let other members find my Body", and internal account IDs are not public @handles.`
-                          : "Enter an @handle, display name, group name, or shared Soul title to search discoverable research."}
+                          ? `No discoverable researcher, Research Room, or shared Soul matched "${search.trim()}". Profiles stay private unless enabled in Settings.`
+                          : "Enter an @handle, display name, Research Room name, or shared Soul title to search."}
                       </p>
                     )}
                   {results.nextBody && (
@@ -545,7 +544,7 @@ export function SocialWorkspace({
                         }
                       }}
                     >
-                      More Bodies
+                      More researchers
                     </button>
                   )}
                 </div>
@@ -670,7 +669,7 @@ export function SocialWorkspace({
                               handle: thread.peer.handle,
                               active: true,
                             },
-                            "Body blocked.",
+                            "Profile blocked.",
                           )
                         ) {
                           setThreadId("");
@@ -925,7 +924,7 @@ export function SocialWorkspace({
                 </Panel>
               ) : (
                 <Empty title="Your research conversations">
-                  Select a thread or find a Body in Discover. No simulated
+                  Select a thread or find a researcher in Explore. No simulated
                   online status or typing activity.
                 </Empty>
               )}
@@ -943,35 +942,37 @@ export function SocialWorkspace({
                       >
                         <Identity body={b.body} />
                       </button>
+                    ) : b.soul ? (
+                      <>
+                        <h3>{b.soul.title}</h3>
+                        <p>{b.soul.summary}</p>
+                        <button onClick={() => onOpenGroup(b.soul!.groupId)}>
+                          Open Soul
+                        </button>
+                      </>
                     ) : (
-                      b.soul && (
-                        <>
-                          <h3>{b.soul.title}</h3>
-                          <p>{b.soul.summary}</p>
-                          <button onClick={() => onOpenGroup(b.soul!.groupId)}>
-                            Open Soul
-                          </button>
-                        </>
-                      )
+                      <p className="x1-caption">
+                        This saved item is no longer available.
+                      </p>
                     )}
                     <button
                       disabled={busy}
                       onClick={() =>
                         bookmark(
                           b.kind as "BODY" | "SOUL",
-                          b.body?.handle || b.soul!.id,
+                          b.body?.handle || b.soul?.id || "",
                           false,
                         )
                       }
                     >
-                      Remove bookmark
+                      Remove
                     </button>
                   </article>
                 ))}
               </div>
               {!home?.bookmarks.length && (
                 <p className="x1-caption">
-                  Save a permitted researcher or Soul from Discover. Revoked
+                  Save a permitted researcher or Soul from Explore. Revoked
                   content is hidden automatically.
                 </p>
               )}
@@ -1085,7 +1086,7 @@ export function SocialWorkspace({
                     type="checkbox"
                     defaultChecked={home.preferences.discoverable}
                   />
-                  Allow my Body in Site discovery
+                  Allow my profile in Community discovery
                 </label>
                 <label>
                   Who may start messages?
@@ -1094,7 +1095,7 @@ export function SocialWorkspace({
                     defaultValue={home.preferences.messages}
                   >
                     <option value="REQUESTS">Allow message requests</option>
-                    <option value="GROUPS">Shared group members only</option>
+                    <option value="GROUPS">Shared Research Room members only</option>
                     <option value="NONE">No incoming messages</option>
                   </select>
                 </label>
@@ -1112,7 +1113,7 @@ export function SocialWorkspace({
                     type="checkbox"
                     defaultChecked={home.preferences.notifications}
                   />
-                  In-app message and group notifications
+                  In-app message and room notifications
                 </label>
                 <button disabled={busy} type="submit">
                   <ShieldCheck size={16} />
@@ -1120,9 +1121,9 @@ export function SocialWorkspace({
                 </button>
               </form>
               <details className="x2-social-info">
-                <summary>ⓘ Retention and privacy</summary>
+                <summary>Retention and privacy</summary>
                 <p>
-                  Text is stored in the existing Site database. Hide affects
+                  Text is stored in the existing database. Hide affects
                   only your inbox; Retract removes your message text for both
                   participants. Editing is allowed for 15 minutes. Block
                   prevents discovery and new messages in either direction.
@@ -1130,7 +1131,7 @@ export function SocialWorkspace({
                   end-to-end encryption is claimed.
                 </p>
               </details>
-              <h3>Blocked Bodies</h3>
+              <h3>Blocked profiles</h3>
               {home.blocked.map((b) => (
                 <div className="x2-social-block" key={b.handle}>
                   <span>@{b.handle}</span>
@@ -1139,7 +1140,7 @@ export function SocialWorkspace({
                     onClick={() =>
                       mutate(
                         { action: "block", handle: b.handle, active: false },
-                        "Body unblocked.",
+                        "Profile unblocked.",
                       )
                     }
                   >
@@ -1148,7 +1149,7 @@ export function SocialWorkspace({
                 </div>
               ))}
               {!home.blocked.length && (
-                <p className="x1-caption">No blocked Bodies.</p>
+                <p className="x1-caption">No blocked profiles.</p>
               )}
             </Panel>
           )}
@@ -1190,7 +1191,7 @@ export function SocialWorkspace({
                           handle: profile.body.handle,
                           active: true,
                         },
-                        "Body blocked.",
+                        "Profile blocked.",
                       )
                     )
                       setProfile(null);
@@ -1226,7 +1227,7 @@ export function SocialWorkspace({
                 }}
               >
                 <label>
-                  Invite to a group
+                  Invite to a Research Room
                   <select name="groupId">
                     {home.groups
                       .filter((g) => ["OWNER", "ADMIN"].includes(g.role))
@@ -1362,6 +1363,7 @@ type Discussion = {
   createdAt: string;
   deletedAt: string | null;
   authorHandle: string;
+  authorAvatar?: string | null;
   isMine: number;
 };
 type GroupNetwork = {
@@ -1422,7 +1424,7 @@ export function GroupNetworkPanel({
   }
   const admin = data && ["OWNER", "ADMIN"].includes(data.group.role);
   return (
-    <Panel title="Group discussion" className="x2-social-group">
+    <Panel title="Room discussion" className="x2-social-group">
       <div aria-busy={busy}>
         {error && (
           <p className="x1-callout" role="alert">
@@ -1449,12 +1451,12 @@ export function GroupNetworkPanel({
                     discoverable: f.has("discoverable"),
                     pinnedSoul: f.get("pinnedSoul") || undefined,
                   },
-                  "Group directory saved.",
+                  "Research Room directory saved.",
                 );
               }}
             >
               <label>
-                Unique group handle
+                Unique Research Room handle
                 <input
                   name="handle"
                   defaultValue={data?.settings?.handle || ""}
@@ -1469,7 +1471,7 @@ export function GroupNetworkPanel({
                   type="checkbox"
                   defaultChecked={!!data?.settings?.discoverable}
                 />
-                List group name and description inside this Site
+                List Research Room name and description in Explore directory
               </label>
               <label>
                 Pinned Soul ID
@@ -1531,9 +1533,12 @@ export function GroupNetworkPanel({
         <div className="x2-social-discussions">
           {data?.discussions.map((d) => (
             <article key={d.id} className={d.parentId ? "is-reply" : ""}>
-              <small>
-                @{d.authorHandle} · {moment(d.createdAt)}
-                {d.parentId ? " · reply" : ""}
+              <small style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <AvatarBadge avatarId={d.authorAvatar} size={22} alt="" />
+                <span>
+                  @{d.authorHandle} · {moment(d.createdAt)}
+                  {d.parentId ? " · reply" : ""}
+                </span>
               </small>
               <p>{d.deletedAt ? "Discussion removed." : d.text}</p>
               {d.sourceUrl && (
@@ -1593,7 +1598,7 @@ export function GroupNetworkPanel({
         {!data?.discussions.length && (
           <p className="x1-caption">
             Discuss a method, share a permitted research summary, or mention a
-            current member with @Body. Do not paste restricted raw data.
+            room member with @handle. Do not paste restricted raw data.
           </p>
         )}
         <form

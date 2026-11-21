@@ -52,6 +52,12 @@ type Props = {
   share: (formula: string) => void;
   initialFormula: string;
   initialInstrument?: string;
+  initialUniversePreset?:
+    | "INDIAN_EQUITIES"
+    | "MCX_FUTURES"
+    | "MY_WATCHLIST"
+    | "ECB_DAILY"
+    | "CUSTOM_CSV";
   initialPanel?: string;
 };
 type Preflight = {
@@ -155,6 +161,7 @@ export default function ResearchWorkspace({
   share,
   initialFormula,
   initialInstrument,
+  initialUniversePreset,
   initialPanel,
 }: Props) {
   const [panel, setPanel] = useState(initialPanel || "Soul Scan"),
@@ -168,14 +175,29 @@ export default function ResearchWorkspace({
       initialFormula || BEGINNER_SCAN_PRESETS[0].formula,
     ),
     [tree, setTree] = useState<RuleTree>(defaultTree),
-    [name, setName] = useState(""),
-    [description, setDescription] = useState(""),
-    [universe, setUniverse] =
-      useState<ResearchDefinition["universe"]>("ECB_DAILY"),
+    [name, setName] = useState(
+      initialUniversePreset || initialFormula
+        ? BEGINNER_SCAN_PRESETS[0].defaultName
+        : "",
+    ),
+    [description, setDescription] = useState(
+      initialUniversePreset || initialFormula
+        ? BEGINNER_SCAN_PRESETS[0].defaultDescription
+        : "",
+    ),
+    [universe, setUniverse] = useState<ResearchDefinition["universe"]>(
+      initialUniversePreset === "CUSTOM_CSV" ||
+        initialUniversePreset === "INDIAN_EQUITIES" ||
+        initialUniversePreset === "MCX_FUTURES"
+        ? "CONNECTED_MARKETS"
+        : "ECB_DAILY",
+    ),
     [universePreset, setUniversePreset] = useState<
       "INDIAN_EQUITIES" | "MCX_FUTURES" | "MY_WATCHLIST" | "ECB_DAILY" | "CUSTOM_CSV"
-    >("ECB_DAILY"),
-    [customCsv, setCustomCsv] = useState(""),
+    >(initialUniversePreset || "ECB_DAILY"),
+    [customCsv, setCustomCsv] = useState(
+      initialUniversePreset === "CUSTOM_CSV" ? buildSampleTestCsv() : "",
+    ),
     [pickerQuery, setPickerQuery] = useState(""),
     [resultSort, setResultSort] = useState<"STATUS" | "SYMBOL">("STATUS"),
     [interval, setInterval] = useState<ResearchDefinition["interval"]>("1d"),
@@ -620,32 +642,24 @@ export default function ResearchWorkspace({
                 </div>
               }
             >
-              <div className="x1-chip-row" aria-label="Soul Scan 4-step workflow">
-                <span>1. Choose universe</span>
-                <span>2. Define rules</span>
-                <span>3. Check coverage</span>
-                <span>4. Run &amp; review evidence</span>
+              <div className="x6-step-rail" aria-label="Soul Scan 4-step workflow">
+                <div className="x6-step-pill is-done">
+                  <span>Step 1</span>
+                  <strong>Universe</strong>
+                </div>
+                <div className={"x6-step-pill " + (canonical.value ? "is-done" : "")}>
+                  <span>Step 2</span>
+                  <strong>Rules &amp; Hypothesis</strong>
+                </div>
+                <div className={"x6-step-pill " + (coverage ? "is-done" : "")}>
+                  <span>Step 3</span>
+                  <strong>Check Coverage</strong>
+                </div>
+                <div className={"x6-step-pill " + (runs.length > 0 ? "is-done" : "")}>
+                  <span>Step 4</span>
+                  <strong>Run &amp; Evidence</strong>
+                </div>
               </div>
-              <label className="x1-label">
-                Scan name
-                <input
-                  value={name}
-                  maxLength={100}
-                  placeholder="Name your hypothesis"
-                  onChange={(e) => setName(e.target.value)}
-                />
-              </label>
-              <label className="x1-label">
-                Description
-                <textarea
-                  className="x2-scan-description"
-                  value={description}
-                  minLength={10}
-                  maxLength={2000}
-                  placeholder="What are you testing, and why?"
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-              </label>
               <div className="x1-label">
                 <span>Step 1 · Where should we scan?</span>
                 <div className="x3-preset-grid" role="group" aria-label="Where should we scan">
@@ -729,6 +743,26 @@ export default function ResearchWorkspace({
                   </button>
                 </div>
               </div>
+              <label className="x1-label">
+                Scan name
+                <input
+                  value={name}
+                  maxLength={100}
+                  placeholder="Name your hypothesis"
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </label>
+              <label className="x1-label">
+                Description
+                <textarea
+                  className="x2-scan-description"
+                  value={description}
+                  minLength={10}
+                  maxLength={2000}
+                  placeholder="What are you testing, and why?"
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+              </label>
               {universePreset === "CUSTOM_CSV" && (
                 <div className="x1-label">
                   <span>
@@ -968,6 +1002,12 @@ export default function ResearchWorkspace({
                   <ArrowRight size={16} />
                 </button>
               </div>
+              {busy && (
+                <div className="x6-pipeline-loader" role="status" aria-live="polite">
+                  <strong>Evidence Pipeline</strong>
+                  <span>{busy}</span>
+                </div>
+              )}
               <p className="x2-scan-status" role="status" aria-live="polite">
                 {busy ||
                   (!authenticated

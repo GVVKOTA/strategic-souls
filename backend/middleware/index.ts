@@ -16,7 +16,7 @@ const worker = {
       "Content-Security-Policy",
       "default-src 'self'; script-src 'self' 'unsafe-inline' https://s3.tradingview.com" +
         (import.meta.env.DEV ? " 'unsafe-eval'" : "") +
-        "; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'" +
+        "; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://gibs.earthdata.nasa.gov; font-src 'self'; connect-src 'self' https://gibs.earthdata.nasa.gov" +
         (import.meta.env.DEV ? " ws: wss:" : "") +
         "; frame-src https://s.tradingview.com https://www.tradingview.com https://www.tradingview-widget.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'",
     );
@@ -28,7 +28,9 @@ const worker = {
     }
     if (
       url.pathname.startsWith("/api/") &&
-      !url.pathname.startsWith("/api/markets/public")
+      !url.pathname.startsWith("/api/markets/public") &&
+      !url.pathname.startsWith("/api/community/public") &&
+      !url.pathname.startsWith("/api/earth/conflicts")
     ) {
       secured.headers.set("Cache-Control", "private, no-store");
     }

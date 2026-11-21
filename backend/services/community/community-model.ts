@@ -1,8 +1,10 @@
 import { HttpError } from '../../middleware/security';
+import { isValidAvatarPresetId } from '../profile/avatars';
 
 export type GroupRole = 'OWNER' | 'ADMIN' | 'EDITOR' | 'VIEWER';
-export const AVATARS = ['mint', 'silver', 'slate', 'sky', 'lavender'] as const;
-export type Avatar = typeof AVATARS[number];
+export const LEGACY_AVATARS = ['mint', 'silver', 'slate', 'sky', 'lavender'] as const;
+export const AVATARS = LEGACY_AVATARS;
+export type Avatar = string;
 const RESERVED = new Set(['admin', 'administrator', 'support', 'help', 'security', 'moderator', 'root', 'api', 'global', 'strategy', 'community', 'strategicsouls', 'strategic_souls', 'gvv', 'null', 'undefined', 'deleted']);
 
 export function field(value: unknown, label: string, max: number, min = 1): string {
@@ -13,14 +15,19 @@ export function field(value: unknown, label: string, max: number, min = 1): stri
 }
 
 export function bodyHandle(value: unknown): string {
-  const handle = field(value, 'Body handle', 25, 3).replace(/^@/, '').toLowerCase();
-  if (!/^[a-z][a-z0-9_]{2,23}$/.test(handle) || RESERVED.has(handle)) throw new HttpError(400, 'Choose a Body handle of 3–24 letters, numbers or underscores, starting with a letter. Reserved handles are unavailable.');
+  const handle = field(value, 'Handle', 25, 3).replace(/^@/, '').toLowerCase();
+  if (!/^[a-z][a-z0-9_]{2,23}$/.test(handle) || RESERVED.has(handle)) throw new HttpError(400, 'Choose a handle of 3–24 letters, numbers or underscores, starting with a letter. Reserved handles are unavailable.');
   return handle;
 }
 
 export function avatar(value: unknown): Avatar {
-  if (!AVATARS.includes(value as Avatar)) throw new HttpError(400, 'Choose an available avatar colour. Profile photos are not connected.');
-  return value as Avatar;
+  if (typeof value === 'string') {
+    const clean = value.trim().toLowerCase();
+    if (isValidAvatarPresetId(clean) || (LEGACY_AVATARS as readonly string[]).includes(clean)) {
+      return clean;
+    }
+  }
+  throw new HttpError(400, 'Choose one of the 50 official preset avatars. External image URLs are not permitted.');
 }
 
 export function id(value: unknown, label = 'Record'): string {

@@ -389,7 +389,7 @@ async function groupView(subject: string, params: URLSearchParams) {
       .bind(g.id)
       .first();
   const rows = await query(
-    `SELECT d.id,d.parent_id AS parentId,d.content AS text,d.source_url AS sourceUrl,d.source_as_of AS sourceAsOf,d.created_at AS createdAt,d.deleted_at AS deletedAt,b.handle AS authorHandle,(d.author=?) AS isMine FROM x2_discussions d JOIN x1_bodies b ON b.subject=d.author WHERE d.group_id=? AND (d.created_at||'|'||d.id)<? ORDER BY d.created_at DESC,d.id DESC LIMIT 41`,
+    `SELECT d.id,d.parent_id AS parentId,d.content AS text,d.source_url AS sourceUrl,d.source_as_of AS sourceAsOf,d.created_at AS createdAt,d.deleted_at AS deletedAt,b.handle AS authorHandle,b.avatar AS authorAvatar,(d.author=?) AS isMine FROM x2_discussions d JOIN x1_bodies b ON b.subject=d.author WHERE d.group_id=? AND (d.created_at||'|'||d.id)<? ORDER BY d.created_at DESC,d.id DESC LIMIT 41`,
     subject,
     g.id,
     cursor(params.get("before")),

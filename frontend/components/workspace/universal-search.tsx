@@ -30,8 +30,8 @@ const SCOPE_OPTIONS = [
   { id: "indices", label: "Indices" },
   { id: "futures", label: "Futures" },
   { id: "currencies", label: "FX & Yields" },
-  { id: "bodies", label: "People (@Body)" },
-  { id: "groups", label: "Groups" },
+  { id: "bodies", label: "Researchers (@handle)" },
+  { id: "groups", label: "Research Rooms" },
   { id: "souls", label: "Souls" },
 ] as const;
 
@@ -296,7 +296,7 @@ export default function UniversalSearch({
       <Search size={18} />
       <input
         aria-label="Universal search"
-        placeholder="Search HDFC, SBIN, NIFTY, GOLD, @Bodies, Souls…"
+        placeholder="Search HDFC, SBIN, NIFTY, GOLD, @handle, Rooms, Souls…"
         type="search"
         autoComplete="off"
         value={query}
@@ -400,7 +400,7 @@ export default function UniversalSearch({
               >
                 <span>
                   <strong>@{x.handle}</strong>
-                  <small>{x.displayName} · Discoverable Body</small>
+                  <small>{x.displayName} · Discoverable researcher</small>
                 </span>
                 <ArrowUpRight size={14} />
               </button>
@@ -420,7 +420,7 @@ export default function UniversalSearch({
               >
                 <span>
                   <strong>{x.name}</strong>
-                  <small>Discoverable Research Group</small>
+                  <small>Discoverable Research Room</small>
                 </span>
                 <ArrowUpRight size={14} />
               </button>
@@ -444,7 +444,7 @@ export default function UniversalSearch({
               >
                 <span>
                   <strong>{x.title}</strong>
-                  <small>Shared Soul · member group research</small>
+                  <small>Shared Soul · Research Room</small>
                 </span>
                 <ArrowUpRight size={14} />
               </button>
@@ -462,9 +462,9 @@ export default function UniversalSearch({
                 }}
               >
                 <span>
-                  <strong>Create your Body profile first to search members</strong>
+                  <strong>Set your @handle in Profile to search researchers</strong>
                   <small>
-                    Community member discovery requires your own @handle profile.
+                    Community researcher discovery requires your own @handle profile.
                   </small>
                 </span>
                 <UserPlus size={14} />
@@ -480,13 +480,13 @@ export default function UniversalSearch({
             !social?.souls.length && (
               <p>
                 {q.startsWith("@") || scope === "bodies"
-                  ? `No discoverable Body matched "${q}". Profiles are private unless the member enables "Let other members find my Body" in Community.`
+                  ? `No discoverable profile matched "${q}". Profiles stay private unless the researcher enables discovery in Settings.`
                   : `No matching instrument or permitted research found for "${q}".`}
               </p>
             )}
           <small>
             Instrument identity discovery is separate from live price access.
-            Opted-out profiles and private groups stay hidden.
+            Opted-out profiles and private rooms stay hidden.
           </small>
         </div>
       )}

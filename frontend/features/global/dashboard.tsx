@@ -8,6 +8,7 @@ import {
   Play,
   List,
   Globe2,
+  MapPin,
   Minus,
   Star,
   Search,
@@ -48,8 +49,10 @@ import {
 } from "../../components/workspace/shared";
 import ScrollTabs from "../../components/workspace/scroll-tabs";
 import PrivateMarketPanel from "./private-market-panel";
+import type { MapFocusTarget } from "../earth/world-conflict-map";
 const AssetTerminal = lazy(() => import("./asset-terminal"));
 const GlobeCanvas = lazy(() => import("./globe-canvas"));
+const WorldConflictMap = lazy(() => import("../earth/world-conflict-map"));
 function DeferredGlobe(props: React.ComponentProps<typeof GlobeCanvas>) {
   const host = useRef<HTMLDivElement>(null),
     [ready, setReady] = useState(false);
@@ -94,12 +97,22 @@ type Props = {
   onRequireAuth?: () => void;
   reload: () => Promise<void>;
   notify: Notice;
-  analyze: (formula?: string, instrumentId?: string) => void;
+  analyze: (
+    formula?: string,
+    instrumentId?: string,
+    universePreset?:
+      | "INDIAN_EQUITIES"
+      | "MCX_FUTURES"
+      | "MY_WATCHLIST"
+      | "ECB_DAILY"
+      | "CUSTOM_CSV",
+  ) => void;
   openAsset: (id: string) => void;
   refreshData: () => void;
   refreshing?: boolean;
   initialPanel?: string;
   onNavigate?: (view: "Global" | "Strategy" | "Community") => void;
+  earthQuality?: "auto" | "balanced" | "reduced";
 };
 export function assetName(id: string, data: MarketSnapshot | null) {
   return (
@@ -200,11 +213,22 @@ export default function Global({
   refreshing = false,
   initialPanel,
   onNavigate,
+  earthQuality = "auto",
 }: Props) {
   const [panel, setPanelState] = useState(initialPanel || "Overview"),
     [selected, setSelected] = useState<Exchange | null>(
       EXCHANGES.find((e) => e.id === "XNSE") || null,
     ),
+    [globeFocusCoords, setGlobeFocusCoords] = useState<{
+      lat: number;
+      lon: number;
+      nonce: number;
+    } | null>(null),
+    [mapFocusTarget, setMapFocusTarget] = useState<MapFocusTarget | null>(null),
+    [globeConflicts, setGlobeConflicts] = useState<
+      { id: string; lat: number; lon: number }[]
+    >([]),
+    [selectedConflictId, setSelectedConflictId] = useState<string | null>(null),
     [region, setRegion] = useState("All"),
     [exchangeSearch, setExchangeSearch] = useState(""),
     [resetToken, setResetToken] = useState(0),
@@ -349,12 +373,45 @@ export default function Global({
       version: activeList.version,
       items,
     });
+  const earthSectionRef = useRef<HTMLDivElement>(null);
+  const mapSectionRef = useRef<HTMLDivElement>(null);
   const currentSession =
     selected && data ? exchangeSession(selected, data.asOf) : null;
   const selectVenue = (venue: Exchange) => {
     setTourActive(false);
     setSelected(venue);
     setAuto(false);
+  };
+  const investigateOnMap = (venue: Exchange) => {
+    setMapFocusTarget({
+      lat: venue.lat,
+      lon: venue.lon,
+      zoom: 5.2,
+      label: `${venue.city}, ${venue.country} · ${venue.mic}`,
+      exchangeId: venue.id,
+      nonce: Date.now(),
+    });
+    mapSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const viewOnGlobe = (coords: {
+    lat: number;
+    lon: number;
+    label: string;
+    exchangeId?: string;
+    conflictId?: string;
+  }) => {
+    setMode("Globe");
+    setTourActive(false);
+    setAuto(false);
+    if (coords.exchangeId) {
+      const ex = EXCHANGES.find((e) => e.id === coords.exchangeId);
+      if (ex) setSelected(ex);
+    }
+    if (coords.conflictId) {
+      setSelectedConflictId(coords.conflictId);
+    }
+    setGlobeFocusCoords({ lat: coords.lat, lon: coords.lon, nonce: Date.now() });
+    earthSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   return (
     <>
@@ -364,116 +421,136 @@ export default function Global({
         active={panel}
         onChange={setPanel}
       />
-      <header className="x1-page-title">
-        <div>
-          <h1>{panel === "Overview" ? "Strategic Souls" : panel}</h1>
-          {panel === "Overview" && (
-            <p className="x2-tagline">Research into evidence.</p>
-          )}
-          <InfoTip label="About Global">
-            Published reference data and private research. Source dates and
-            units accompany each value. Portfolio values are manual cost records
-            until entitled valuation quotes are connected.
-          </InfoTip>
-        </div>
-        <div className="x1-actions">
-          <button
-            type="button"
-            className="x1-primary x1-motion-button"
-            onClick={() => onNavigate?.("Strategy")}
-          >
-            Run a Soul Scan
-            <ArrowRight size={16} />
-          </button>
-          <button
-            className="x1-secondary x1-motion-button"
-            onClick={refreshData}
-            disabled={refreshing}
-            aria-busy={refreshing}
-          >
-            <RefreshCw size={16} />
-            {refreshing ? "Refreshing…" : "Refresh"}
-          </button>
-        </div>
-      </header>
+      {panel !== "Overview" && (
+        <header className="x1-page-title">
+          <div>
+            <h1>{panel}</h1>
+            <InfoTip label="About Global">
+              Published reference data and private research. Source dates and
+              units accompany each value. Portfolio values are manual cost records
+              until entitled valuation quotes are connected.
+            </InfoTip>
+          </div>
+          <div className="x1-actions">
+            <button
+              type="button"
+              className="x1-primary x1-motion-button"
+              onClick={() => onNavigate?.("Strategy")}
+            >
+              Run a Soul Scan
+              <ArrowRight size={16} />
+            </button>
+            <button
+              className="x1-secondary x1-motion-button"
+              onClick={refreshData}
+              disabled={refreshing}
+              aria-busy={refreshing}
+            >
+              <RefreshCw size={16} />
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+        </header>
+      )}
       {panel === "Overview" && (
         <>
-          <Panel
-            title="Discover any instrument or run a strategy scan"
-            kicker="Indian equities, indices, MCX dated futures, FX & yields"
-          >
-            <label className="x1-search">
-              <Search size={17} />
-              <input
-                aria-label="Quick instrument lookup"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search HDFC, HDFCBANK, SBIN, RELIANCE, TCS, INFY, NIFTY, GOLD, USD/INR…"
-              />
-            </label>
-            {search.trim() ? (
-              <div className="x1-search-results">
-                {filtered.slice(0, 8).map((item) => (
-                  <div className="x1-list-item" key={item.id}>
-                    <button
-                      type="button"
-                      className="x1-asset-button"
-                      onClick={() => openAsset(item.id)}
-                    >
-                      <strong>{item.name}</strong>
-                      <span>
-                        {item.id} · {item.market} {item.kind}
-                      </span>
-                    </button>
-                    <div className="x1-actions">
-                      <button
-                        type="button"
-                        className="x1-text-button"
-                        onClick={() => openAsset(item.id)}
-                      >
-                        Open terminal
-                        <ArrowUpRight size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="x1-text-button"
-                        onClick={() => analyze("close > sma(close, 20)", item.id)}
-                      >
-                        Scan symbol
-                        <ArrowRight size={14} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                {!filtered.length && (
-                  <p className="x1-caption">
-                    No matching instrument in the canonical registry for &ldquo;{search}&rdquo;.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <div className="x1-chip-row">
-                {[
-                  ["NSE:HDFCBANK", "HDFC Bank (NSE)"],
-                  ["NSE:SBIN", "State Bank of India"],
-                  ["NSE:RELIANCE", "Reliance Industries"],
-                  ["NSE:TCS", "TCS"],
-                  ["NSE:NIFTY", "NIFTY 50"],
-                  ["BSE:SENSEX", "BSE SENSEX"],
-                  ["MCX:GOLD04DEC26FUT", "MCX Gold (04 Dec 26)"],
-                  ["ECB:USDINR", "USD / INR (ECB)"],
-                ].map(([symId, label]) => (
-                  <button
-                    key={symId}
-                    type="button"
-                    onClick={() => openAsset(symId)}
-                  >
-                    {label} · {symId}
-                  </button>
-                ))}
-              </div>
-            )}
-          </Panel>
+          <section className="x6-hero" aria-label="Strategic Souls overview">
+            <h1>Strategic Souls</h1>
+            <p className="x6-hero-sub">
+              Research into evidence. Inspect official daily macro benchmarks,
+              explore SS Earth &amp; global geopolitical context, and test
+              transparent Soul Scan hypotheses.
+            </p>
+            <div className="x6-hero-actions">
+              <button
+                type="button"
+                className="x1-primary x1-motion-button"
+                onClick={() => onNavigate?.("Strategy")}
+              >
+                Run a Soul Scan
+                <ArrowRight size={16} />
+              </button>
+              <button
+                type="button"
+                className="x1-secondary x1-motion-button"
+                onClick={() =>
+                  earthSectionRef.current?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                  })
+                }
+              >
+                <Globe2 size={16} />
+                Explore SS Earth
+              </button>
+              <button
+                type="button"
+                className="x1-secondary x1-motion-button"
+                onClick={refreshData}
+                disabled={refreshing}
+                aria-busy={refreshing}
+              >
+                <RefreshCw size={15} />
+                {refreshing ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+            <div className="x6-starter-row" aria-label="Executable research starters">
+              <button
+                type="button"
+                className="x6-starter-chip"
+                onClick={() =>
+                  analyze("close > sma(close, 20)", "ECB:USDINR", "ECB_DAILY")
+                }
+              >
+                <span>Scan USD/INR Momentum (ECB)</span>
+                <ArrowRight size={13} />
+              </button>
+              <button
+                type="button"
+                className="x6-starter-chip"
+                onClick={() =>
+                  analyze("rsi(close, 14) < 40", "ECB:EURUSD", "ECB_DAILY")
+                }
+              >
+                <span>Scan EUR/USD Pullback (ECB)</span>
+                <ArrowRight size={13} />
+              </button>
+              <button
+                type="button"
+                className="x6-starter-chip"
+                onClick={() =>
+                  analyze("close > sma(close, 20)", "", "CUSTOM_CSV")
+                }
+              >
+                <span>Try 5-Stock Indian Equity Test Fixture</span>
+                <ArrowRight size={13} />
+              </button>
+              <button
+                type="button"
+                className="x6-starter-chip"
+                onClick={() => openAsset("NSE:HDFCBANK")}
+              >
+                <span>NSE:HDFCBANK</span>
+                <ArrowUpRight size={13} />
+              </button>
+              <button
+                type="button"
+                className="x6-starter-chip"
+                onClick={() => openAsset("NSE:NIFTY")}
+              >
+                <span>NSE:NIFTY</span>
+                <ArrowUpRight size={13} />
+              </button>
+              <button
+                type="button"
+                className="x6-starter-chip"
+                onClick={() => openAsset("MCX:GOLD04DEC26FUT")}
+              >
+                <span>MCX Gold</span>
+                <ArrowUpRight size={13} />
+              </button>
+            </div>
+          </section>
           <div className="x1-private-brief">
             <button onClick={() => setPanel("Watchlists")}>
               <Star size={15} />
@@ -551,7 +628,7 @@ export default function Global({
                   onClick={() => onNavigate?.("Community")}
                 >
                   <small>Step 05 · Opt-in</small>
-                  <span>Join a research group</span>
+                  <span>Join a Research Room</span>
                 </button>
               </div>
             </section>
@@ -607,9 +684,13 @@ export default function Global({
               notify={notify}
             />
           )}
-          <div className="x1-overview-grid">
+          <section
+            className="x6-earth-showcase"
+            ref={earthSectionRef}
+            aria-label="SS Earth 3D Globe and World Map"
+          >
             <Panel
-              title="Across the exchanges"
+              title="SS Earth · 3D Globe & Global Exchanges"
               kicker="The world, connected by geography"
               className="x1-globe-panel"
               action={
@@ -653,6 +734,9 @@ export default function Global({
                 <span className="x1-caption">
                   {mode === "List" ? listedVenues.length : venues.length} venues
                   · city markers
+                  {globeConflicts.length > 0
+                    ? ` · ${globeConflicts.length} sourced conflict markers`
+                    : ""}
                 </span>
               </div>
               {mode === "Globe" ? (
@@ -671,6 +755,17 @@ export default function Global({
                       motionOverride={motionOverride}
                       zoom={zoom}
                       resetToken={resetToken}
+                      focusCoords={globeFocusCoords}
+                      conflictPoints={globeConflicts}
+                      selectedConflictId={selectedConflictId}
+                      earthQuality={earthQuality}
+                      onSelectConflict={(id) => {
+                        setSelectedConflictId(id);
+                        mapSectionRef.current?.scrollIntoView({
+                          behavior: "smooth",
+                          block: "start",
+                        });
+                      }}
                       onPause={() => {
                         setTourActive(false);
                         setAuto(false);
@@ -811,6 +906,14 @@ export default function Global({
                     data not connected.
                   </p>
                   <div className="x1-exchange-links">
+                    <button
+                      type="button"
+                      className="x1-secondary"
+                      onClick={() => investigateOnMap(selected)}
+                    >
+                      <MapPin size={14} />
+                      Investigate on 2D Map
+                    </button>
                     {EXCHANGES.filter(
                       (v) =>
                         v.clusterKey === selected.clusterKey &&
@@ -862,7 +965,52 @@ export default function Global({
                 </p>
               </details>
             </Panel>
-            <div className="x1-overview-side">
+
+            {/* Context bridge directly linking 3D Globe to the real 2D Satellite World Map immediately below */}
+            <div className="x6-earth-bridge">
+              <div className="x6-earth-bridge-meta">
+                <strong>2D World Map · Synchronized with 3D Earth</strong>
+                <span>
+                  {selected
+                    ? `Active hub: ${selected.city}, ${selected.country} (${selected.mic})`
+                    : "Select any region, hub, or sourced conflict event below"}
+                </span>
+              </div>
+              {selected && (
+                <button
+                  type="button"
+                  className="x1-text-button"
+                  onClick={() => investigateOnMap(selected)}
+                >
+                  Fly map to {selected.city}
+                  <ArrowRight size={14} />
+                </button>
+              )}
+            </div>
+
+            {/* Real Licensed NASA GIBS 2D Satellite World Map & Sourced Conflict Layer IMMEDIATELY below 3D Globe */}
+            <div ref={mapSectionRef}>
+              <Suspense
+                fallback={
+                  <WorkspaceSkeleton
+                    label="Loading NASA GIBS 2D World Satellite Map…"
+                    kind="panel"
+                  />
+                }
+              >
+                <WorldConflictMap
+                  focusTarget={mapFocusTarget}
+                  externalConflictId={selectedConflictId}
+                  onViewOnGlobe={viewOnGlobe}
+                  onConflictsLoaded={setGlobeConflicts}
+                  onOpenAsset={openAsset}
+                  onSelectExchange={selectVenue}
+                />
+              </Suspense>
+            </div>
+          </section>
+
+          <div className="x1-overview-side">
               <Panel
                 title="Your watchlist"
                 kicker="Private research"
@@ -1007,7 +1155,6 @@ export default function Global({
                 </div>
               </div>
             </div>
-          </div>
         </>
       )}
       {panel === "Watchlists" && (

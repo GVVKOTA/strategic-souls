@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-hidden="true">
+  <defs>
+    <radialGradient id="bg_d08" cx="36%" cy="28%" r="76%">
+      <stop offset="0%" stop-color="#1F2229"/>
+      <stop offset="100%" stop-color="#090A0D"/>
+    </radialGradient>
+    <linearGradient id="rim_d08" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E8EDF2" stop-opacity="0.34"/>
+      <stop offset="50%" stop-color="#B9C3CE" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#070809" stop-opacity="0.5"/>
+    </linearGradient>
+    <clipPath id="clip_d08">
+      <circle cx="64" cy="64" r="60"/>
+    </clipPath>
+  </defs>
+  <circle cx="64" cy="64" r="61" fill="url(#bg_d08)"/>
+  <g clip-path="url(#clip_d08)">
+    
+    <path d="M20 94 A44 44 0 0 1 108 94" fill="none" stroke="#475569" stroke-width="5"/>
+    <path d="M29 94 A35 35 0 0 1 99 94" fill="none" stroke="#677382" stroke-width="5"/>
+    <path d="M38 94 A26 26 0 0 1 90 94" fill="none" stroke="#94D0FF" stroke-width="5"/>
+    <path d="M47 94 A17 17 0 0 1 81 94" fill="none" stroke="#CAD3DC" stroke-width="5"/>
+    <path d="M56 94 A8 8 0 0 1 72 94" fill="#E8EDF2"/>
+  
+  </g>
+  <circle cx="64" cy="64" r="60" fill="none" stroke="url(#rim_d08)" stroke-width="2"/>
+</svg>

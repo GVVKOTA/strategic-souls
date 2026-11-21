@@ -10,6 +10,18 @@ import {
 } from "../../../backend/services/market-data/globe";
 import type { Exchange } from "../../../backend/services/market-data/exchanges";
 
+type ConflictMarker = {
+  id: string;
+  lat: number;
+  lon: number;
+};
+
+type FocusCoords = {
+  lat: number;
+  lon: number;
+  nonce: number;
+};
+
 type Props = {
   venues: Exchange[];
   selected: Exchange | null;
@@ -22,6 +34,11 @@ type Props = {
   motionOverride?: boolean;
   resetToken?: number;
   onFallbackChange?: (fallback: boolean) => void;
+  focusCoords?: FocusCoords | null;
+  conflictPoints?: ConflictMarker[];
+  selectedConflictId?: string | null;
+  onSelectConflict?: (id: string) => void;
+  earthQuality?: "auto" | "balanced" | "reduced";
 };
 
 const vertex = `
@@ -152,6 +169,11 @@ export default function GlobeCanvas({
   motionOverride = false,
   resetToken = 0,
   onFallbackChange,
+  focusCoords = null,
+  conflictPoints = [],
+  selectedConflictId = null,
+  onSelectConflict,
+  earthQuality = "auto",
 }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null),
     settings = useRef({
@@ -164,6 +186,11 @@ export default function GlobeCanvas({
       onSelect,
       onZoom,
       zoom,
+      focusCoords,
+      conflictPoints,
+      selectedConflictId,
+      onSelectConflict,
+      earthQuality,
     }),
     rotation = useRef({ yaw: -0.65, pitch: 0.2 }),
     [failure, setFailure] = useState(false),
@@ -187,6 +214,11 @@ export default function GlobeCanvas({
       onSelect,
       onZoom,
       zoom,
+      focusCoords,
+      conflictPoints,
+      selectedConflictId,
+      onSelectConflict,
+      earthQuality,
     };
   }, [
     venues,
@@ -198,6 +230,11 @@ export default function GlobeCanvas({
     onSelect,
     onZoom,
     zoom,
+    focusCoords,
+    conflictPoints,
+    selectedConflictId,
+    onSelectConflict,
+    earthQuality,
   ]);
 
   useEffect(() => {
@@ -396,9 +433,14 @@ export default function GlobeCanvas({
       window.matchMedia("(max-width:680px)").matches ||
       !!connection.connection?.saveData ||
       (connection.deviceMemory ?? 8) <= 2;
+    const qualityBudget = settings.current.earthQuality;
     const textureWidth = Math.min(
       gl.getParameter(gl.MAX_TEXTURE_SIZE) as number,
-      constrained ? 1024 : 2048,
+      qualityBudget === "reduced"
+        ? 512
+        : qualityBudget === "balanced" || constrained
+          ? 1024
+          : 2048,
     );
 
     const loadTexture = async (
@@ -505,8 +547,13 @@ export default function GlobeCanvas({
     let frames = 0;
     let venueSignature = "",
       selectedBufferId = "",
+      conflictSignature = "",
+      selectedConflictBufId = "",
+      focusNonceSeen = -1,
       pointBuffer: { b: WebGLBuffer; count: number } | null = null,
       selectedPointBuffer: { b: WebGLBuffer; count: number } | null = null,
+      conflictPointBuffer: { b: WebGLBuffer; count: number } | null = null,
+      selectedConflictBuffer: { b: WebGLBuffer; count: number } | null = null,
       arcBuffer: { b: WebGLBuffer; count: number } | null = null;
 
     function drawBuffer(
@@ -532,6 +579,21 @@ export default function GlobeCanvas({
       last = time;
       const s = settings.current;
       if (
+        s.focusCoords &&
+        s.focusCoords.nonce !== focusNonceSeen
+      ) {
+        focusNonceSeen = s.focusCoords.nonce;
+        let yaw = (-s.focusCoords.lon * Math.PI) / 180;
+        while (yaw - rotation.current.yaw > Math.PI) yaw -= Math.PI * 2;
+        while (yaw - rotation.current.yaw < -Math.PI) yaw += Math.PI * 2;
+        target = {
+          yaw,
+          pitch: Math.max(
+            -1.2,
+            Math.min(1.2, (s.focusCoords.lat * Math.PI) / 180),
+          ),
+        };
+      } else if (
         s.selected &&
         (s.selected.id !== selectedId || s.resetToken !== resetSeen)
       ) {
@@ -599,9 +661,48 @@ export default function GlobeCanvas({
         dirty = true;
       }
 
+      const nextConflictSig = s.conflictPoints
+        .slice(0, 240)
+        .map((c) => `${c.id}:${c.lat.toFixed(2)},${c.lon.toFixed(2)}`)
+        .join("|");
+      if (nextConflictSig !== conflictSignature) {
+        conflictSignature = nextConflictSig;
+        if (conflictPointBuffer) {
+          gl!.deleteBuffer(conflictPointBuffer.b);
+          conflictPointBuffer = null;
+        }
+        if (s.conflictPoints.length > 0) {
+          const pts = s.conflictPoints
+            .slice(0, 240)
+            .flatMap((c) => xyz(c, 1.031));
+          conflictPointBuffer = buffer(pts);
+        }
+        dirty = true;
+      }
+
+      const curSelectedConflict = s.selectedConflictId ?? "";
+      if (curSelectedConflict !== selectedConflictBufId) {
+        selectedConflictBufId = curSelectedConflict;
+        if (selectedConflictBuffer) {
+          gl!.deleteBuffer(selectedConflictBuffer.b);
+          selectedConflictBuffer = null;
+        }
+        const matched = s.conflictPoints.find((c) => c.id === curSelectedConflict);
+        if (matched) {
+          selectedConflictBuffer = buffer(xyz(matched, 1.034));
+        }
+        dirty = true;
+      }
+
       if (dirty || target) {
+        const dprCap =
+          s.earthQuality === "reduced"
+            ? 1
+            : s.earthQuality === "balanced" || constrained
+              ? 1.5
+              : 2;
         const rect = el.getBoundingClientRect(),
-          dpr = Math.min(window.devicePixelRatio || 1, constrained ? 1.5 : 2),
+          dpr = Math.min(window.devicePixelRatio || 1, dprCap),
           width = Math.max(1, Math.round(rect.width * dpr)),
           height = Math.max(1, Math.round(rect.height * dpr));
         if (el.width !== width || el.height !== height) {
@@ -662,6 +763,24 @@ export default function GlobeCanvas({
             [0.95, 0.98, 1.0, 1.0],
             gl!.POINTS,
             8 * dpr,
+          );
+        }
+        if (conflictPointBuffer) {
+          drawBuffer(
+            conflictPointBuffer,
+            2,
+            [0.92, 0.24, 0.24, 0.96],
+            gl!.POINTS,
+            8.5 * dpr,
+          );
+        }
+        if (selectedConflictBuffer) {
+          drawBuffer(
+            selectedConflictBuffer,
+            3,
+            [0.98, 0.34, 0.34, 0.96],
+            gl!.POINTS,
+            17 * dpr,
           );
         }
 
@@ -802,11 +921,12 @@ export default function GlobeCanvas({
       drag = null;
       if (click) {
         const rect = el.getBoundingClientRect();
-        const candidates = settings.current.venues
-          .map((v) => ({
-            v,
+        const conflictHit = settings.current.conflictPoints
+          .slice(0, 240)
+          .map((c) => ({
+            c,
             p: project(
-              v,
+              c,
               rotation.current.yaw,
               rotation.current.pitch,
               rect.width,
@@ -815,23 +935,49 @@ export default function GlobeCanvas({
             ),
           }))
           .filter(({ p }) => p.visible)
-          .map(({ v, p }) => ({
-            v,
+          .map(({ c, p }) => ({
+            c,
             d: Math.hypot(
               e.clientX - rect.left - p.x,
               e.clientY - rect.top - p.y,
             ),
           }))
-          .filter((c) => c.d < 22)
-          .sort((a, b) => a.d - b.d);
-        if (candidates[0]) {
-          const same = candidates.filter(
-            (c) => Math.abs(c.d - candidates[0].d) < 3,
-          );
-          const index = same.findIndex(
-            (c) => c.v.id === settings.current.selected?.id,
-          );
-          settings.current.onSelect(same[(index + 1) % same.length].v);
+          .filter((x) => x.d < 20)
+          .sort((a, b) => a.d - b.d)[0];
+        if (conflictHit && settings.current.onSelectConflict) {
+          settings.current.onSelectConflict(conflictHit.c.id);
+        } else {
+          const candidates = settings.current.venues
+            .map((v) => ({
+              v,
+              p: project(
+                v,
+                rotation.current.yaw,
+                rotation.current.pitch,
+                rect.width,
+                rect.height,
+                settings.current.zoom,
+              ),
+            }))
+            .filter(({ p }) => p.visible)
+            .map(({ v, p }) => ({
+              v,
+              d: Math.hypot(
+                e.clientX - rect.left - p.x,
+                e.clientY - rect.top - p.y,
+              ),
+            }))
+            .filter((c) => c.d < 22)
+            .sort((a, b) => a.d - b.d);
+          if (candidates[0]) {
+            const same = candidates.filter(
+              (c) => Math.abs(c.d - candidates[0].d) < 3,
+            );
+            const index = same.findIndex(
+              (c) => c.v.id === settings.current.selected?.id,
+            );
+            settings.current.onSelect(same[(index + 1) % same.length].v);
+          }
         }
       }
       start();
@@ -951,7 +1097,18 @@ export default function GlobeCanvas({
 
   useEffect(() => {
     canvas.current?.dispatchEvent(new Event("x1-render"));
-  }, [venues, selected, autoRotate, motionOverride, resetToken, zoom]);
+  }, [
+    venues,
+    selected,
+    autoRotate,
+    motionOverride,
+    resetToken,
+    zoom,
+    focusCoords,
+    conflictPoints,
+    selectedConflictId,
+    earthQuality,
+  ]);
 
   if (failure || forceFallback)
     return (

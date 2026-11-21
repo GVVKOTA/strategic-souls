@@ -7,10 +7,12 @@ export function GET(request: Request) {
   return Response.json(
     {
       product: "Strategic Souls",
-      release: "X4",
-      revisionMarker: "x4-intelligent-scanner-search-community-2026-11-21",
-      dashboards: ["Global", "Strategy", "Community"],
+      release: "X6",
+      revisionMarker: "x6-apex-profile-avatars-community-earth-2026-11-21",
+      dashboards: ["Global", "Strategy", "Community", "Settings"],
       exchangeVenues: 24,
+      avatarPresets: 50,
+      earthMapBasemap: "NASA GIBS Blue Marble Next Generation & VIIRS Black Marble (Public Domain)",
       auth: "Cloudflare Workers D1 session authentication (email/password; optional Google OAuth)",
       marketData: {
         publicSources:
