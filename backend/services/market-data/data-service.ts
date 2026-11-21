@@ -66,18 +66,24 @@ export async function instrumentRegistry(subject?: string) {
   const configs = await providerConfigs();
   const ids = new Set<string>();
   const gw = resolveGatewayConfig(environment());
-  const ownerSeeds =
-    subject && isDataOwner(subject) && gw.flags.enablePrivateBrokerData
-      ? VERIFIED_SEED_INSTRUMENTS.map((i) => ({
-          id: i.id,
-          label: i.symbol,
-          name: i.name,
-          market: i.exchange,
-          assetClass: i.segment,
-          sourceUrl: ANGEL_ONE_SOURCE_URL,
-          mappingStatus: "PRIVATE_OWNER_BROKER_SEED",
-        }))
-      : [];
+  const ownerBrokerReady =
+    !!subject && isDataOwner(subject) && gw.flags.enablePrivateBrokerData;
+  const ownerSeeds = ownerBrokerReady
+    ? VERIFIED_SEED_INSTRUMENTS.map((i) => ({
+        id: i.id,
+        label: i.symbol,
+        name: i.name,
+        market: i.exchange,
+        assetClass: i.segment,
+        currency: i.currency,
+        expiry: i.expiry,
+        lotSize: i.lotSize,
+        tickSize: i.tickSize,
+        sourceUrl: ANGEL_ONE_SOURCE_URL,
+        mappingStatus: "PRIVATE_OWNER_BROKER_SEED",
+        availabilityState: "DATA_CONNECTED" as const,
+      }))
+    : [];
   return [
     ...configs
       .filter((c) => rightsActive(c, "display"))
@@ -88,12 +94,20 @@ export async function instrumentRegistry(subject?: string) {
           name: i.name,
           market: i.market,
           assetClass: i.type,
+          currency: i.currency,
           sourceUrl: PROVIDERS[c.provider].docs,
           mappingStatus: "OWNER_VERIFIED_SOURCE_MAPPING",
+          availabilityState: "DATA_CONNECTED" as const,
         })),
       ),
     ...ownerSeeds,
-    ...X2_INSTRUMENTS,
+    ...X2_INSTRUMENTS.map((entry) => ({
+      ...entry,
+      availabilityState:
+        entry.mappingStatus === "CONTRACT_SELECTION_REQUIRED"
+          ? ("CONTRACT_SELECTION_REQUIRED" as const)
+          : ("IDENTIFIED_ONLY" as const),
+    })),
   ].filter((i) => !ids.has(i.id) && !!ids.add(i.id));
 }
 export async function providerSettings(subject: string) {
@@ -748,6 +762,8 @@ export async function currentDisplayRights(
 export type ResearchUniverse = {
   datasets: ScanDataset[];
   excluded: { id: string; reason: string }[];
+  discoveredCount?: number;
+  authorizedCount?: number;
   source: string;
   pointInTime: boolean;
   adjusted: boolean;
@@ -773,13 +789,17 @@ export async function researchUniverse(
     provider?: string;
     instrumentIds?: string[];
     interval?: Interval;
+    limit?: number;
   } = {},
 ): Promise<ResearchUniverse> {
   if (options.interval && !["1d", "1wk", "1mo"].includes(options.interval))
     throw new HttpError(400, "Use a supported scan interval.");
+  const maxLimit = Math.max(1, Math.min(1000, options.limit ?? 500));
   const out: ResearchUniverse = {
     datasets: [],
     excluded: [],
+    discoveredCount: 0,
+    authorizedCount: 0,
     source: options.provider ?? "ECB",
     pointInTime: false,
     adjusted: false,
@@ -791,10 +811,13 @@ export async function researchUniverse(
     const m = await loadMarketData();
     out.asOf = m.asOf;
     out.rights = { analysis: true, storage: true };
-    for (const h of m.fxHistory.filter(
+    const matchedHistory = m.fxHistory.filter(
       (h) =>
         !options.instrumentIds?.length || options.instrumentIds.includes(h.id),
-    )) {
+    );
+    out.discoveredCount = matchedHistory.length;
+    out.authorizedCount = matchedHistory.length;
+    for (const h of matchedHistory) {
       if (!h.canAnalyze) {
         out.excluded.push({
           id: h.id,
@@ -843,14 +866,20 @@ export async function researchUniverse(
       (options.provider === "CONNECTED_MARKETS" ||
         options.provider === c.provider),
   );
-  const ids = [
+  const allCommercialIds = [
     ...new Set(configs.flatMap((c) => c.instruments.map((i) => i.id))),
-  ]
-    .filter(
-      (id) =>
-        !options.instrumentIds?.length || options.instrumentIds.includes(id),
-    )
-    .slice(0, 20);
+  ].filter(
+    (id) =>
+      !options.instrumentIds?.length || options.instrumentIds.includes(id),
+  );
+  const ids = allCommercialIds.slice(0, maxLimit);
+  for (const deferredId of allCommercialIds.slice(maxLimit)) {
+    out.excluded.push({
+      id: deferredId,
+      reason: `Deferred beyond single-batch scan cap (${maxLimit} instruments).`,
+    });
+  }
+  const loadedIds = new Set<string>();
   for (const id of ids) {
     const selected = configs.find((c) =>
       c.instruments.some((i) => i.id === id),
@@ -876,6 +905,7 @@ export async function researchUniverse(
       });
       continue;
     }
+    loadedIds.add(id);
     out.datasets.push({
       instrumentId: id,
       currency: a.currency,
@@ -913,77 +943,99 @@ export async function researchUniverse(
           : "DAILY_SOURCE_OBSERVATIONS",
     });
   }
-  // Owner-only private Angel One daily candles for Soul Scan when CONNECTED_MARKETS has no commercial provider datasets
+  // Owner-only private Angel One daily candles for Soul Scan (no hidden .slice(0, 5) truncation!)
   if (
-    out.datasets.length === 0 &&
     isDataOwner(subject) &&
-    (options.provider === "CONNECTED_MARKETS" || options.provider === "ANGELONE") &&
+    (options.provider === "ANGELONE" ||
+      (options.provider === "CONNECTED_MARKETS" && out.datasets.length === 0)) &&
     resolveGatewayConfig(environment()).flags.enablePrivateBrokerData
   ) {
-    const candidateIds = (
+    const rawBrokerCandidates = (
       options.instrumentIds?.length
         ? options.instrumentIds.filter((id) => /^(NSE|BSE|MCX):/i.test(id))
-        : [
-            DEFAULT_OWNER_WATCH_IDS[2],
-            DEFAULT_OWNER_WATCH_IDS[3],
-            DEFAULT_OWNER_WATCH_IDS[4],
-            DEFAULT_OWNER_WATCH_IDS[6],
-          ]
-    ).slice(0, 5);
-    for (const id of candidateIds) {
-      const a = await sourceResearch(
-        id,
-        subject,
-        options.interval ?? "1d",
-        false,
-        "analysis",
-      );
-      if (!a.candles.length || a.state === "REAL_BUT_STALE" || a.state === "NO_DATA") {
-        out.excluded.push({
-          id,
-          reason: "Private broker historical candles unavailable or stale for this symbol.",
-        });
-        continue;
-      }
-      out.datasets.push({
-        instrumentId: a.id,
-        currency: a.currency,
-        source: a.provider,
-        permitted: true,
-        frequency: "PUBLISHED_EOD",
-        maxAgeMs: 5 * 86400000,
-        observations: a.candles.map((c) => ({
-          eventAt: c.date + "T00:00:00.000Z",
-          knownAt: c.knownAt,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.volume,
-          fields: { openinterest: c.openInterest },
-        })),
-      });
-      out.lineage.push({
-        instrumentId: a.id,
-        provider: a.provider,
-        eventAt: a.candles.at(-1)?.date ?? null,
-        retrievedAt: a.retrievedAt ?? new Date().toISOString(),
-        adjustment: "RAW",
-        displayAllowed: true,
-        derivedDisplayAllowed: true,
-        rightsExpiresAt: null,
-        interval: options.interval ?? "1d",
-        periodPolicy:
-          options.interval && options.interval !== "1d"
-            ? "GROUPED_DAILY_OHLC; LATEST_CALENDAR_GROUP_MAY_BE_PARTIAL"
-            : "PRIVATE_OWNER_DAILY_SOURCE_OBSERVATIONS",
+        : VERIFIED_SEED_INSTRUMENTS.map((i) => i.id)
+    ).filter((id) => !loadedIds.has(id));
+    const remainingBudget = Math.max(0, maxLimit - out.datasets.length);
+    const candidateIds = rawBrokerCandidates.slice(0, remainingBudget);
+    for (const deferredId of rawBrokerCandidates.slice(remainingBudget)) {
+      out.excluded.push({
+        id: deferredId,
+        reason: `Deferred beyond single-batch scan cap (${maxLimit} instruments).`,
       });
     }
-    if (out.datasets.length > 0) {
+    const chunkSize = 6;
+    for (let i = 0; i < candidateIds.length; i += chunkSize) {
+      const batch = candidateIds.slice(i, i + chunkSize);
+      const batchResults = await Promise.all(
+        batch.map(async (id) => ({
+          id,
+          asset: await sourceResearch(
+            id,
+            subject,
+            options.interval ?? "1d",
+            false,
+            "analysis",
+          ),
+        })),
+      );
+      for (const { id, asset: a } of batchResults) {
+        if (!a.candles.length || a.state === "REAL_BUT_STALE" || a.state === "NO_DATA") {
+          out.excluded.push({
+            id,
+            reason:
+              "Private broker historical candles unavailable or stale for this symbol.",
+          });
+          continue;
+        }
+        loadedIds.add(a.id);
+        out.datasets.push({
+          instrumentId: a.id,
+          currency: a.currency,
+          source: a.provider,
+          permitted: true,
+          frequency: "PUBLISHED_EOD",
+          maxAgeMs: 5 * 86400000,
+          observations: a.candles.map((c) => ({
+            eventAt: c.date + "T00:00:00.000Z",
+            knownAt: c.knownAt,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            volume: c.volume,
+            fields: { openinterest: c.openInterest },
+          })),
+        });
+        out.lineage.push({
+          instrumentId: a.id,
+          provider: a.provider,
+          eventAt: a.candles.at(-1)?.date ?? null,
+          retrievedAt: a.retrievedAt ?? new Date().toISOString(),
+          adjustment: "RAW",
+          displayAllowed: true,
+          derivedDisplayAllowed: true,
+          rightsExpiresAt: null,
+          interval: options.interval ?? "1d",
+          periodPolicy:
+            options.interval && options.interval !== "1d"
+              ? "GROUPED_DAILY_OHLC; LATEST_CALENDAR_GROUP_MAY_BE_PARTIAL"
+              : "PRIVATE_OWNER_DAILY_SOURCE_OBSERVATIONS",
+        });
+      }
+    }
+    if (out.datasets.length > 0 && options.provider === "ANGELONE") {
+      out.source = "Angel One SmartAPI (Private Owner)";
+      out.asOf = new Date().toISOString();
+    } else if (
+      out.datasets.length > 0 &&
+      out.datasets.every((d) => d.source === "Angel One SmartAPI (Private Owner)")
+    ) {
       out.source = "Angel One SmartAPI (Private Owner)";
       out.asOf = new Date().toISOString();
     }
   }
+  out.discoveredCount = out.datasets.length + out.excluded.length;
+  out.authorizedCount = out.datasets.length;
   out.rights = {
     analysis: out.datasets.length > 0,
     storage: out.datasets.length > 0,

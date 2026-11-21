@@ -13,6 +13,11 @@ import {
   type OutcomeDefinition,
   type preflightResearch,
 } from "../../../backend/services/research/research";
+import {
+  X2_INSTRUMENTS,
+  registryInstrument,
+  searchCanonicalInstruments,
+} from "../../../backend/services/market-data/instrument-registry";
 import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import { TradingViewWidget } from "../../components/tradingview-widget";
 import {
@@ -116,6 +121,29 @@ const defaultTree: RuleTree = {
     { kind: "condition", rule: { field: "rsi14", op: "<", value: 40 } },
   ],
 };
+
+function buildSampleTestCsv(): string {
+  const rows = ["symbol,date,open,high,low,close,volume"];
+  const specs: [string, number, number][] = [
+    ["NSE:HDFCBANK", 1680, 4.5],
+    ["NSE:SBIN", 1120, 3.2],
+    ["NSE:RELIANCE", 1410, -2.5],
+    ["NSE:TCS", 4150, 8.0],
+    ["NSE:INFY", 1890, -3.0],
+  ];
+  const baseMs = Date.UTC(2026, 9, 1);
+  for (const [sym, start, step] of specs) {
+    for (let d = 0; d < 28; d++) {
+      const date = new Date(baseMs + d * 86_400_000).toISOString().slice(0, 10);
+      const close = Math.round((start + d * step + (d % 3 === 0 ? -step * 0.4 : 0)) * 100) / 100;
+      const open = Math.round((close - step * 0.3) * 100) / 100;
+      const high = Math.round((Math.max(open, close) + Math.abs(step) * 0.8 + 2) * 100) / 100;
+      const low = Math.round((Math.min(open, close) - Math.abs(step) * 0.8 - 2) * 100) / 100;
+      rows.push(`${sym},${date},${open},${high},${low},${close},${150000 + d * 2500}`);
+    }
+  }
+  return rows.join("\n");
+}
 export default function ResearchWorkspace({
   data,
   workspace,
@@ -144,6 +172,12 @@ export default function ResearchWorkspace({
     [description, setDescription] = useState(""),
     [universe, setUniverse] =
       useState<ResearchDefinition["universe"]>("ECB_DAILY"),
+    [universePreset, setUniversePreset] = useState<
+      "INDIAN_EQUITIES" | "MCX_FUTURES" | "MY_WATCHLIST" | "ECB_DAILY" | "CUSTOM_CSV"
+    >("ECB_DAILY"),
+    [customCsv, setCustomCsv] = useState(""),
+    [pickerQuery, setPickerQuery] = useState(""),
+    [resultSort, setResultSort] = useState<"STATUS" | "SYMBOL">("STATUS"),
     [interval, setInterval] = useState<ResearchDefinition["interval"]>("1d"),
     [instruments, setInstruments] = useState(""),
     [partialPolicy, setPartial] =
@@ -195,10 +229,14 @@ export default function ResearchWorkspace({
     queueMicrotask(() => {
       if (alive && initialInstrument) {
         setInstruments(initialInstrument);
-        setUniverse(
-          initialInstrument.startsWith("ECB:")
+        const isEcb = initialInstrument.startsWith("ECB:");
+        setUniverse(isEcb ? "ECB_DAILY" : "CONNECTED_MARKETS");
+        setUniversePreset(
+          isEcb
             ? "ECB_DAILY"
-            : "CONNECTED_MARKETS",
+            : initialInstrument.startsWith("MCX:")
+              ? "MCX_FUTURES"
+              : "INDIAN_EQUITIES",
         );
         setPreflight(null);
       }
@@ -207,6 +245,65 @@ export default function ResearchWorkspace({
       alive = false;
     };
   }, [initialInstrument]);
+
+  const pickerMatches = useMemo(() => {
+    if (!pickerQuery.trim()) return [];
+    return searchCanonicalInstruments(pickerQuery, X2_INSTRUMENTS, {
+      limit: 6,
+    });
+  }, [pickerQuery]);
+
+  function applyUniversePreset(
+    next:
+      | "INDIAN_EQUITIES"
+      | "MCX_FUTURES"
+      | "MY_WATCHLIST"
+      | "ECB_DAILY"
+      | "CUSTOM_CSV",
+  ) {
+    setUniversePreset(next);
+    setPreflight(null);
+    if (next === "ECB_DAILY") {
+      setUniverse("ECB_DAILY");
+      setInstruments("");
+      setCustomCsv("");
+      return;
+    }
+    if (next === "INDIAN_EQUITIES") {
+      setUniverse("CONNECTED_MARKETS");
+      setInstruments("");
+      setCustomCsv("");
+      return;
+    }
+    if (next === "MCX_FUTURES") {
+      setUniverse("CONNECTED_MARKETS");
+      setInstruments("MCX:GOLD04DEC26FUT, MCX:CRUDEOIL18DEC26FUT");
+      setCustomCsv("");
+      return;
+    }
+    if (next === "MY_WATCHLIST") {
+      setCustomCsv("");
+      const wl = workspace?.records.find((r) => r.kind === "watchlist");
+      const items = (wl?.payload?.items ?? []).filter(Boolean);
+      setInstruments(items.join(", "));
+      const allEcb = items.length > 0 && items.every((i) => i.startsWith("ECB:"));
+      setUniverse(allEcb ? "ECB_DAILY" : "CONNECTED_MARKETS");
+      return;
+    }
+    if (next === "CUSTOM_CSV") {
+      setUniverse("CONNECTED_MARKETS");
+      setInstruments("");
+      if (!customCsv.trim()) {
+        setCustomCsv(buildSampleTestCsv());
+      }
+      if (!name.trim()) {
+        setName(BEGINNER_SCAN_PRESETS[0].defaultName);
+      }
+      if (description.trim().length < 10) {
+        setDescription(BEGINNER_SCAN_PRESETS[0].defaultDescription);
+      }
+    }
+  }
   const canonical = useMemo(() => {
     try {
       return {
@@ -411,6 +508,9 @@ export default function ResearchWorkspace({
         const value = await api<Preflight>("/api/x1/workspace", {
           action: "preflight-scan",
           ...definition.value,
+          ...(universePreset === "CUSTOM_CSV" && customCsv.trim()
+            ? { customCsv }
+            : {}),
         });
         setPreflight({ signature, value });
         if (value.preflight.blocked)
@@ -440,6 +540,9 @@ export default function ResearchWorkspace({
           action: "run-scan",
           requestId: pending.current.id,
           ...definition.value,
+          ...(universePreset === "CUSTOM_CSV" && customCsv.trim()
+            ? { customCsv }
+            : {}),
         });
         setSelected(result.id);
         setHistoryTab("Scan History");
@@ -517,6 +620,12 @@ export default function ResearchWorkspace({
                 </div>
               }
             >
+              <div className="x1-chip-row" aria-label="Soul Scan 4-step workflow">
+                <span>1. Choose universe</span>
+                <span>2. Define rules</span>
+                <span>3. Check coverage</span>
+                <span>4. Run &amp; review evidence</span>
+              </div>
               <label className="x1-label">
                 Scan name
                 <input
@@ -537,16 +646,133 @@ export default function ResearchWorkspace({
                   onChange={(e) => setDescription(e.target.value)}
                 />
               </label>
+              <div className="x1-label">
+                <span>Step 1 · Where should we scan?</span>
+                <div className="x3-preset-grid" role="group" aria-label="Where should we scan">
+                  <button
+                    type="button"
+                    className="x3-preset-card"
+                    aria-pressed={universePreset === "INDIAN_EQUITIES"}
+                    onClick={() => applyUniversePreset("INDIAN_EQUITIES")}
+                  >
+                    <strong>Indian Equities &amp; Indices (NSE / BSE)</strong>
+                    <span>
+                      Evaluates all entitled NSE/BSE stocks and indices (HDFCBANK,
+                      SBIN, RELIANCE, TCS, INFY, NIFTY, SENSEX). Never substitutes FX.
+                    </span>
+                    <small className="x1-caption">
+                      Requires Connected Provider or Owner Broker Gateway
+                    </small>
+                  </button>
+                  <button
+                    type="button"
+                    className="x3-preset-card"
+                    aria-pressed={universePreset === "MCX_FUTURES"}
+                    onClick={() => applyUniversePreset("MCX_FUTURES")}
+                  >
+                    <strong>MCX Commodity Futures</strong>
+                    <span>
+                      Evaluates active dated MCX futures contracts (GOLD04DEC26FUT,
+                      CRUDEOIL18DEC26FUT) with verified expiry and lot metadata.
+                    </span>
+                    <small className="x1-caption">
+                      Requires Connected Provider or Owner Broker Gateway
+                    </small>
+                  </button>
+                  <button
+                    type="button"
+                    className="x3-preset-card"
+                    aria-pressed={universePreset === "MY_WATCHLIST"}
+                    onClick={() => applyUniversePreset("MY_WATCHLIST")}
+                  >
+                    <strong>My Watchlist</strong>
+                    <span>
+                      Scans the instruments saved in your private watchlist using
+                      their verified canonical IDs.
+                    </span>
+                    <small className="x1-caption">
+                      {(workspace?.records.find((r) => r.kind === "watchlist")?.payload?.items
+                        ?.length ?? 0) > 0
+                        ? `${workspace?.records.find((r) => r.kind === "watchlist")?.payload?.items?.length} saved watchlist instruments`
+                        : "Save a watchlist in Global to prefill"}
+                    </small>
+                  </button>
+                  <button
+                    type="button"
+                    className="x3-preset-card"
+                    aria-pressed={universePreset === "ECB_DAILY"}
+                    onClick={() => applyUniversePreset("ECB_DAILY")}
+                  >
+                    <strong>Currencies (Official ECB Daily FX)</strong>
+                    <span>
+                      Official daily European Central Bank FX reference pairs
+                      (USD/INR, EUR/USD, etc.).
+                    </span>
+                    <small className="x1-caption">
+                      AVAILABLE · {data?.fxHistory.length ?? 6} reference pairs connected
+                    </small>
+                  </button>
+                  <button
+                    type="button"
+                    className="x3-preset-card"
+                    aria-pressed={universePreset === "CUSTOM_CSV"}
+                    onClick={() => applyUniversePreset("CUSTOM_CSV")}
+                  >
+                    <strong>Private User CSV OHLCV Dataset</strong>
+                    <span>
+                      Evaluate your own historical OHLCV CSV (or a 5-stock Indian
+                      equity TEST DATA fixture) privately without a paid API key.
+                    </span>
+                    <small className="x1-caption">
+                      AVAILABLE · Personal research only (not live exchange data)
+                    </small>
+                  </button>
+                </div>
+              </div>
+              {universePreset === "CUSTOM_CSV" && (
+                <div className="x1-label">
+                  <span>
+                    Private CSV OHLCV data (<code>symbol,date,open,high,low,close,volume</code> · TEST / USER-IMPORTED, not live)
+                  </span>
+                  <textarea
+                    className="x1-code-editor"
+                    rows={5}
+                    value={customCsv}
+                    aria-label="Private CSV OHLCV dataset"
+                    placeholder="symbol,date,open,high,low,close,volume"
+                    onChange={(e) => {
+                      setCustomCsv(e.target.value);
+                      setPreflight(null);
+                    }}
+                  />
+                  <div className="x1-actions">
+                    <button
+                      type="button"
+                      className="x1-secondary"
+                      onClick={() => {
+                        setCustomCsv(buildSampleTestCsv());
+                        setPreflight(null);
+                      }}
+                    >
+                      Load 5-stock Indian equity test fixture (TEST DATA)
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="x2-research-form-grid">
                 <label>
                   Universe
                   <select
                     value={universe}
-                    onChange={(e) =>
-                      setUniverse(
-                        e.target.value as ResearchDefinition["universe"],
-                      )
-                    }
+                    onChange={(e) => {
+                      const nextU = e.target.value as ResearchDefinition["universe"];
+                      setUniverse(nextU);
+                      setUniversePreset(
+                        nextU === "ECB_DAILY" ? "ECB_DAILY" : "INDIAN_EQUITIES",
+                      );
+                      setCustomCsv("");
+                      setPreflight(null);
+                    }}
                   >
                     <option value="ECB_DAILY">ECB daily FX references</option>
                     <option value="CONNECTED_MARKETS">
@@ -580,11 +806,47 @@ export default function ResearchWorkspace({
               <details className="x1-small-details">
                 <summary>Scope and partial-data policy</summary>
                 <label className="x1-label">
+                  Find &amp; add instruments by name or ticker (HDFC, SBIN, NIFTY, GOLD…)
+                  <input
+                    value={pickerQuery}
+                    onChange={(e) => setPickerQuery(e.target.value)}
+                    placeholder="Type HDFC, HDFCBANK, SBIN, RELIANCE, NIFTY…"
+                  />
+                </label>
+                {pickerMatches.length > 0 && (
+                  <div className="x1-chip-row">
+                    {pickerMatches.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          const existing = instruments
+                            .split(/[\s,]+/)
+                            .filter(Boolean);
+                          if (!existing.includes(m.id)) {
+                            setInstruments([...existing, m.id].join(", "));
+                            if (!m.id.startsWith("ECB:")) {
+                              setUniverse("CONNECTED_MARKETS");
+                              if (universePreset === "ECB_DAILY") {
+                                setUniversePreset("INDIAN_EQUITIES");
+                              }
+                            }
+                            setPreflight(null);
+                          }
+                          setPickerQuery("");
+                        }}
+                      >
+                        + {m.name} ({m.id})
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <label className="x1-label">
                   Exact instruments (optional)
                   <input
                     value={instruments}
                     onChange={(e) => setInstruments(e.target.value)}
-                    placeholder="Comma-separated canonical IDs"
+                    placeholder="Comma-separated canonical IDs (e.g. NSE:HDFCBANK, NSE:SBIN)"
                   />
                 </label>
                 <label className="x1-label">
@@ -900,6 +1162,19 @@ export default function ResearchWorkspace({
                       )}
                     </select>
                   </label>
+                  <label>
+                    Sort{" "}
+                    <select
+                      aria-label="Sort scan results"
+                      value={resultSort}
+                      onChange={(e) =>
+                        setResultSort(e.target.value as "STATUS" | "SYMBOL")
+                      }
+                    >
+                      <option value="STATUS">Matched (PASS) first</option>
+                      <option value="SYMBOL">Symbol (A–Z)</option>
+                    </select>
+                  </label>
                   <button
                     className="x1-text-button"
                     onClick={() => {
@@ -917,32 +1192,54 @@ export default function ResearchWorkspace({
                   </button>
                 </div>
                 <div className="x1-scan-results">
-                  {active.payload.results.results
+                  {[...active.payload.results.results]
                     .filter((r) => filter === "ALL" || r.status === filter)
-                    .map((r) => (
-                      <details key={r.instrumentId}>
-                        <summary>
-                          <strong>{r.instrumentId}</strong>
-                          <span className="x1-badge">{r.status}</span>
-                        </summary>
-                        <ul>
-                          {r.reasons.map((reason, i) => (
-                            <li key={i}>{reason}</li>
-                          ))}
-                        </ul>
-                        <p className="x1-caption">
-                          {r.source} · observation{" "}
-                          {r.latestEventAt ?? "unavailable"}
-                        </p>
-                        <button
-                          className="x1-text-button"
-                          onClick={() => openAsset(r.instrumentId)}
-                        >
-                          Asset research
-                          <ArrowUpRight size={14} />
-                        </button>
-                      </details>
-                    ))}
+                    .sort((a, b) => {
+                      if (resultSort === "SYMBOL") {
+                        return a.instrumentId.localeCompare(b.instrumentId);
+                      }
+                      const rank = (s: string) =>
+                        s === "PASS" ? 0 : s === "FAIL" ? 1 : s === "UNKNOWN" ? 2 : 3;
+                      return (
+                        rank(a.status) - rank(b.status) ||
+                        a.instrumentId.localeCompare(b.instrumentId)
+                      );
+                    })
+                    .map((r) => {
+                      const regInfo = registryInstrument(
+                        r.instrumentId.replace(/^CSV:/, ""),
+                      );
+                      return (
+                        <details key={r.instrumentId} open={r.status === "PASS"}>
+                          <summary>
+                            <strong>
+                              {regInfo
+                                ? `${regInfo.name} · ${r.instrumentId}`
+                                : r.instrumentId}
+                            </strong>
+                            <span className="x1-badge">{r.status}</span>
+                          </summary>
+                          <ul>
+                            {r.reasons.map((reason, i) => (
+                              <li key={i}>{reason}</li>
+                            ))}
+                          </ul>
+                          <p className="x1-caption">
+                            {r.source} · observation{" "}
+                            {r.latestEventAt ?? "unavailable"}
+                          </p>
+                          <button
+                            className="x1-text-button"
+                            onClick={() =>
+                              openAsset(r.instrumentId.replace(/^CSV:/, ""))
+                            }
+                          >
+                            Asset research
+                            <ArrowUpRight size={14} />
+                          </button>
+                        </details>
+                      );
+                    })}
                 </div>
                 <details className="x1-small-details">
                   <summary>Snapshot & reproducibility</summary>

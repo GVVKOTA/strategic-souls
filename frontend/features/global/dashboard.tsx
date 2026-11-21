@@ -24,7 +24,11 @@ import {
   exchangeSession,
   type Exchange,
 } from "../../../backend/services/market-data/exchanges";
-import { X2_INSTRUMENTS } from "../../../backend/services/market-data/instrument-registry";
+import {
+  X2_INSTRUMENTS,
+  registryInstrument,
+  searchCanonicalInstruments,
+} from "../../../backend/services/market-data/instrument-registry";
 import { INSTRUMENTS } from "../../../backend/services/market-data/instruments";
 import type { DataPoint, MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import { CURRENCIES } from "../../../backend/engines/portfolio";
@@ -101,6 +105,7 @@ export function assetName(id: string, data: MarketSnapshot | null) {
   return (
     [...(data?.quotes || []), ...(data?.yields || [])].find((q) => q.id === id)
       ?.label ||
+    registryInstrument(id)?.name ||
     INSTRUMENTS.find((q) => q.id === id)?.name ||
     id
   );
@@ -276,23 +281,34 @@ export default function Global({
       .toLowerCase()
       .includes(exchangeSearch.toLowerCase()),
   );
-  const registry: { id: string; name: string; kind: string }[] = [
-    ...[...(data?.quotes || []), ...(data?.yields || [])].map((q) => ({
-      id: q.id,
-      name: q.label,
-      kind: q.assetClass,
-    })),
-    ...X2_INSTRUMENTS.map((i) => ({
-      id: i.id,
-      name: i.name,
-      kind: i.assetClass,
-    })),
-  ];
-  const filtered = registry
-    .filter((i) =>
-      (i.name + " " + i.id).toLowerCase().includes(search.toLowerCase()),
-    )
-    .slice(0, 40);
+  const registry = useMemo(
+    () => [
+      ...[...(data?.quotes || []), ...(data?.yields || [])].map((q) => ({
+        id: q.id,
+        label: q.id.split(":")[1] ?? q.id,
+        name: q.label,
+        kind: q.assetClass,
+        assetClass: q.assetClass,
+        market: q.provider,
+        aliases: [q.label],
+      })),
+      ...X2_INSTRUMENTS.map((i) => ({
+        id: i.id,
+        label: i.label,
+        name: i.name,
+        kind: i.assetClass,
+        assetClass: i.assetClass,
+        market: i.market,
+        aliases: i.aliases,
+        sector: i.sector,
+      })),
+    ],
+    [data],
+  );
+  const filtered = useMemo(
+    () => searchCanonicalInstruments(search, registry, { limit: 40 }),
+    [registry, search],
+  );
   const pendingWrite = useRef<{ signature: string; id: string } | null>(null);
   const openEditor = (kind: "list" | "portfolio" | "transaction" | "rename") => {
     if (!authenticated) {
@@ -360,18 +376,104 @@ export default function Global({
             until entitled valuation quotes are connected.
           </InfoTip>
         </div>
-        <button
-          className="x1-secondary x1-motion-button"
-          onClick={refreshData}
-          disabled={refreshing}
-          aria-busy={refreshing}
-        >
-          <RefreshCw size={16} />
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
+        <div className="x1-actions">
+          <button
+            type="button"
+            className="x1-primary x1-motion-button"
+            onClick={() => onNavigate?.("Strategy")}
+          >
+            Run a Soul Scan
+            <ArrowRight size={16} />
+          </button>
+          <button
+            className="x1-secondary x1-motion-button"
+            onClick={refreshData}
+            disabled={refreshing}
+            aria-busy={refreshing}
+          >
+            <RefreshCw size={16} />
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </header>
       {panel === "Overview" && (
         <>
+          <Panel
+            title="Discover any instrument or run a strategy scan"
+            kicker="Indian equities, indices, MCX dated futures, FX & yields"
+          >
+            <label className="x1-search">
+              <Search size={17} />
+              <input
+                aria-label="Quick instrument lookup"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search HDFC, HDFCBANK, SBIN, RELIANCE, TCS, INFY, NIFTY, GOLD, USD/INR…"
+              />
+            </label>
+            {search.trim() ? (
+              <div className="x1-search-results">
+                {filtered.slice(0, 8).map((item) => (
+                  <div className="x1-list-item" key={item.id}>
+                    <button
+                      type="button"
+                      className="x1-asset-button"
+                      onClick={() => openAsset(item.id)}
+                    >
+                      <strong>{item.name}</strong>
+                      <span>
+                        {item.id} · {item.market} {item.kind}
+                      </span>
+                    </button>
+                    <div className="x1-actions">
+                      <button
+                        type="button"
+                        className="x1-text-button"
+                        onClick={() => openAsset(item.id)}
+                      >
+                        Open terminal
+                        <ArrowUpRight size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="x1-text-button"
+                        onClick={() => analyze("close > sma(close, 20)", item.id)}
+                      >
+                        Scan symbol
+                        <ArrowRight size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {!filtered.length && (
+                  <p className="x1-caption">
+                    No matching instrument in the canonical registry for &ldquo;{search}&rdquo;.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="x1-chip-row">
+                {[
+                  ["NSE:HDFCBANK", "HDFC Bank (NSE)"],
+                  ["NSE:SBIN", "State Bank of India"],
+                  ["NSE:RELIANCE", "Reliance Industries"],
+                  ["NSE:TCS", "TCS"],
+                  ["NSE:NIFTY", "NIFTY 50"],
+                  ["BSE:SENSEX", "BSE SENSEX"],
+                  ["MCX:GOLD04DEC26FUT", "MCX Gold (04 Dec 26)"],
+                  ["ECB:USDINR", "USD / INR (ECB)"],
+                ].map(([symId, label]) => (
+                  <button
+                    key={symId}
+                    type="button"
+                    onClick={() => openAsset(symId)}
+                  >
+                    {label} · {symId}
+                  </button>
+                ))}
+              </div>
+            )}
+          </Panel>
           <div className="x1-private-brief">
             <button onClick={() => setPanel("Watchlists")}>
               <Star size={15} />

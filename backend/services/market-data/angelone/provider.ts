@@ -230,19 +230,22 @@ export class AngelOneReadOnlyProvider {
     // Respect documented Angel One per-second and per-minute quotas strictly.
     // If a rapid UI tab switch hits the 1-second spacing window, pace smoothly once (<= 1.2s) instead of failing.
     let effectiveNowMs = nowMs;
+    const perSecMax = bucket === "quote" ? 2 : 10;
     let perSec = this.rateLimiter.consume(
       `angelone:${bucket}:sec`,
-      bucket === "quote" ? 1 : 3,
+      perSecMax,
       1050,
       effectiveNowMs,
     );
-    if (!perSec.allowed && perSec.retryAfterMs <= 1200) {
+    let waitCycles = 0;
+    while (!perSec.allowed && perSec.retryAfterMs <= 1200 && waitCycles < 3) {
+      waitCycles += 1;
       const waitMs = perSec.retryAfterMs + 25;
       await new Promise((r) => setTimeout(r, waitMs));
       effectiveNowMs = Date.now();
       perSec = this.rateLimiter.consume(
         `angelone:${bucket}:sec`,
-        bucket === "quote" ? 1 : 3,
+        perSecMax,
         1050,
         effectiveNowMs,
       );

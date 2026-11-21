@@ -7,8 +7,8 @@ export function GET(request: Request) {
   return Response.json(
     {
       product: "Strategic Souls",
-      release: "X3.1",
-      revisionMarker: "x3.1-angelone-readonly-gateway-2026-11-21",
+      release: "X4",
+      revisionMarker: "x4-intelligent-scanner-search-community-2026-11-21",
       dashboards: ["Global", "Strategy", "Community"],
       exchangeVenues: 24,
       auth: "Cloudflare Workers D1 session authentication (email/password; optional Google OAuth)",

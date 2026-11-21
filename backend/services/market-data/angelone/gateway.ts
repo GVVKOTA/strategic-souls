@@ -464,7 +464,7 @@ export async function gatewaySearchInstruments(options: {
   fetcher?: typeof fetch;
 }): Promise<{ source: "LIVE_MASTER" | "IDENTITY_SEED"; instruments: InstrumentMasterEntry[] }> {
   const config = resolveGatewayConfig(options.runtimeEnv, options.requestUrl);
-  const limit = Math.max(1, Math.min(25, options.limit ?? 15));
+  const limit = Math.max(1, Math.min(50, options.limit ?? 20));
 
   if (options.isOwner && config.flags.enablePrivateBrokerData && config.adapterUrl && config.adapterAuthToken) {
     try {
