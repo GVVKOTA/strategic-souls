@@ -14,6 +14,16 @@ export type AuthSessionResponse = {
     displayName: string;
     email: string;
     authProvider: "email" | "google";
+    avatarId?: string;
+    handle?: string | null;
+    bio?: string;
+    discoverable?: boolean;
+    unreadNotifications?: number;
+    preferences?: {
+      motion: "system" | "minimal" | "full";
+      density: "comfortable" | "compact";
+      earthQuality: "auto" | "balanced" | "reduced";
+    };
   } | null;
 };
 

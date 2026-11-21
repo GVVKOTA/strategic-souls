@@ -20,14 +20,23 @@ import {
   ArrowRight,
   FolderArchive,
   Settings2,
-  LogIn,
-  LogOut,
   UserRound,
 } from "lucide-react";
 import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
+import type {
+  DensityPreference,
+  EarthQualityPreference,
+  MotionPreference,
+  UserProfileSnapshot,
+} from "../../../backend/services/profile/profile";
 import Global, { AssetDialog } from "../../features/global/dashboard";
 const Strategy = lazy(() => import("./strategy"));
 const Community = lazy(() => import("../../features/community/dashboard"));
+const SettingsView = lazy(() => import("../../features/account/settings-view"));
+import AvatarBadge from "../../features/account/avatar-badge";
+import AccountQuickPanel, {
+  type SettingsSection,
+} from "../../features/account/account-quick-panel";
 import EclipseIntro from "./eclipse-intro";
 import UniversalSearch from "./universal-search";
 const DataControl = lazy(() => import("../../features/global/data-control"));
@@ -36,17 +45,15 @@ import AuthPanel, {
 } from "../../features/auth/auth-panel";
 import { api, Modal, WorkspaceSkeleton, type WorkspaceState } from "./shared";
 
-type View = "Global" | "Strategy" | "Community";
-
-function userInitials(name: string | null | undefined): string {
-  const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return "SS";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
+type View = "Global" | "Strategy" | "Community" | "Settings";
 
 export default function X1Workspace() {
   const [view, setView] = useState<View>("Global"),
+    [settingsSection, setSettingsSection] = useState<SettingsSection>("profile"),
+    [communityTab, setCommunityTab] = useState<"explore" | "rooms" | "saved">("explore"),
+    [communityTabNonce, setCommunityTabNonce] = useState(0),
+    [quickMenuOpen, setQuickMenuOpen] = useState(false),
+    [profileRevision, setProfileRevision] = useState(0),
     [data, setData] = useState<MarketSnapshot | null>(null),
     [workspace, setWorkspace] = useState<WorkspaceState | null>(null),
     [authenticated, setAuthenticated] = useState<boolean | null>(null),
@@ -54,7 +61,6 @@ export default function X1Workspace() {
     [googleEnabled, setGoogleEnabled] = useState(false),
     [accepted, setAccepted] = useState<boolean | null>(null),
     [authModal, setAuthModal] = useState<"signin" | "register" | null>(null),
-    [accountModal, setAccountModal] = useState(false),
     [message, setMessage] = useState<{ text: string; error: boolean } | null>(
       null,
     ),
@@ -63,6 +69,9 @@ export default function X1Workspace() {
     [introPreview, setIntroPreview] = useState(false),
     [initialFormula, setInitialFormula] = useState(""),
     [initialInstrument, setInitialInstrument] = useState(""),
+    [initialUniversePreset, setInitialUniversePreset] = useState<
+      "INDIAN_EQUITIES" | "MCX_FUTURES" | "MY_WATCHLIST" | "ECB_DAILY" | "CUSTOM_CSV" | undefined
+    >(undefined),
     [sharedFormula, setSharedFormula] = useState(""),
     [globalPanel, setGlobalPanel] = useState("Overview"),
     [strategyPanel, setStrategyPanel] = useState("Soul Scan"),
@@ -71,18 +80,29 @@ export default function X1Workspace() {
     [dataControl, setDataControl] = useState(false),
     [isOwner, setIsOwner] = useState(false),
     [refreshing, setRefreshing] = useState(false),
-    [motionPref, setMotionPref] = useState<"system" | "minimal">("system");
+    [motionPref, setMotionPref] = useState<MotionPreference>("system"),
+    [densityPref, setDensityPref] = useState<DensityPreference>("comfortable"),
+    [earthQuality, setEarthQuality] = useState<EarthQualityPreference>("auto");
+
+  const avatarTriggerRef = useRef<HTMLButtonElement>(null);
+  const previousView = useRef<"Global" | "Strategy" | "Community">("Global");
 
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem("ss-motion-pref");
-      if (stored === "minimal") queueMicrotask(() => setMotionPref("minimal"));
+      if (stored === "minimal" || stored === "full") {
+        queueMicrotask(() => setMotionPref(stored));
+      }
+      const storedDensity = window.localStorage.getItem("ss-density-pref");
+      if (storedDensity === "compact") {
+        queueMicrotask(() => setDensityPref("compact"));
+      }
     } catch {
       /* Storage is optional. */
     }
   }, []);
 
-  const updateMotionPref = (next: "system" | "minimal") => {
+  const updateMotionPref = (next: MotionPreference) => {
     setMotionPref(next);
     try {
       window.localStorage.setItem("ss-motion-pref", next);
@@ -152,6 +172,12 @@ export default function X1Workspace() {
       setAccepted(session.authenticated ? session.accepted : null);
       setSessionError("");
 
+      if (session.user?.preferences) {
+        setMotionPref(session.user.preferences.motion);
+        setDensityPref(session.user.preferences.density);
+        setEarthQuality(session.user.preferences.earthQuality);
+      }
+
       const canLoadPrivate = session.authenticated && session.accepted;
       if (canLoadPrivate) {
         const [ws, market] = await Promise.allSettled([
@@ -186,9 +212,22 @@ export default function X1Workspace() {
     let alive = true;
     queueMicrotask(() => {
       const params = new URLSearchParams(window.location.search),
-        target = params.get("view")?.toLowerCase();
+        target = params.get("view")?.toLowerCase(),
+        sec = params.get("section")?.toLowerCase();
       if (target === "strategy") setView("Strategy");
       if (target === "community") setView("Community");
+      if (target === "settings") {
+        setView("Settings");
+        if (
+          sec === "profile" ||
+          sec === "appearance" ||
+          sec === "notifications" ||
+          sec === "privacy" ||
+          sec === "account"
+        ) {
+          setSettingsSection(sec);
+        }
+      }
       if (params.get("panel")) {
         setGlobalPanel(params.get("panel")!);
         setStrategyPanel(params.get("panel")!);
@@ -249,6 +288,10 @@ export default function X1Workspace() {
       )
     )
       return false;
+    if (next !== "Settings") {
+      previousView.current = next;
+    }
+    setQuickMenuOpen(false);
     setView(next);
     window.history.replaceState(null, "", "/?view=" + next.toLowerCase());
     document.getElementById("x1-main")?.focus();
@@ -256,9 +299,64 @@ export default function X1Workspace() {
     return true;
   }
 
-  const analyze = (formula = "close > sma(close, 20)", instrumentId = "") => {
+  const openSettings = useCallback((section: SettingsSection = "profile") => {
+    if (!authRef.current.authenticated) {
+      setQuickMenuOpen(false);
+      setAuthModal("signin");
+      return;
+    }
+    setSettingsSection(section);
+    setQuickMenuOpen(false);
+    setView("Settings");
+    window.history.replaceState(
+      null,
+      "",
+      "/?view=settings&section=" + encodeURIComponent(section),
+    );
+    document.getElementById("x1-main")?.focus();
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, []);
+
+  const handleProfileSynced = useCallback((profile: UserProfileSnapshot) => {
+    setAuthUser((prev) =>
+      prev
+        ? {
+            ...prev,
+            displayName: profile.displayName,
+            avatarId: profile.avatarId,
+            handle: profile.handle,
+            bio: profile.bio,
+            discoverable: profile.social.discoverable,
+            unreadNotifications: profile.unreadNotifications,
+            preferences: profile.preferences,
+          }
+        : prev,
+    );
+    setMotionPref(profile.preferences.motion);
+    setDensityPref(profile.preferences.density);
+    setEarthQuality(profile.preferences.earthQuality);
+    setProfileRevision((r) => r + 1);
+    try {
+      window.localStorage.setItem("ss-motion-pref", profile.preferences.motion);
+      window.localStorage.setItem("ss-density-pref", profile.preferences.density);
+    } catch {
+      /* Storage is optional. */
+    }
+  }, []);
+
+  const analyze = (
+    formula = "close > sma(close, 20)",
+    instrumentId = "",
+    universePreset?:
+      | "INDIAN_EQUITIES"
+      | "MCX_FUTURES"
+      | "MY_WATCHLIST"
+      | "ECB_DAILY"
+      | "CUSTOM_CSV",
+  ) => {
     setInitialInstrument(instrumentId);
     setInitialFormula(formula);
+    setInitialUniversePreset(universePreset);
     setStrategyPanel("Soul Scan");
     navigate("Strategy");
     setAsset("");
@@ -268,12 +366,16 @@ export default function X1Workspace() {
     setBusy(true);
     try {
       await api("/api/auth/signout", {});
-      setAccountModal(false);
+      setQuickMenuOpen(false);
       setAuthenticated(false);
       setAuthUser(null);
       setAccepted(null);
       setIsOwner(false);
       setWorkspace(null);
+      if (view === "Settings") {
+        setView("Global");
+        window.history.replaceState(null, "", "/?view=global");
+      }
       try {
         setData(await loadMarket(false));
       } catch {
@@ -311,7 +413,11 @@ export default function X1Workspace() {
   const isSignedIn = authenticated === true;
 
   return (
-    <div className="x1-app" data-motion={motionPref}>
+    <div
+      className="x1-app"
+      data-motion={motionPref === "minimal" ? "minimal" : "system"}
+      data-density={densityPref}
+    >
       <EclipseIntro
         key={introPreview ? "preview" : "normal"}
         ready={
@@ -420,23 +526,68 @@ export default function X1Workspace() {
             </span>
             <ArrowUpRight size={14} />
           </button>
-          {isSignedIn ? (
-            <button
-              className="x1-account"
-              aria-label={`${authUser?.displayName || "Account"} · Open account controls`}
-              onClick={() => setAccountModal(true)}
-            >
-              {userInitials(authUser?.displayName)}
-            </button>
-          ) : (
-            <button
-              className="x1-secondary x2-signin-trigger"
-              onClick={() => setAuthModal("signin")}
-            >
-              <LogIn size={15} />
-              <span>Sign in</span>
-            </button>
-          )}
+          <div className="x6-account-anchor">
+            {isSignedIn ? (
+              <button
+                ref={avatarTriggerRef}
+                type="button"
+                className="x6-avatar-trigger"
+                aria-haspopup="dialog"
+                aria-expanded={quickMenuOpen}
+                aria-controls="ss-account-quick-panel"
+                aria-label={`${authUser?.displayName || "Account"} · Open account control center`}
+                onClick={() => setQuickMenuOpen((v) => !v)}
+              >
+                <AvatarBadge
+                  avatarId={authUser?.avatarId}
+                  size={36}
+                  ring
+                  alt=""
+                />
+                {(authUser?.unreadNotifications ?? 0) > 0 && (
+                  <span className="x6-avatar-dot" aria-hidden="true" />
+                )}
+              </button>
+            ) : (
+              <button
+                ref={avatarTriggerRef}
+                type="button"
+                className="x6-avatar-trigger x6-avatar-trigger-guest"
+                aria-haspopup="dialog"
+                aria-expanded={quickMenuOpen}
+                aria-controls="ss-account-quick-panel"
+                aria-label="Guest explorer menu"
+                onClick={() => setQuickMenuOpen((v) => !v)}
+              >
+                <UserRound size={16} />
+                <span>Sign in</span>
+              </button>
+            )}
+            <AccountQuickPanel
+              open={quickMenuOpen}
+              onClose={() => setQuickMenuOpen(false)}
+              triggerRef={avatarTriggerRef}
+              signedIn={isSignedIn}
+              displayName={authUser?.displayName}
+              handle={authUser?.handle}
+              avatarId={authUser?.avatarId}
+              discoverable={authUser?.discoverable}
+              unreadNotifications={authUser?.unreadNotifications ?? 0}
+              motionPref={motionPref}
+              onMotionChange={updateMotionPref}
+              busy={busy}
+              onOpenSettings={openSettings}
+              onOpenSaved={() => {
+                setCommunityTab("saved");
+                setCommunityTabNonce((n) => n + 1);
+                navigate("Community");
+              }}
+              onOpenHelp={() => setAbout(true)}
+              onSignIn={() => setAuthModal("signin")}
+              onRegister={() => setAuthModal("register")}
+              onSignOut={() => void handleSignOut()}
+            />
+          </div>
         </header>
         <main id="x1-main" tabIndex={-1} className="x1-main">
           {sessionError && (
@@ -558,10 +709,18 @@ export default function X1Workspace() {
                   refreshing={refreshing}
                   initialPanel={globalPanel}
                   onNavigate={navigate}
+                  earthQuality={earthQuality}
                 />
               ) : view === "Strategy" ? (
                 <Strategy
-                  key={"strategy-" + initialFormula + "-" + strategyPanel}
+                  key={
+                    "strategy-" +
+                    initialFormula +
+                    "-" +
+                    (initialUniversePreset ?? "") +
+                    "-" +
+                    strategyPanel
+                  }
                   data={data}
                   workspace={workspace}
                   authenticated={isSignedIn && accepted === true}
@@ -571,21 +730,64 @@ export default function X1Workspace() {
                   openAsset={setAsset}
                   initialFormula={initialFormula}
                   initialInstrument={initialInstrument}
+                  initialUniversePreset={initialUniversePreset}
                   initialPanel={strategyPanel}
                   share={(formula) => {
                     setSharedFormula(formula);
+                    setCommunityTab("rooms");
+                    setCommunityTabNonce((n) => n + 1);
                     navigate("Community");
                     notify(
-                      "Method ready. Open a private group and create a shared Soul.",
+                      "Method ready. Open a Research Room to create a shared Soul.",
                     );
                   }}
                 />
+              ) : view === "Settings" ? (
+                isSignedIn ? (
+                  <SettingsView
+                    initialSection={settingsSection}
+                    notify={notify}
+                    onBack={() => navigate(previousView.current)}
+                    onProfileSynced={handleProfileSynced}
+                    onSignOut={() => void handleSignOut()}
+                  />
+                ) : (
+                  <section className="x1-panel">
+                    <h2>Sign in to access Settings &amp; Preferences</h2>
+                    <p className="x1-caption">
+                      Profile settings, 50 preset avatars, and privacy preferences are private to your account.
+                    </p>
+                    <div className="x1-actions">
+                      <button
+                        type="button"
+                        className="x1-primary x1-motion-button"
+                        onClick={() => setAuthModal("signin")}
+                      >
+                        Sign in
+                        <ArrowRight size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        className="x1-secondary"
+                        onClick={() => navigate("Global")}
+                      >
+                        Back to Global
+                      </button>
+                    </div>
+                  </section>
+                )
               ) : (
                 <Community
                   authenticated={isSignedIn && accepted === true}
                   onRequireAuth={() => setAuthModal("signin")}
                   notify={notify}
                   sharedFormula={sharedFormula}
+                  currentUserAvatarId={authUser?.avatarId}
+                  currentUserDisplayName={authUser?.displayName}
+                  profileRevision={profileRevision}
+                  initialTab={communityTab}
+                  tabNonce={communityTabNonce}
+                  onOpenSettings={openSettings}
                 />
               )}
             </div>
@@ -694,76 +896,6 @@ export default function X1Workspace() {
           />
         </Modal>
       )}
-      {accountModal && isSignedIn && (
-        <Modal title="Your account" onClose={() => setAccountModal(false)}>
-          <dl className="x1-details">
-            <div>
-              <dt>Researcher</dt>
-              <dd>{authUser?.displayName || "Researcher"}</dd>
-            </div>
-            <div>
-              <dt>Email</dt>
-              <dd>{authUser?.email || "—"}</dd>
-            </div>
-            <div>
-              <dt>Sign-in method</dt>
-              <dd>
-                {authUser?.authProvider === "google"
-                  ? "Google OAuth"
-                  : "Email & password (Cloudflare D1)"}
-              </dd>
-            </div>
-          </dl>
-          <div className="x3-motion-pref">
-            <span>Interface motion</span>
-            <div className="x1-segment" role="group" aria-label="Interface motion preference">
-              {(["system", "minimal"] as const).map((pref) => (
-                <button
-                  key={pref}
-                  type="button"
-                  aria-pressed={motionPref === pref}
-                  onClick={() => updateMotionPref(pref)}
-                >
-                  {pref === "system" ? "System (default)" : "Minimal"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="x1-actions">
-            <button
-              className="x1-secondary x1-motion-button"
-              onClick={() => {
-                setAccountModal(false);
-                navigate("Community");
-              }}
-            >
-              <UserRound size={15} />
-              Community profile
-            </button>
-            <a
-              className="x1-secondary x1-motion-button"
-              href="/api/export"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Export my private data
-              <ArrowUpRight size={15} />
-            </a>
-            <a className="x1-secondary x1-motion-button" href="/legacy">
-              Account settings & archive
-              <ArrowUpRight size={15} />
-            </a>
-            <button
-              className="x1-primary x1-motion-button"
-              disabled={busy}
-              onClick={() => void handleSignOut()}
-            >
-              <LogOut size={15} />
-              {busy ? "Signing out…" : "Sign out"}
-            </button>
-          </div>
-        </Modal>
-      )}
       {dataControl && isOwner && (
         <Modal
           title="Data Control Center"
@@ -789,13 +921,17 @@ export default function X1Workspace() {
           <dl className="x1-details">
             <div>
               <dt>Release</dt>
-              <dd>X4 · Research intelligence, Soul Scan 2.0 &amp; community</dd>
+              <dd>
+                X6 · Apex Edition (Profile Control Center, 50 Avatars, Research
+                Rooms &amp; SS Earth World Map)
+              </dd>
             </div>
             <div>
               <dt>Data</dt>
               <dd>
-                ECB daily FX and US Treasury daily yields (keyless), plus
-                owner-gated read-only broker or licensed EOD adapters when
+                ECB daily FX, US Treasury daily yields, and NASA GIBS
+                public-domain satellite imagery (keyless), plus owner-gated
+                broker/EOD and licensed UCDP/ACLED conflict adapters when
                 configured.
               </dd>
             </div>
@@ -803,7 +939,7 @@ export default function X1Workspace() {
               <dt>Authentication</dt>
               <dd>
                 Cloudflare Workers + D1 session authentication with HttpOnly
-                cookies. Group invites do not expose private portfolios.
+                cookies. Research Room invites never expose private portfolios.
               </dd>
             </div>
             <div>

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-hidden="true">
+  <defs>
+    <radialGradient id="bg_d03" cx="36%" cy="28%" r="76%">
+      <stop offset="0%" stop-color="#1B2028"/>
+      <stop offset="100%" stop-color="#07090C"/>
+    </radialGradient>
+    <linearGradient id="rim_d03" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E8EDF2" stop-opacity="0.34"/>
+      <stop offset="50%" stop-color="#A7B1BC" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#070809" stop-opacity="0.5"/>
+    </linearGradient>
+    <clipPath id="clip_d03">
+      <circle cx="64" cy="64" r="60"/>
+    </clipPath>
+  </defs>
+  <circle cx="64" cy="64" r="61" fill="url(#bg_d03)"/>
+  <g clip-path="url(#clip_d03)">
+    
+    <g stroke="#080A0D" stroke-width="1.6">
+      <polygon points="64,18 84,38 64,58 44,38" fill="#CAD3DC"/>
+      <polygon points="44,38 64,58 44,78 24,58" fill="#526072"/>
+      <polygon points="84,38 104,58 84,78 64,58" fill="#76C0FF"/>
+      <polygon points="64,58 84,78 64,98 44,78" fill="#333C4A"/>
+      <polygon points="44,78 64,98 44,112 24,98" fill="#8A98A8"/>
+      <polygon points="84,78 104,98 84,112 64,98" fill="#465466"/>
+    </g>
+  
+  </g>
+  <circle cx="64" cy="64" r="60" fill="none" stroke="url(#rim_d03)" stroke-width="2"/>
+</svg>

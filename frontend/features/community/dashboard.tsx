@@ -1,41 +1,64 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
-  Plus,
-  Users,
-  UserRound,
-  Heart,
-  MessageSquare,
-  Send,
-  History,
-  ShieldCheck,
-  Copy,
-  Check,
   ArrowUpRight,
+  Bookmark,
+  Check,
+  Compass,
+  Copy,
   Flag,
+  Heart,
+  History,
+  Mail,
+  MessageSquare,
   Pencil,
+  Plus,
+  Send,
+  Settings,
+  ShieldCheck,
+  Users,
 } from "lucide-react";
 import { compileFormula } from "../../../backend/engines/scan";
-import { Panel, Empty, Modal, WorkspaceSkeleton, api, moment, type Notice } from "../../components/workspace/shared";
+import {
+  Panel,
+  Empty,
+  Modal,
+  WorkspaceSkeleton,
+  api,
+  moment,
+  type Notice,
+} from "../../components/workspace/shared";
+import AvatarBadge from "../account/avatar-badge";
+import type { SettingsSection } from "../account/account-quick-panel";
 import {
   SocialWorkspace,
   GroupNetworkPanel,
   type SocialView,
 } from "./social-workspace";
 import "./social.css";
-type Body = {
+
+type ResearcherProfile = {
   handle: string;
   displayName: string;
   bio: string;
   avatar: string;
 };
-type Group = {
+type ResearchRoom = {
   id: string;
   name: string;
   description: string;
   role: string;
   ownerHandle: string;
+};
+type PublicRoomDirectoryItem = {
+  id: string;
+  name: string;
+  description: string;
+  handle: string;
+  memberCount: number;
+  soulCount: number;
+  createdAt: string;
 };
 type Soul = {
   id: string;
@@ -63,6 +86,7 @@ type Post = {
   formula: string;
   summary: string;
   authorHandle: string;
+  authorAvatar?: string | null;
   revision: number;
   createdAt: string;
   superCount: number;
@@ -75,15 +99,16 @@ type Comment = {
   postId: string;
   parentId: string | null;
   authorHandle: string;
+  authorAvatar?: string | null;
   text: string;
   createdAt: string;
   isMine: boolean;
   deletedAt: string | null;
 };
 type CommunityState = {
-  body: Body | null;
-  groups: Group[];
-  selectedGroup: Group | null;
+  body: ResearcherProfile | null;
+  groups: ResearchRoom[];
+  selectedGroup: ResearchRoom | null;
   members: {
     handle: string;
     displayName: string;
@@ -113,26 +138,65 @@ type Editor = {
   summary: string;
   changeNote: string;
 };
+type PublicProfileSheet = {
+  body: ResearcherProfile;
+  isMe: boolean;
+  canMessage: boolean;
+  souls: { id: string; title: string; summary: string; groupId: string; revision: number }[];
+};
+
+type CommunityTab = "explore" | "rooms" | "saved";
+
+const TOPIC_CHIPS = [
+  { id: "all", label: "All" },
+  { id: "indian", label: "Indian Stocks" },
+  { id: "mcx", label: "MCX" },
+  { id: "fx", label: "FX" },
+  { id: "macro", label: "Macro" },
+] as const;
+
 export default function Community({
   authenticated = true,
   onRequireAuth,
   notify,
   sharedFormula,
+  currentUserAvatarId,
+  currentUserDisplayName,
+  profileRevision = 0,
+  initialTab,
+  tabNonce = 0,
+  onOpenSettings,
 }: {
   authenticated?: boolean;
   onRequireAuth?: () => void;
   notify: Notice;
   sharedFormula: string;
+  currentUserAvatarId?: string | null;
+  currentUserDisplayName?: string | null;
+  profileRevision?: number;
+  initialTab?: CommunityTab;
+  tabNonce?: number;
+  onOpenSettings?: (section: SettingsSection) => void;
 }) {
-  const [networkView, setNetworkView] = useState<"Groups" | SocialView>(
-    "Groups",
+  const [tab, setTab] = useState<CommunityTab>(
+    initialTab || (authenticated ? "rooms" : "explore"),
   );
+  const [roomSection, setRoomSection] = useState<"research" | "discussion">(
+    "research",
+  );
+  const [topicFilter, setTopicFilter] = useState<string>("all");
+  const [publicRooms, setPublicRooms] = useState<PublicRoomDirectoryItem[]>([]);
+  const [loadingPublic, setLoadingPublic] = useState(true);
+  const [inboxOpen, setInboxOpen] = useState(false);
   const [networkQuery, setNetworkQuery] = useState("");
   const [networkShare, setNetworkShare] = useState<{
     id: string;
     revision: number;
     title: string;
   } | null>(null);
+  const [publicProfile, setPublicProfile] = useState<PublicProfileSheet | null>(
+    null,
+  );
   const mutationLock = useRef(false);
   const [superFeedback, setSuperFeedback] = useState<{
     id: string;
@@ -144,8 +208,14 @@ export default function Community({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [modal, setModal] = useState<
-      "profile" | "group" | "invite" | "join" | "members" | null
+      "profile" | "room" | "invite" | "join" | "members" | null
     >(null),
+    [createStep, setCreateStep] = useState<1 | 2>(1),
+    [createTopic, setCreateTopic] = useState("Macro & Multi-Asset"),
+    [createDiscoverable, setCreateDiscoverable] = useState(false),
+    [createName, setCreateName] = useState(""),
+    [createDesc, setCreateDesc] = useState(""),
+    [createHandle, setCreateHandle] = useState(""),
     [editor, setEditor] = useState<Editor | null>(null),
     [revisionSoul, setRevisionSoul] = useState<Soul | null>(null),
     [inviteCode, setInviteCode] = useState(""),
@@ -159,53 +229,94 @@ export default function Community({
     [publish, setPublish] = useState<Soul | null>(null),
     [cursor, setCursor] = useState(""),
     commentRetry = useRef<{ signature: string; id: string } | null>(null);
+
+  // Sync external deep-link tab changes (e.g., "Saved Research" in AccountQuickPanel)
+  useEffect(() => {
+    if (!initialTab || tabNonce <= 0) return;
+    let alive = true;
+    queueMicrotask(() => {
+      if (alive) setTab(initialTab);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [initialTab, tabNonce]);
+
+  // URL params and omnibar search event
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     queueMicrotask(() => {
       if (params.get("q") || params.get("handle")) {
         setNetworkQuery(params.get("q") || "");
-        setNetworkView("Discover");
+        setTab("explore");
       }
       if (params.get("group")) {
         setGroupId(params.get("group")!);
-        setNetworkView("Groups");
+        setTab("rooms");
       }
     });
     const searchEvent = (event: Event) => {
       const value = (event as CustomEvent<unknown>).detail;
       if (typeof value === "string") {
         setNetworkQuery(value.slice(0, 80));
-        setNetworkView("Discover");
+        setTab("explore");
       }
     };
     window.addEventListener("x2-community-search", searchEvent);
     return () => window.removeEventListener("x2-community-search", searchEvent);
   }, []);
-  async function reload(selected = groupId, before = cursor) {
-    setLoading(true);
-    try {
-      const state = await api<CommunityState>(
-        "/api/x1/community" +
-          (selected
-            ? "?groupId=" +
-              encodeURIComponent(selected) +
-              (before ? "&before=" + encodeURIComponent(before) : "")
-            : ""),
-      );
-      setData(state);
-      setError("");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
+
+  // Load public discoverable Research Rooms directory (works for guests & members)
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/community/public", { cache: "no-store", signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : { rooms: [] }))
+      .then((payload) => {
+        const parsed = payload as { rooms?: PublicRoomDirectoryItem[] };
+        if (!controller.signal.aborted && Array.isArray(parsed.rooms)) {
+          setPublicRooms(parsed.rooms);
+        }
+      })
+      .catch(() => {
+        /* Directory stays empty honestly on network failure. */
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingPublic(false);
+      });
+    return () => controller.abort();
+  }, [profileRevision]);
+
+  const reload = useCallback(
+    async (selected = groupId, before = cursor) => {
+      if (!authenticated) return;
+      setLoading(true);
+      try {
+        const state = await api<CommunityState>(
+          "/api/x1/community" +
+            (selected
+              ? "?groupId=" +
+                encodeURIComponent(selected) +
+                (before ? "&before=" + encodeURIComponent(before) : "")
+              : ""),
+        );
+        setData(state);
+        setError("");
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [authenticated, cursor, groupId],
+  );
+
   useEffect(() => {
     if (!authenticated) {
       queueMicrotask(() => {
         setLoading(false);
         setData(null);
         setError("");
+        setTab("explore");
       });
       return;
     }
@@ -234,7 +345,8 @@ export default function Community({
     return () => {
       alive = false;
     };
-  }, [authenticated, groupId, cursor]);
+  }, [authenticated, groupId, cursor, profileRevision]);
+
   async function mutate(
     input: Record<string, unknown>,
     success = "Saved privately.",
@@ -244,7 +356,9 @@ export default function Community({
     setBusy(true);
     try {
       const result = await api<Record<string, unknown>>(
-        input.action === "remove-member"
+        input.action === "remove-member" ||
+          input.action === "request-join" ||
+          input.action === "group-directory"
           ? "/api/x2/social"
           : "/api/x1/community",
         input,
@@ -253,7 +367,9 @@ export default function Community({
         setGroupId(result.groupId);
         setCursor("");
         await reload(result.groupId, "");
-      } else await reload();
+      } else {
+        await reload();
+      }
       notify(success);
       return result;
     } catch (e) {
@@ -264,653 +380,1145 @@ export default function Community({
       setBusy(false);
     }
   }
-  const body = data?.body,
-    group = data?.selectedGroup;
-  if (!authenticated) {
-    return (
-      <>
-        <header className="x1-page-title">
-          <div>
-            <h1>Research community</h1>
-          </div>
-        </header>
-        <Panel
-          title="Private research collaboration"
-          kicker="Sign in required"
-        >
-          <Empty
-            title="Join or create private research groups"
-            action={
-              <button
-                className="x1-primary x1-motion-button"
-                onClick={() => onRequireAuth?.()}
-              >
-                Sign in or create account
-                <ArrowRight size={16} />
-              </button>
-            }
-          >
-            Sign in to create your Body profile, share versioned Souls, review
-            revisions, and collaborate in private groups without exposing
-            personal portfolios.
-          </Empty>
-        </Panel>
-      </>
-    );
+
+  async function openPublicProfile(handle: string) {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    try {
+      const profile = await api<PublicProfileSheet>(
+        `/api/x2/social?view=profile&handle=${encodeURIComponent(handle)}`,
+      );
+      setPublicProfile(profile);
+    } catch (e) {
+      notify(
+        e instanceof Error
+          ? e.message
+          : "This profile is private or unavailable.",
+        true,
+      );
+    }
   }
+
+  function openCreateRoomFlow() {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    if (!data?.body) {
+      setModal("profile");
+      return;
+    }
+    setCreateStep(1);
+    setCreateTopic("Macro & Multi-Asset");
+    setCreateDiscoverable(false);
+    setCreateName("");
+    setCreateDesc("");
+    setCreateHandle("");
+    setModal("room");
+  }
+
+  async function handleCreateRoomSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (mutationLock.current) return;
+    mutationLock.current = true;
+    setBusy(true);
+    try {
+      const fullDesc = createDesc.trim()
+        ? `${createTopic} · ${createDesc.trim()}`
+        : createTopic;
+      const created = await api<{ groupId?: string }>("/api/x1/community", {
+        action: "create-group",
+        name: createName.trim(),
+        description: fullDesc.slice(0, 500),
+      });
+      if (created.groupId && createDiscoverable) {
+        const safeHandle = (
+          createHandle.trim() ||
+          createName
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "_")
+            .replace(/^[^a-z]+/, "room_")
+            .slice(0, 26)
+        ).padEnd(4, "0");
+        try {
+          await api("/api/x2/social", {
+            action: "group-directory",
+            groupId: created.groupId,
+            handle: safeHandle,
+            discoverable: true,
+          });
+        } catch {
+          /* Room is still created privately if handle collides. */
+        }
+      }
+      if (created.groupId) {
+        setGroupId(created.groupId);
+        setCursor("");
+        setTab("rooms");
+        await reload(created.groupId, "");
+      } else {
+        await reload();
+      }
+      setModal(null);
+      notify("Research Room created.");
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Could not create room.", true);
+    } finally {
+      mutationLock.current = false;
+      setBusy(false);
+    }
+  }
+
+  const filteredPublicRooms = useMemo(() => {
+    if (topicFilter === "all") return publicRooms;
+    const matchers: Record<string, RegExp> = {
+      indian: /nse|bse|india|nifty|sensex|equity|stock/i,
+      mcx: /mcx|gold|crude|silver|commodity|future/i,
+      fx: /fx|currency|ecb|usd|eur|inr|forex/i,
+      macro: /macro|yield|treasury|rate|earth|geo|global/i,
+    };
+    const re = matchers[topicFilter];
+    if (!re) return publicRooms;
+    return publicRooms.filter((r) => re.test(`${r.name} ${r.description}`));
+  }, [publicRooms, topicFilter]);
+
+  const body = data?.body;
+  const group = data?.selectedGroup;
+  const joinedIds = useMemo(
+    () => new Set((data?.groups ?? []).map((g) => g.id)),
+    [data?.groups],
+  );
+
+  const resolveAvatarForHandle = (handle: string, fallback?: string | null) => {
+    if (body && handle.toLowerCase() === body.handle.toLowerCase() && currentUserAvatarId) {
+      return currentUserAvatarId;
+    }
+    return fallback || "a01";
+  };
+
   return (
     <>
-      <header className="x1-page-title">
+      <header className="x6-comm-topbar">
         <div>
-          <h1>Research community</h1>
+          <h1 style={{ margin: 0 }}>Research Community</h1>
+          <p className="x1-caption" style={{ margin: "4px 0 0" }}>
+            Collaborative Research Rooms &amp; versioned Souls · Private portfolios never shared
+          </p>
         </div>
         <div className="x1-actions">
-          {body && (
-            <button
-              type="button"
-              className="x1-secondary x1-motion-button"
-              onClick={() => {
-                void navigator.clipboard?.writeText("@" + body.handle);
-                notify(`Copied @${body.handle} to clipboard.`);
-              }}
-            >
-              <Copy size={15} />@{body.handle}
-            </button>
-          )}
           <button
+            type="button"
             className="x1-primary x1-motion-button"
-            onClick={() => setModal("profile")}
+            onClick={openCreateRoomFlow}
           >
-            <UserRound size={16} />
-            {body ? "Edit your Body" : "Create your research profile (Body)"}
+            <Plus size={16} />
+            <span>Create Room</span>
           </button>
+          {authenticated && (
+            <>
+              <button
+                type="button"
+                className="x1-secondary"
+                onClick={() => setInboxOpen(true)}
+              >
+                <Mail size={15} />
+                <span>Messages</span>
+              </button>
+              <button
+                type="button"
+                className="x1-secondary"
+                onClick={() =>
+                  onOpenSettings ? onOpenSettings("profile") : setModal("profile")
+                }
+              >
+                <Settings size={15} />
+                <span>{body ? `@${body.handle}` : "Set @handle"}</span>
+              </button>
+            </>
+          )}
         </div>
       </header>
-      <section className="x3-journey" aria-label="Community quick guide">
-        <div className="x3-journey-head">
-          <strong>
-            {body
-              ? `Signed in as @${body.handle} (${body.displayName})`
-              : "Welcome to Community — how collaborative research works"}
-          </strong>
-          {!body && (
-            <button
-              type="button"
-              className="x1-text-button"
-              onClick={() => setModal("profile")}
-            >
-              Create your Body in 30 seconds
-              <ArrowRight size={14} />
-            </button>
-          )}
-        </div>
-        <div className="x3-glossary-grid">
-          <div className="x3-glossary-item">
-            <strong>1. Body (@handle) = Your research profile</strong>
-            <p>
-              Choose a public @handle and display name. Turn on{" "}
-              <em>Let other members find my Body</em> so peers can search your
-              @handle (internal user IDs are never searchable).
-            </p>
-          </div>
-          <div className="x3-glossary-item">
-            <strong>2. Group = A private research room</strong>
-            <p>
-              Create an invite-only or discoverable group to test market
-              hypotheses with teammates without exposing private portfolios.
-            </p>
-          </div>
-          <div className="x3-glossary-item">
-            <strong>3. Soul = A shared strategy hypothesis</strong>
-            <p>
-              Publish versioned Soul Scan formulas inside a group, compare
-              revision diffs, and discuss evidence with role-based permissions.
-            </p>
-          </div>
-        </div>
-      </section>
-      <nav className="x2-community-tabs" aria-label="Community sections">
+
+      {/* EXACTLY THREE TOP-LEVEL TABS: Explore | My Rooms | Saved */}
+      <nav className="x6-comm-tabs" aria-label="Community views" style={{ marginBottom: 16 }}>
         {(
           [
-            ["Discover", "Discover People & Groups"],
-            ["Groups", "My Groups"],
-            ["Messages", "Inbox"],
-            ["Saved", "Saved"],
-            ["Notifications", "Notifications"],
-            ["Privacy", "Privacy & Safety"],
+            ["explore", "Explore"],
+            ["rooms", "My Rooms"],
+            ["saved", "Saved"],
           ] as const
-        ).map(([item, label]) => (
+        ).map(([id, label]) => (
           <button
-            key={item}
-            aria-pressed={networkView === item}
-            onClick={() => setNetworkView(item)}
+            key={id}
+            type="button"
+            aria-pressed={tab === id}
+            onClick={() => setTab(id)}
           >
             {label}
           </button>
         ))}
       </nav>
+
       {error && (
         <div className="x1-callout" role="alert">
           {error}
-          <button className="x1-text-button" onClick={() => reload()}>
+          <button className="x1-text-button" onClick={() => void reload()}>
             Retry
           </button>
         </div>
       )}
-      {networkView !== "Groups" ? (
-        <SocialWorkspace
-          key={body?.handle || "new-body"}
-          view={networkView}
-          onView={setNetworkView}
-          notify={notify}
-          query={networkQuery}
-          shareSoul={networkShare}
-          onClearShare={() => setNetworkShare(null)}
-          onOpenGroup={(id) => {
-            setGroupId(id);
-            setCursor("");
-            setNetworkView("Groups");
-          }}
-        />
-      ) : (
-        <div className="x1-community-grid">
-          <aside>
-            <Panel
-              title={body ? body.displayName : "Your research identity"}
-              kicker="Your Body"
-            >
-              <div
-                className={
-                  "x1-profile-avatar x1-avatar-" + (body?.avatar || "mint")
+
+      {/* TAB 1: EXPLORE — Guest & Member Browsable Discoverable Research Rooms + Search */}
+      {tab === "explore" && (
+        <>
+          <Panel
+            title="Discoverable Research Rooms"
+            kicker="Opt-in public room directories · real rooms only"
+          >
+            <div className="x6-comm-chip-rail" role="group" aria-label="Filter rooms by topic">
+              {TOPIC_CHIPS.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className="x6-map-chip"
+                  aria-pressed={topicFilter === c.id}
+                  onClick={() => setTopicFilter(c.id)}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+
+            {loadingPublic ? (
+              <WorkspaceSkeleton label="Loading Research Room directory…" kind="panel" />
+            ) : filteredPublicRooms.length > 0 ? (
+              <div className="x6-comm-room-grid">
+                {filteredPublicRooms.map((r) => {
+                  const isMember = joinedIds.has(r.id);
+                  return (
+                    <article key={r.id} className="x6-comm-room-card">
+                      <div>
+                        <div className="x6-comm-room-meta">
+                          <span>@{r.handle}</span>
+                          <span>
+                            {r.memberCount} {r.memberCount === 1 ? "member" : "members"} ·{" "}
+                            {r.soulCount} {r.soulCount === 1 ? "Soul" : "Souls"}
+                          </span>
+                        </div>
+                        <h3 style={{ marginTop: 6 }}>{r.name}</h3>
+                        <p style={{ marginTop: 6 }}>
+                          {r.description || "Collaborative research room."}
+                        </p>
+                      </div>
+                      <div className="x1-actions">
+                        {isMember ? (
+                          <button
+                            type="button"
+                            className="x1-secondary"
+                            onClick={() => {
+                              setGroupId(r.id);
+                              setTab("rooms");
+                            }}
+                          >
+                            Open Room
+                            <ArrowRight size={14} />
+                          </button>
+                        ) : authenticated ? (
+                          <button
+                            type="button"
+                            className="x1-secondary"
+                            disabled={busy}
+                            onClick={() => {
+                              if (!body) {
+                                setModal("profile");
+                                return;
+                              }
+                              void mutate(
+                                { action: "request-join", groupId: r.id },
+                                "Join request sent to the room administrator.",
+                              );
+                            }}
+                          >
+                            Request to join
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="x1-secondary"
+                            onClick={() => onRequireAuth?.()}
+                          >
+                            Sign in to join
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <Empty
+                title="No discoverable Research Rooms yet"
+                action={
+                  <button
+                    type="button"
+                    className="x1-primary x1-motion-button"
+                    onClick={openCreateRoomFlow}
+                  >
+                    <Plus size={15} />
+                    {authenticated ? "Create the first discoverable Room" : "Sign in to create a Room"}
+                  </button>
                 }
               >
-                {body?.displayName?.slice(0, 2).toUpperCase() || "GV"}
-              </div>
-              <h3>
-                {body ? "@" + body.handle : "A name for your perspective"}
-              </h3>
-              <p>
-                {body?.bio ||
-                  "Create a unique @Body, add a short bio, then build a private research group."}
-              </p>
-              <button
-                className="x1-text-button"
-                onClick={() => setModal("profile")}
-              >
-                {body ? "Edit profile" : "Set up your Body"}
-                <ArrowRight size={15} />
-              </button>
-            </Panel>
-            <Panel
-              title="Your groups"
-              action={
-                <button
-                  className="x1-icon-button"
-                  disabled={!body}
-                  aria-label="Create private group"
-                  onClick={() => setModal("group")}
-                >
-                  <Plus size={17} />
-                </button>
-              }
-            >
-              <div className="x1-group-list">
-                {data?.groups.map((g) => (
+                {topicFilter !== "all"
+                  ? "No discoverable room matches this topic filter yet. Try switching to All or start a new Research Room."
+                  : "Rooms stay private unless their owner opts into directory discovery. Zero placeholder rooms are invented."}
+              </Empty>
+            )}
+          </Panel>
+
+          {authenticated ? (
+            <SocialWorkspace
+              key={`${body?.handle || "new"}-${profileRevision}`}
+              view="Discover"
+              onView={(v: SocialView) => {
+                if (v === "Messages") setInboxOpen(true);
+                else if (v === "Saved") setTab("saved");
+                else if (v === "Privacy" && onOpenSettings) onOpenSettings("privacy");
+              }}
+              notify={notify}
+              query={networkQuery}
+              shareSoul={networkShare}
+              onClearShare={() => setNetworkShare(null)}
+              onOpenGroup={(id) => {
+                setGroupId(id);
+                setCursor("");
+                setTab("rooms");
+              }}
+            />
+          ) : (
+            <Panel title="Search researchers & shared Souls" kicker="Member feature">
+              <Empty
+                title="Sign in to search researchers & collaborate"
+                action={
                   <button
-                    key={g.id}
-                    aria-pressed={groupId === g.id}
-                    onClick={() => {
-                      setLoading(true);
-                      setCursor("");
-                      setGroupId(g.id);
-                    }}
+                    type="button"
+                    className="x1-primary x1-motion-button"
+                    onClick={() => onRequireAuth?.()}
                   >
-                    <span className="x1-group-symbol">
-                      <Users size={16} />
-                    </span>
-                    <span>
-                      <strong>{g.name}</strong>
-                      <small>{g.role.toLowerCase()} · private</small>
-                    </span>
-                    <ArrowRight size={14} />
+                    Sign in or create account
+                    <ArrowRight size={15} />
                   </button>
-                ))}
-              </div>
-              {!data?.groups.length && (
-                <p className="x1-muted">
-                  Your first group starts with a shared question.
-                </p>
-              )}
-              <div className="x1-actions">
-                <button
-                  className="x1-text-button"
-                  disabled={!body}
-                  onClick={() => setModal("group")}
-                >
-                  Create a group
-                  <Plus size={14} />
-                </button>
-                <button
-                  className="x1-text-button"
-                  disabled={!body}
-                  onClick={() => setModal("join")}
-                >
-                  Accept an invite
-                  <ArrowRight size={14} />
-                </button>
-              </div>
+                }
+              >
+                Signed-in members can find opt-in researchers by @handle,
+                create Research Rooms, co-author versioned Souls, and exchange
+                direct research messages.
+              </Empty>
             </Panel>
-            <div className="x1-source-note">
-              <ShieldCheck size={20} />
-              <div>
-                <strong>Private by design</strong>
-                <p>
-                  Group publication stays inside current membership. Private
-                  groups remain restricted to invited and approved members.
-                  Public posting and payments are disabled.
-                </p>
-              </div>
-            </div>
-          </aside>
-          <div className="x1-community-main">
-            {loading && !data ? (
-              <WorkspaceSkeleton
-                label="Opening your private Community…"
-                kind="panel"
-              />
-            ) : group ? (
-              <>
+          )}
+        </>
+      )}
+
+      {/* TAB 2: MY ROOMS — Active Research Rooms + Clean Research / Discussion Tabs */}
+      {tab === "rooms" && (
+        <>
+          {!authenticated ? (
+            <Panel title="Your Research Rooms" kicker="Sign in required">
+              <Empty
+                title="Your research circle starts here"
+                action={
+                  <div className="x1-actions">
+                    <button
+                      type="button"
+                      className="x1-primary x1-motion-button"
+                      onClick={() => onRequireAuth?.()}
+                    >
+                      Sign in or create account
+                      <ArrowRight size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="x1-secondary"
+                      onClick={() => setTab("explore")}
+                    >
+                      <Compass size={15} />
+                      Explore Rooms
+                    </button>
+                  </div>
+                }
+              >
+                Create invite-only or discoverable Research Rooms to version
+                Soul Scan formulas and discuss evidence without exposing private
+                portfolios.
+              </Empty>
+            </Panel>
+          ) : (
+            <div className="x1-community-grid">
+              <aside>
                 <Panel
-                  title={group.name}
-                  kicker="Private research group"
+                  title="Your Research Rooms"
                   action={
                     <button
-                      className="x1-secondary x1-motion-button"
-                      onClick={() => setModal("members")}
+                      type="button"
+                      className="x1-icon-button"
+                      aria-label="Create Research Room"
+                      onClick={openCreateRoomFlow}
                     >
-                      <Users size={16} />
-                      {data.members.length} members
+                      <Plus size={17} />
                     </button>
                   }
                 >
-                  <p>
-                    {group.description ||
-                      "A private place to build and review a shared method."}
-                  </p>
-                  <div className="x1-actions">
-                    {data.capabilities.canEdit && (
+                  {!body && (
+                    <div className="x1-callout" style={{ marginBottom: 12 }}>
+                      <span>Set a @handle in Profile before creating or joining a Room.</span>
                       <button
-                        className="x1-primary x1-motion-button"
+                        type="button"
+                        className="x1-secondary"
                         onClick={() =>
-                          setEditor({
-                            title: "",
-                            formula: sharedFormula || "close > sma(close, 20)",
-                            summary: "",
-                            changeNote: "",
-                          })
+                          onOpenSettings ? onOpenSettings("profile") : setModal("profile")
                         }
                       >
-                        <Plus size={16} />
-                        Build a group Soul
+                        Set @handle
                       </button>
-                    )}
-                    {data.capabilities.canInvite && (
+                    </div>
+                  )}
+                  <div className="x1-group-list">
+                    {data?.groups.map((g) => (
                       <button
-                        className="x1-secondary x1-motion-button"
-                        onClick={() => setModal("invite")}
+                        key={g.id}
+                        aria-pressed={groupId === g.id}
+                        onClick={() => {
+                          setLoading(true);
+                          setCursor("");
+                          setGroupId(g.id);
+                        }}
                       >
-                        Invite a Body
-                        <ArrowRight size={15} />
+                        <span className="x1-group-symbol">
+                          <Users size={16} />
+                        </span>
+                        <span>
+                          <strong>{g.name}</strong>
+                          <small>{g.role.toLowerCase()} · Research Room</small>
+                        </span>
+                        <ArrowRight size={14} />
+                      </button>
+                    ))}
+                  </div>
+                  {!data?.groups.length && (
+                    <p className="x1-muted">
+                      No rooms joined yet. Explore discoverable rooms or create your own.
+                    </p>
+                  )}
+                  <div className="x1-actions">
+                    <button
+                      type="button"
+                      className="x1-text-button"
+                      onClick={openCreateRoomFlow}
+                    >
+                      Create a Room
+                      <Plus size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="x1-text-button"
+                      disabled={!body}
+                      onClick={() => setModal("join")}
+                    >
+                      Accept invite code
+                      <ArrowRight size={14} />
+                    </button>
+                  </div>
+                </Panel>
+
+                <div className="x1-source-note">
+                  <ShieldCheck size={20} />
+                  <div>
+                    <strong>Private by design</strong>
+                    <p>
+                      Room posts stay inside current membership. Your private
+                      watchlists, portfolios, and email are never exposed.
+                    </p>
+                    {onOpenSettings && (
+                      <button
+                        type="button"
+                        className="x1-text-button"
+                        onClick={() => onOpenSettings("privacy")}
+                      >
+                        Privacy settings
+                        <ArrowRight size={14} />
                       </button>
                     )}
                   </div>
-                </Panel>
-                <GroupNetworkPanel
-                  key={group.id}
-                  groupId={group.id}
-                  notify={notify}
-                />
-                <Panel
-                  title="The shared workbench"
-                  kicker="One Soul, multiple authors"
-                >
-                  {data.souls.length ? (
-                    data.souls.map((s) => (
-                      <article className="x1-soul-card" key={s.id}>
-                        <div className="x1-panel-head">
-                          <h3>{s.title}</h3>
-                          <span className="x1-badge">
-                            Revision {s.revision} · {s.state}
-                          </span>
-                        </div>
-                        <p>{s.summary}</p>
-                        <code className="x1-inline-code">{s.formula}</code>
-                        <p className="x1-caption">
-                          Latest contribution by @{s.authorHandle}
-                        </p>
-                        <div className="x1-actions">
-                          {data.capabilities.canEdit && (
-                            <button
-                              className="x1-text-button"
-                              onClick={() =>
-                                setEditor({
-                                  id: s.id,
-                                  baseRevision: s.revision,
-                                  title: s.title,
-                                  formula: s.formula,
-                                  summary: s.summary,
-                                  changeNote: "",
-                                })
-                              }
-                            >
-                              <Pencil size={15} />
-                              Contribute a revision
-                            </button>
-                          )}
-                          <button
-                            className="x1-text-button"
-                            onClick={() => setRevisionSoul(s)}
-                          >
-                            <History size={15} />
-                            Version history
-                          </button>
-                          <button
-                            className="x1-text-button"
-                            onClick={() => {
-                              setNetworkShare({
-                                id: s.id,
-                                revision: s.revision,
-                                title: s.title,
-                              });
-                              setNetworkView("Messages");
-                            }}
-                          >
-                            Share in message
-                          </button>
-                          {data.capabilities.canPublish && (
-                            <button
-                              className="x1-text-button"
-                              onClick={() => setPublish(s)}
-                            >
-                              Publish to group
-                              <ArrowUpRight size={15} />
-                            </button>
-                          )}
-                        </div>
-                      </article>
-                    ))
-                  ) : (
-                    <Empty
-                      title="Start with the method"
+                </div>
+              </aside>
+
+              <div className="x1-community-main">
+                {loading && !data ? (
+                  <WorkspaceSkeleton label="Opening your Research Rooms…" kind="panel" />
+                ) : group ? (
+                  <>
+                    <Panel
+                      title={group.name}
+                      kicker="Research Room"
                       action={
-                        data.capabilities.canEdit ? (
+                        <button
+                          type="button"
+                          className="x1-secondary x1-motion-button"
+                          onClick={() => setModal("members")}
+                        >
+                          <Users size={16} />
+                          {data.members.length}{" "}
+                          {data.members.length === 1 ? "member" : "members"}
+                        </button>
+                      }
+                    >
+                      <p>
+                        {group.description ||
+                          "A collaborative room to build and review shared research methods."}
+                      </p>
+                      <div className="x1-actions" style={{ marginBottom: 12 }}>
+                        {data.capabilities.canEdit && (
                           <button
-                            className="x1-secondary x1-motion-button"
+                            type="button"
+                            className="x1-primary x1-motion-button"
                             onClick={() =>
                               setEditor({
                                 title: "",
-                                formula:
-                                  sharedFormula || "close > sma(close, 20)",
+                                formula: sharedFormula || "close > sma(close, 20)",
                                 summary: "",
                                 changeNote: "",
                               })
                             }
                           >
-                            Create a shared Soul
                             <Plus size={16} />
+                            Create shared Soul
                           </button>
-                        ) : undefined
-                      }
-                    >
-                      A group Soul preserves its formula, summary, revisions and
-                      each contributor’s attribution.
-                    </Empty>
-                  )}
-                </Panel>
-                <Panel
-                  title="Group conversation"
-                  kicker="Authentic research, genuine responses"
-                >
-                  {data.posts.length ? (
-                    data.posts.map((post) => (
-                      <article
-                        className={
-                          "x1-post " + (post.hiddenAt ? "x1-post-hidden" : "")
-                        }
-                        key={post.id}
+                        )}
+                        {data.capabilities.canInvite && (
+                          <button
+                            type="button"
+                            className="x1-secondary x1-motion-button"
+                            onClick={() => setModal("invite")}
+                          >
+                            Invite researcher
+                            <ArrowRight size={15} />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="x1-segment" role="group" aria-label="Room detail sections">
+                        <button
+                          type="button"
+                          aria-pressed={roomSection === "research"}
+                          onClick={() => setRoomSection("research")}
+                        >
+                          Research ({data.souls.length})
+                        </button>
+                        <button
+                          type="button"
+                          aria-pressed={roomSection === "discussion"}
+                          onClick={() => setRoomSection("discussion")}
+                        >
+                          Discussion ({data.posts.length})
+                        </button>
+                      </div>
+                    </Panel>
+
+                    {roomSection === "research" ? (
+                      <Panel
+                        title="Shared Soul Workbench"
+                        kicker="Versioned hypotheses with contributor attribution"
                       >
-                        <div className="x1-post-author">
-                          <span className="x1-avatar-small">
-                            {post.authorHandle.slice(0, 2).toUpperCase()}
-                          </span>
-                          <div>
-                            <strong>@{post.authorHandle}</strong>
-                            <span>
-                              {moment(post.createdAt)} · revision{" "}
-                              {post.revision}
-                            </span>
-                          </div>
-                          <span className="x1-badge">Group only</span>
-                        </div>
-                        <h3>{post.title}</h3>
-                        <p>{post.summary}</p>
-                        <code className="x1-inline-code">{post.formula}</code>
-                        <div className="x1-post-actions">
-                          <button
-                            className={post.supered ? "x1-super-active" : ""}
-                            aria-pressed={post.supered}
-                            disabled={busy || !!post.hiddenAt}
-                            onClick={async () => {
-                              const confirmed = await mutate(
-                                {
-                                  action: "super",
-                                  postId: post.id,
-                                  active: !post.supered,
-                                },
-                                post.supered
-                                  ? "Super removed."
-                                  : "Super saved.",
-                              );
-                              if (confirmed)
-                                setSuperFeedback({
-                                  id: post.id,
-                                  active: confirmed.active === true,
-                                });
-                            }}
-                          >
-                            <span
-                              className={
-                                superFeedback?.id === post.id
-                                  ? superFeedback.active
-                                    ? "x1-super-confirmed"
-                                    : "x1-super-cleared"
-                                  : ""
-                              }
-                            >
-                              {" "}
-                              <Heart
-                                size={17}
-                                fill={post.supered ? "currentColor" : "none"}
-                              />
-                            </span>
-                            {post.superCount} Super
-                            {post.superCount === 1 ? "" : "s"}
-                          </button>
-                          <button
-                            disabled={!!post.hiddenAt}
-                            onClick={() => setReply({ postId: post.id })}
-                          >
-                            <MessageSquare size={17} />
-                            {post.commentCount} comments
-                          </button>
-                          <button
-                            aria-label={"Report " + post.title}
-                            onClick={() => setReport(post)}
-                          >
-                            <Flag size={15} />
-                          </button>
-                          {data.capabilities.canPublish && (
-                            <button
-                              disabled={busy}
-                              onClick={() =>
-                                mutate(
-                                  {
-                                    action: "moderate",
-                                    postId: post.id,
-                                    hidden: !post.hiddenAt,
-                                  },
-                                  post.hiddenAt
-                                    ? "Post restored."
-                                    : "Post hidden from group feed.",
-                                )
-                              }
-                            >
-                              {post.hiddenAt ? "Restore post" : "Hide post"}
-                            </button>
-                          )}
-                        </div>
-                        <div className="x1-comments">
-                          {data.comments
-                            .filter((c) => c.postId === post.id)
-                            .map((c) => (
-                              <div
-                                key={c.id}
-                                className={
-                                  "x1-comment " +
-                                  (c.parentId ? "x1-comment-reply" : "")
-                                }
-                              >
-                                <div>
-                                  <strong>@{c.authorHandle}</strong>
-                                  <span>{moment(c.createdAt)}</span>
-                                </div>
-                                {c.parentId && (
-                                  <p className="x1-caption">
-                                    Reply to @
-                                    {data.comments.find(
-                                      (p) => p.id === c.parentId,
-                                    )?.authorHandle || "a prior comment"}
-                                  </p>
+                        {data.souls.length ? (
+                          data.souls.map((s) => (
+                            <article className="x1-soul-card" key={s.id}>
+                              <div className="x1-panel-head">
+                                <h3>{s.title}</h3>
+                                <span className="x1-badge">
+                                  Revision {s.revision} · {s.state}
+                                </span>
+                              </div>
+                              <p>{s.summary}</p>
+                              <code className="x1-inline-code">{s.formula}</code>
+                              <p className="x1-caption">
+                                Latest contribution by{" "}
+                                <button
+                                  type="button"
+                                  className="x1-text-button"
+                                  style={{ display: "inline", padding: 0 }}
+                                  onClick={() => void openPublicProfile(s.authorHandle)}
+                                >
+                                  @{s.authorHandle}
+                                </button>
+                              </p>
+                              <div className="x1-actions">
+                                {data.capabilities.canEdit && (
+                                  <button
+                                    type="button"
+                                    className="x1-text-button"
+                                    onClick={() =>
+                                      setEditor({
+                                        id: s.id,
+                                        baseRevision: s.revision,
+                                        title: s.title,
+                                        formula: s.formula,
+                                        summary: s.summary,
+                                        changeNote: "",
+                                      })
+                                    }
+                                  >
+                                    <Pencil size={15} />
+                                    Contribute revision
+                                  </button>
                                 )}
-                                <p>{c.text}</p>
-                                {!c.deletedAt && (
-                                  <div className="x1-actions">
-                                    <button
-                                      className="x1-text-button"
-                                      onClick={() =>
-                                        setReply({
-                                          postId: post.id,
-                                          parentId: c.id,
-                                          label: c.authorHandle,
-                                        })
-                                      }
-                                    >
-                                      Reply
-                                    </button>
-                                    {!!c.isMine && (
-                                      <>
-                                        <button
-                                          className="x1-text-button"
-                                          onClick={() => setCommentEdit(c)}
-                                        >
-                                          Edit
-                                        </button>
-                                        <button
-                                          className="x1-text-button"
-                                          onClick={() =>
-                                            mutate(
-                                              {
-                                                action: "delete-comment",
-                                                commentId: c.id,
-                                              },
-                                              "Your comment was removed; its thread remains.",
-                                            )
-                                          }
-                                        >
-                                          Remove
-                                        </button>
-                                      </>
-                                    )}
-                                  </div>
+                                <button
+                                  type="button"
+                                  className="x1-text-button"
+                                  onClick={() => setRevisionSoul(s)}
+                                >
+                                  <History size={15} />
+                                  Version history
+                                </button>
+                                <button
+                                  type="button"
+                                  className="x1-text-button"
+                                  onClick={() => {
+                                    setNetworkShare({
+                                      id: s.id,
+                                      revision: s.revision,
+                                      title: s.title,
+                                    });
+                                    setInboxOpen(true);
+                                  }}
+                                >
+                                  Share in message
+                                </button>
+                                {data.capabilities.canPublish && (
+                                  <button
+                                    type="button"
+                                    className="x1-text-button"
+                                    onClick={() => setPublish(s)}
+                                  >
+                                    Publish to room
+                                    <ArrowUpRight size={15} />
+                                  </button>
                                 )}
                               </div>
-                            ))}
+                            </article>
+                          ))
+                        ) : (
+                          <Empty
+                            title="Start with the method"
+                            action={
+                              data.capabilities.canEdit ? (
+                                <button
+                                  type="button"
+                                  className="x1-secondary x1-motion-button"
+                                  onClick={() =>
+                                    setEditor({
+                                      title: "",
+                                      formula:
+                                        sharedFormula || "close > sma(close, 20)",
+                                      summary: "",
+                                      changeNote: "",
+                                    })
+                                  }
+                                >
+                                  Create a shared Soul
+                                  <Plus size={16} />
+                                </button>
+                              ) : undefined
+                            }
+                          >
+                            A shared Soul preserves its formula, summary,
+                            revisions, and each contributor’s attribution.
+                          </Empty>
+                        )}
+                      </Panel>
+                    ) : (
+                      <>
+                        <Panel
+                          title="Published Room Feed"
+                          kicker="Peer-reviewed revisions & threaded comments"
+                        >
+                          {data.posts.length ? (
+                            data.posts.map((post) => (
+                              <article
+                                className={
+                                  "x1-post " +
+                                  (post.hiddenAt ? "x1-post-hidden" : "")
+                                }
+                                key={post.id}
+                              >
+                                <div className="x1-post-author">
+                                  <button
+                                    type="button"
+                                    className="x6-comm-author-btn"
+                                    onClick={() =>
+                                      void openPublicProfile(post.authorHandle)
+                                    }
+                                  >
+                                    <AvatarBadge
+                                      avatarId={resolveAvatarForHandle(
+                                        post.authorHandle,
+                                        post.authorAvatar,
+                                      )}
+                                      size={34}
+                                      ring
+                                      alt=""
+                                    />
+                                    <div>
+                                      <strong>@{post.authorHandle}</strong>
+                                      <span style={{ display: "block", fontSize: 12 }}>
+                                        {moment(post.createdAt)} · revision{" "}
+                                        {post.revision}
+                                      </span>
+                                    </div>
+                                  </button>
+                                  <span className="x1-badge">Room only</span>
+                                </div>
+                                <h3>{post.title}</h3>
+                                <p>{post.summary}</p>
+                                <code className="x1-inline-code">
+                                  {post.formula}
+                                </code>
+                                <div className="x1-post-actions">
+                                  <button
+                                    className={
+                                      post.supered ? "x1-super-active" : ""
+                                    }
+                                    aria-pressed={post.supered}
+                                    disabled={busy || !!post.hiddenAt}
+                                    onClick={async () => {
+                                      const confirmed = await mutate(
+                                        {
+                                          action: "super",
+                                          postId: post.id,
+                                          active: !post.supered,
+                                        },
+                                        post.supered
+                                          ? "Super removed."
+                                          : "Super saved.",
+                                      );
+                                      if (confirmed)
+                                        setSuperFeedback({
+                                          id: post.id,
+                                          active: confirmed.active === true,
+                                        });
+                                    }}
+                                  >
+                                    <span
+                                      className={
+                                        superFeedback?.id === post.id
+                                          ? superFeedback.active
+                                            ? "x1-super-confirmed"
+                                            : "x1-super-cleared"
+                                          : ""
+                                      }
+                                    >
+                                      <Heart
+                                        size={17}
+                                        fill={
+                                          post.supered ? "currentColor" : "none"
+                                        }
+                                      />
+                                    </span>
+                                    {post.superCount} Super
+                                    {post.superCount === 1 ? "" : "s"}
+                                  </button>
+                                  <button
+                                    disabled={!!post.hiddenAt}
+                                    onClick={() => setReply({ postId: post.id })}
+                                  >
+                                    <MessageSquare size={17} />
+                                    {post.commentCount} comments
+                                  </button>
+                                  <button
+                                    aria-label={"Report " + post.title}
+                                    onClick={() => setReport(post)}
+                                  >
+                                    <Flag size={15} />
+                                  </button>
+                                  {data.capabilities.canPublish && (
+                                    <button
+                                      disabled={busy}
+                                      onClick={() =>
+                                        void mutate(
+                                          {
+                                            action: "moderate",
+                                            postId: post.id,
+                                            hidden: !post.hiddenAt,
+                                          },
+                                          post.hiddenAt
+                                            ? "Post restored."
+                                            : "Post hidden from room feed.",
+                                        )
+                                      }
+                                    >
+                                      {post.hiddenAt
+                                        ? "Restore post"
+                                        : "Hide post"}
+                                    </button>
+                                  )}
+                                </div>
+                                <div className="x1-comments">
+                                  {data.comments
+                                    .filter((c) => c.postId === post.id)
+                                    .map((c) => (
+                                      <div
+                                        key={c.id}
+                                        className={
+                                          "x1-comment " +
+                                          (c.parentId ? "x1-comment-reply" : "")
+                                        }
+                                      >
+                                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                          <button
+                                            type="button"
+                                            className="x6-comm-author-btn"
+                                            onClick={() =>
+                                              void openPublicProfile(c.authorHandle)
+                                            }
+                                          >
+                                            <AvatarBadge
+                                              avatarId={resolveAvatarForHandle(
+                                                c.authorHandle,
+                                                c.authorAvatar,
+                                              )}
+                                              size={24}
+                                              alt=""
+                                            />
+                                            <strong>@{c.authorHandle}</strong>
+                                          </button>
+                                          <span>{moment(c.createdAt)}</span>
+                                        </div>
+                                        {c.parentId && (
+                                          <p className="x1-caption">
+                                            Reply to @
+                                            {data.comments.find(
+                                              (p) => p.id === c.parentId,
+                                            )?.authorHandle || "a prior comment"}
+                                          </p>
+                                        )}
+                                        <p>{c.text}</p>
+                                        {!c.deletedAt && (
+                                          <div className="x1-actions">
+                                            <button
+                                              className="x1-text-button"
+                                              onClick={() =>
+                                                setReply({
+                                                  postId: post.id,
+                                                  parentId: c.id,
+                                                  label: c.authorHandle,
+                                                })
+                                              }
+                                            >
+                                              Reply
+                                            </button>
+                                            {!!c.isMine && (
+                                              <>
+                                                <button
+                                                  className="x1-text-button"
+                                                  onClick={() =>
+                                                    setCommentEdit(c)
+                                                  }
+                                                >
+                                                  Edit
+                                                </button>
+                                                <button
+                                                  className="x1-text-button"
+                                                  onClick={() =>
+                                                    void mutate(
+                                                      {
+                                                        action: "delete-comment",
+                                                        commentId: c.id,
+                                                      },
+                                                      "Your comment was removed; its thread remains.",
+                                                    )
+                                                  }
+                                                >
+                                                  Remove
+                                                </button>
+                                              </>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                </div>
+                              </article>
+                            ))
+                          ) : (
+                            <Empty title="Publish when the method is ready">
+                              An owner or administrator can publish an exact
+                              Soul revision from the Research tab. Private
+                              portfolios are never attached.
+                            </Empty>
+                          )}
+                          {data.pagination.nextPostBefore && (
+                            <button
+                              className="x1-secondary x1-motion-button"
+                              onClick={() =>
+                                setCursor(data.pagination.nextPostBefore || "")
+                              }
+                            >
+                              Older room posts
+                              <ArrowRight size={15} />
+                            </button>
+                          )}{" "}
+                          {cursor && (
+                            <button
+                              className="x1-text-button"
+                              onClick={() => setCursor("")}
+                            >
+                              Return to newest posts
+                            </button>
+                          )}
+                        </Panel>
+                        <GroupNetworkPanel
+                          key={`${group.id}-${profileRevision}`}
+                          groupId={group.id}
+                          notify={notify}
+                        />
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <Panel title="Your research circle starts here">
+                    <Empty
+                      title={
+                        body
+                          ? "Create or join a Research Room"
+                          : "Choose your @handle to start collaborating"
+                      }
+                      action={
+                        <div className="x1-actions">
+                          <button
+                            type="button"
+                            className="x1-primary x1-motion-button"
+                            onClick={openCreateRoomFlow}
+                          >
+                            {body ? "Create a Room" : "Set up your Profile"}
+                            <ArrowRight size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            className="x1-secondary"
+                            onClick={() => setTab("explore")}
+                          >
+                            <Compass size={15} />
+                            Explore Rooms
+                          </button>
                         </div>
-                      </article>
-                    ))
-                  ) : (
-                    <Empty title="Publish when the method is ready">
-                      An owner or administrator can publish an exact Soul
-                      revision to this group. Your private portfolio and scan
-                      snapshots are never attached.
-                    </Empty>
-                  )}
-                  {data.pagination.nextPostBefore && (
-                    <button
-                      className="x1-secondary x1-motion-button"
-                      onClick={() =>
-                        setCursor(data.pagination.nextPostBefore || "")
                       }
                     >
-                      Older group posts
-                      <ArrowRight size={15} />
-                    </button>
-                  )}{" "}
-                  {cursor && (
-                    <button
-                      className="x1-text-button"
-                      onClick={() => setCursor("")}
-                    >
-                      Return to newest posts
-                    </button>
-                  )}
-                  {data.pagination.commentsTruncated && (
-                    <p className="x1-callout">
-                      This view reached the 200-comment limit. Full comment
-                      pagination is not yet implemented; request an operator
-                      export for a complete thread.
-                    </p>
-                  )}
-                </Panel>
-              </>
-            ) : (
-              <Panel title="Private group research">
-                <Empty
-                  title={
-                    body
-                      ? "Create a group around a question"
-                      : "Begin with your Body"
+                      Draft a shared methodology, invite peers by @handle, and
+                      keep every Soul revision and discussion in one private
+                      Research Room.
+                    </Empty>
+                  </Panel>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* TAB 3: SAVED — Bookmarked Souls & Researchers */}
+      {tab === "saved" && (
+        <>
+          {authenticated ? (
+            <SocialWorkspace
+              key={`saved-${body?.handle || "new"}-${profileRevision}`}
+              view="Saved"
+              onView={(v: SocialView) => {
+                if (v === "Messages") setInboxOpen(true);
+                else if (v === "Discover") setTab("explore");
+              }}
+              notify={notify}
+              onOpenGroup={(id) => {
+                setGroupId(id);
+                setCursor("");
+                setTab("rooms");
+              }}
+            />
+          ) : (
+            <Panel title="Saved Research" kicker="Sign in required">
+              <Empty
+                title="Save Souls and researchers for quick return"
+                action={
+                  <button
+                    type="button"
+                    className="x1-primary x1-motion-button"
+                    onClick={() => onRequireAuth?.()}
+                  >
+                    Sign in to view Saved
+                    <ArrowRight size={15} />
+                  </button>
+                }
+              >
+                Bookmark shared Souls and discoverable researchers once signed
+                in.
+              </Empty>
+            </Panel>
+          )}
+        </>
+      )}
+
+      {/* DIRECT MESSAGES DRAWER MODAL */}
+      {inboxOpen && authenticated && (
+        <Modal
+          title="Direct Research Messages"
+          onClose={() => setInboxOpen(false)}
+        >
+          <SocialWorkspace
+            key={`inbox-${body?.handle || "new"}-${profileRevision}`}
+            view="Messages"
+            onView={(v: SocialView) => {
+              if (v === "Discover") {
+                setInboxOpen(false);
+                setTab("explore");
+              }
+            }}
+            notify={notify}
+            shareSoul={networkShare}
+            onClearShare={() => setNetworkShare(null)}
+            onOpenGroup={(id) => {
+              setInboxOpen(false);
+              setGroupId(id);
+              setCursor("");
+              setTab("rooms");
+            }}
+          />
+        </Modal>
+      )}
+
+      {/* PUBLIC-SAFE RESEARCHER PROFILE SHEET (Never exposes private email or settings) */}
+      {publicProfile && (
+        <Modal
+          title={`@${publicProfile.body.handle}`}
+          onClose={() => setPublicProfile(null)}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14 }}>
+            <AvatarBadge
+              avatarId={resolveAvatarForHandle(
+                publicProfile.body.handle,
+                publicProfile.body.avatar,
+              )}
+              size={58}
+              ring
+              alt={`${publicProfile.body.displayName} avatar`}
+            />
+            <div>
+              <strong style={{ fontSize: 17, display: "block" }}>
+                {publicProfile.body.displayName}
+              </strong>
+              <span className="x1-caption">@{publicProfile.body.handle}</span>
+            </div>
+          </div>
+          {publicProfile.body.bio && <p>{publicProfile.body.bio}</p>}
+          <div className="x1-actions" style={{ marginBottom: 14 }}>
+            {publicProfile.canMessage && (
+              <button
+                type="button"
+                className="x1-primary"
+                disabled={busy}
+                onClick={async () => {
+                  const res = await api<{ threadId?: string }>("/api/x2/social", {
+                    action: "start-thread",
+                    handle: publicProfile.body.handle,
+                  });
+                  if (res.threadId) {
+                    setPublicProfile(null);
+                    setInboxOpen(true);
+                    notify("Conversation ready.");
                   }
-                  action={
-                    <button
-                      className="x1-primary x1-motion-button"
-                      onClick={() => setModal(body ? "group" : "profile")}
-                    >
-                      {body ? "Create a private group" : "Create your Body"}
-                      <ArrowRight size={16} />
-                    </button>
-                  }
-                >
-                  Draft a shared methodology, invite an eligible Body, and keep
-                  every revision and discussion in one private place.
-                </Empty>
-              </Panel>
+                }}
+              >
+                <MessageSquare size={15} />
+                Message
+              </button>
+            )}
+            <button
+              type="button"
+              className="x1-secondary"
+              disabled={busy}
+              onClick={async () => {
+                try {
+                  await api("/api/x2/social", {
+                    action: "bookmark",
+                    kind: "BODY",
+                    targetId: publicProfile.body.handle,
+                    active: true,
+                  });
+                  notify("Researcher saved.");
+                } catch (err) {
+                  notify(err instanceof Error ? err.message : "Could not save.", true);
+                }
+              }}
+            >
+              <Bookmark size={15} />
+              Save researcher
+            </button>
+            {publicProfile.isMe && onOpenSettings && (
+              <button
+                type="button"
+                className="x1-secondary"
+                onClick={() => {
+                  setPublicProfile(null);
+                  onOpenSettings("profile");
+                }}
+              >
+                <Settings size={15} />
+                Edit my Profile
+              </button>
             )}
           </div>
-        </div>
+          <h3>Shared Souls in common rooms</h3>
+          {publicProfile.souls.length ? (
+            publicProfile.souls.map((s) => (
+              <article className="x2-social-profile-soul" key={s.id}>
+                <strong>
+                  {s.title} · revision {s.revision}
+                </strong>
+                <p>{s.summary}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPublicProfile(null);
+                    setGroupId(s.groupId);
+                    setTab("rooms");
+                  }}
+                >
+                  Open in Room
+                </button>
+              </article>
+            ))
+          ) : (
+            <p className="x1-caption">
+              No shared Souls in common Research Rooms yet. Private portfolios
+              and emails remain hidden.
+            </p>
+          )}
+        </Modal>
       )}
+
+      {/* MODALS: 2-step Create Room, Set @handle Profile, Invite, Accept Invite, Members */}
       {modal && (
         <Modal
           title={
             modal === "profile"
-              ? "Your Body"
-              : modal === "group"
-                ? "Create a private group"
+              ? "Set your Community Profile (@handle)"
+              : modal === "room"
+                ? `Create a Research Room · Step ${createStep} of 2`
                 : modal === "invite"
-                  ? "Invite a Body"
+                  ? "Invite a researcher"
                   : modal === "join"
-                    ? "Accept a group invitation"
-                    : "Group members and roles"
+                    ? "Accept a Research Room invitation"
+                    : "Research Room members & roles"
           }
           onClose={() => setModal(null)}
         >
@@ -919,12 +1527,27 @@ export default function Community({
               <div className="x1-member-list">
                 {data?.members.map((m) => (
                   <div key={m.handle}>
-                    <div>
-                      <strong>{m.displayName}</strong>
-                      <span>
-                        @{m.handle} · {m.role}
-                      </span>
-                    </div>
+                    <button
+                      type="button"
+                      className="x6-comm-author-btn"
+                      onClick={() => {
+                        setModal(null);
+                        void openPublicProfile(m.handle);
+                      }}
+                    >
+                      <AvatarBadge
+                        avatarId={resolveAvatarForHandle(m.handle, m.avatar)}
+                        size={34}
+                        ring
+                        alt=""
+                      />
+                      <div>
+                        <strong>{m.displayName}</strong>
+                        <span style={{ display: "block", fontSize: 12 }}>
+                          @{m.handle} · {m.role}
+                        </span>
+                      </div>
+                    </button>
                     {group?.role === "OWNER" && m.role !== "OWNER" && (
                       <form
                         onSubmit={async (e) => {
@@ -955,7 +1578,7 @@ export default function Community({
                           className="x1-text-button"
                           disabled={busy}
                           onClick={() =>
-                            mutate(
+                            void mutate(
                               {
                                 action: "transfer-owner",
                                 groupId,
@@ -972,17 +1595,17 @@ export default function Community({
                           className="x1-text-button"
                           disabled={busy}
                           onClick={() =>
-                            mutate(
+                            void mutate(
                               {
                                 action: "remove-member",
                                 groupId,
                                 handle: m.handle,
                               },
-                              "Member removed. Future group reads are denied.",
+                              "Member removed. Future room reads are denied.",
                             )
                           }
                         >
-                          Remove member
+                          Remove
                         </button>
                       </form>
                     )}
@@ -1004,15 +1627,117 @@ export default function Community({
                     }
                   }}
                 >
-                  Leave group
+                  Leave Research Room
                 </button>
               )}
-              <p className="x1-caption">
-                Owner/Admin approve group publication. Editors contribute
-                revisions. Viewers can read and discuss. Existing Site access is
-                required separately.
-              </p>
             </>
+          ) : modal === "room" ? (
+            <form className="x1-form" onSubmit={handleCreateRoomSubmit}>
+              {createStep === 1 ? (
+                <>
+                  <label>
+                    Research topic
+                    <select
+                      value={createTopic}
+                      onChange={(e) => setCreateTopic(e.target.value)}
+                    >
+                      <option value="Indian Equities & Indices">
+                        Indian Equities &amp; Indices (NSE / BSE)
+                      </option>
+                      <option value="MCX Commodities">
+                        MCX Commodities &amp; Futures
+                      </option>
+                      <option value="Global FX & Rates">
+                        Global FX &amp; Sovereign Yields
+                      </option>
+                      <option value="Macro & Multi-Asset">
+                        Macro, Geopolitics &amp; Multi-Asset
+                      </option>
+                    </select>
+                  </label>
+                  <label className="x1-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={createDiscoverable}
+                      onChange={(e) => setCreateDiscoverable(e.target.checked)}
+                    />
+                    List room name &amp; description in Explore directory (members
+                    still require approval to join)
+                  </label>
+                  <p className="x1-caption">
+                    {createDiscoverable
+                      ? "Others can see this room’s name and request to join; its Souls and discussions remain private to approved members."
+                      : "Invite-only Research Room. Hidden from Explore and accessible only via one-time invitation."}
+                  </p>
+                  <button
+                    type="button"
+                    className="x1-primary x1-motion-button"
+                    onClick={() => setCreateStep(2)}
+                  >
+                    Next: Name your Room
+                    <ArrowRight size={15} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <label>
+                    Research Room name
+                    <input
+                      value={createName}
+                      onChange={(e) => setCreateName(e.target.value)}
+                      required
+                      maxLength={80}
+                      placeholder="e.g. Nifty Momentum Study"
+                      autoFocus
+                    />
+                  </label>
+                  <label>
+                    One-line purpose
+                    <textarea
+                      value={createDesc}
+                      onChange={(e) => setCreateDesc(e.target.value)}
+                      maxLength={400}
+                      rows={3}
+                      placeholder="What hypothesis or market regime does this room study?"
+                    />
+                  </label>
+                  {createDiscoverable && (
+                    <label>
+                      Directory handle (optional)
+                      <input
+                        value={createHandle}
+                        onChange={(e) =>
+                          setCreateHandle(
+                            e.target.value
+                              .toLowerCase()
+                              .replace(/[^a-z0-9_]/g, ""),
+                          )
+                        }
+                        maxLength={28}
+                        placeholder="nifty_momentum"
+                      />
+                    </label>
+                  )}
+                  <div className="x1-actions">
+                    <button
+                      type="button"
+                      className="x1-secondary"
+                      onClick={() => setCreateStep(1)}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      className="x1-primary x1-motion-button"
+                      disabled={busy || !createName.trim()}
+                    >
+                      {busy ? "Creating…" : "Create Research Room"}
+                      <Check size={15} />
+                    </button>
+                  </div>
+                </>
+              )}
+            </form>
           ) : (
             <form
               className="x1-form"
@@ -1022,22 +1747,21 @@ export default function Community({
                 const action =
                   modal === "profile"
                     ? "profile"
-                    : modal === "group"
-                      ? "create-group"
-                      : modal === "invite"
-                        ? "invite"
-                        : "accept-invite";
+                    : modal === "invite"
+                      ? "invite"
+                      : "accept-invite";
                 const input: Record<string, unknown> = { action };
                 for (const [key, value] of f) input[key] = value;
                 if (modal === "profile") {
                   input.discoverable = f.get("discoverable") === "on";
+                  input.avatar = currentUserAvatarId || body?.avatar || "a01";
                 }
                 if (modal === "invite") input.groupId = groupId;
                 const result = await mutate(
                   input,
                   modal === "profile"
-                    ? "Your Body is saved."
-                    : "Saved to your private Community.",
+                    ? "Your Community Profile is saved."
+                    : "Saved to your Research Room.",
                 );
                 if (result) {
                   if (typeof result.code === "string")
@@ -1048,15 +1772,19 @@ export default function Community({
             >
               {modal === "profile" ? (
                 <>
-                  <div
-                    className={
-                      "x1-profile-avatar x1-avatar-" + (body?.avatar || "mint")
-                    }
-                  >
-                    {body?.displayName.slice(0, 2).toUpperCase() || "GV"}
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <AvatarBadge
+                      avatarId={currentUserAvatarId || body?.avatar}
+                      size={52}
+                      ring
+                      alt=""
+                    />
+                    <span className="x1-caption">
+                      Change your avatar anytime from Settings → Profile (50 presets).
+                    </span>
                   </div>
                   <label>
-                    Unique Body handle
+                    Unique @handle
                     <input
                       name="handle"
                       required
@@ -1064,7 +1792,7 @@ export default function Community({
                       maxLength={24}
                       pattern="[A-Za-z][A-Za-z0-9_]{2,23}"
                       defaultValue={body?.handle}
-                      placeholder="your_body"
+                      placeholder="your_handle"
                       autoCapitalize="none"
                     />
                   </label>
@@ -1074,7 +1802,7 @@ export default function Community({
                       name="displayName"
                       required
                       maxLength={60}
-                      defaultValue={body?.displayName}
+                      defaultValue={body?.displayName || currentUserDisplayName || ""}
                     />
                   </label>
                   <label>
@@ -1086,70 +1814,24 @@ export default function Community({
                       placeholder="The questions and markets you study."
                     />
                   </label>
-                  <label>
-                    Avatar style
-                    <select name="avatar" defaultValue={body?.avatar || "mint"}>
-                      {["mint", "silver", "slate", "sky", "lavender"].map(
-                        (a) => (
-                          <option key={a} value={a}>
-                            {
-                              {
-                                mint: "Silver I",
-                                silver: "Silver II",
-                                slate: "Silver III",
-                                sky: "Silver IV",
-                                lavender: "Silver V",
-                              }[a]
-                            }
-                          </option>
-                        ),
-                      )}
-                    </select>
-                  </label>
                   <label className="x1-checkbox">
                     <input
                       type="checkbox"
                       name="discoverable"
                       defaultChecked={true}
                     />
-                    Let other members find my Body (@handle and display name) in
-                    Community search
+                    Allow other signed-in members to find my @handle in Explore
                   </label>
-                  <p className="x1-caption">
-                    Internal account IDs are private and never searchable. Other
-                    members can only discover your Body when the option above is
-                    enabled. Initials avatars are stored.
-                  </p>
-                </>
-              ) : modal === "group" ? (
-                <>
-                  <label>
-                    Group name
-                    <input
-                      name="name"
-                      required
-                      maxLength={80}
-                      placeholder="Your research circle"
-                    />
-                  </label>
-                  <label>
-                    Shared research focus
-                    <textarea name="description" maxLength={500} />
-                  </label>
-                  <p className="x1-callout">
-                    Private group. Only authorized members can read its Souls,
-                    posts and discussions.
-                  </p>
                 </>
               ) : modal === "invite" ? (
                 <>
                   <label>
-                    Invited Body handle
+                    Invited researcher @handle
                     <input
                       name="handle"
                       required
                       maxLength={24}
-                      placeholder="their_body"
+                      placeholder="researcher_handle"
                     />
                   </label>
                   <label>
@@ -1167,9 +1849,7 @@ export default function Community({
                     </select>
                   </label>
                   <p className="x1-caption">
-                    The invitation is bound to this exact Body and expires after
-                    7 days. It does not grant access to this restricted Site. No
-                    message is sent automatically.
+                    Bound to this exact @handle and expires after 7 days.
                   </p>
                 </>
               ) : (
@@ -1188,18 +1868,17 @@ export default function Community({
                 {busy
                   ? "Saving…"
                   : modal === "profile"
-                    ? "Save Body"
-                    : modal === "group"
-                      ? "Create private group"
-                      : modal === "invite"
-                        ? "Create invitation code"
-                        : "Accept invitation"}
+                    ? "Save Profile"
+                    : modal === "invite"
+                      ? "Create invitation code"
+                      : "Accept invitation"}
                 <ArrowRight size={16} />
               </button>
             </form>
           )}
         </Modal>
       )}
+
       {editor && (
         <Modal
           title={editor.id ? "Contribute a revision" : "Create a shared Soul"}
@@ -1235,9 +1914,7 @@ export default function Community({
               Title
               <input
                 value={editor.title}
-                onChange={(e) =>
-                  setEditor({ ...editor, title: e.target.value })
-                }
+                onChange={(e) => setEditor({ ...editor, title: e.target.value })}
                 required
                 maxLength={100}
               />
@@ -1280,11 +1957,6 @@ export default function Community({
                 />
               </label>
             )}
-            <p className="x1-callout">
-              This publishes no data. The same safe rule parser validates
-              personal and group Souls. If another author saves first, your
-              stale revision is rejected and your draft stays visible.
-            </p>
             <button className="x1-primary x1-motion-button" disabled={busy}>
               Save {editor.id ? "revision" : "shared draft"}
               <Check size={16} />
@@ -1292,6 +1964,7 @@ export default function Community({
           </form>
         </Modal>
       )}
+
       {revisionSoul && (
         <Modal
           title={revisionSoul.title + " · version history"}
@@ -1337,9 +2010,10 @@ export default function Community({
             ))}
         </Modal>
       )}
+
       {publish && (
         <Modal
-          title="Publish to this private group"
+          title="Publish to this Research Room"
           onClose={() => setPublish(null)}
         >
           <p>
@@ -1348,9 +2022,8 @@ export default function Community({
             <strong>{group?.name}</strong>.
           </p>
           <p className="x1-callout">
-            Only the method, summary and attribution will appear in the group
-            feed. Private portfolios, scan input snapshots and raw licensed data
-            are not attached.
+            Only the method, summary, and attribution appear in the room feed.
+            Private portfolios and scan snapshots are never attached.
           </p>
           <button
             className="x1-primary x1-motion-button"
@@ -1363,25 +2036,26 @@ export default function Community({
                   revision: publish.revision,
                   visibility: "GROUP",
                 },
-                "Exact revision published to the private group.",
+                "Exact revision published to the Research Room.",
               );
-              if (result) setPublish(null);
+              if (result) {
+                setPublish(null);
+                setRoomSection("discussion");
+              }
             }}
           >
-            Publish to group
+            Publish to Room
             <ArrowRight size={16} />
           </button>
         </Modal>
       )}
+
       {inviteCode && (
         <Modal
           title="Your one-time invitation"
           onClose={() => setInviteCode("")}
         >
-          <p>
-            Share this code directly with the named Body. It does not grant Site
-            access.
-          </p>
+          <p>Share this code directly with the invited researcher.</p>
           <code className="x1-invite-code">{inviteCode}</code>
           <button
             className="x1-secondary x1-motion-button"
@@ -1390,10 +2064,7 @@ export default function Community({
                 await navigator.clipboard.writeText(inviteCode);
                 notify("Invitation code copied.");
               } catch {
-                notify(
-                  "Copy is unavailable in this browser. Select the code manually.",
-                  true,
-                );
+                notify("Select the code manually to copy.", true);
               }
             }}
           >
@@ -1402,10 +2073,11 @@ export default function Community({
           </button>
         </Modal>
       )}
+
       {reply && (
         <Modal
           title={
-            reply.parentId ? "Reply to @" + reply.label : "Add a group comment"
+            reply.parentId ? "Reply to @" + reply.label : "Add a room comment"
           }
           onClose={() => setReply(null)}
         >
@@ -1430,7 +2102,7 @@ export default function Community({
                   text,
                   requestId: commentRetry.current.id,
                 },
-                "Comment saved to this group thread.",
+                "Comment saved to this room thread.",
               );
               if (result) {
                 commentRetry.current = null;
@@ -1443,12 +2115,13 @@ export default function Community({
               <textarea name="text" required maxLength={2000} autoFocus />
             </label>
             <button className="x1-primary x1-motion-button" disabled={busy}>
-              Post to this group
+              Post comment
               <Send size={15} />
             </button>
           </form>
         </Modal>
       )}
+
       {commentEdit && (
         <Modal title="Edit your comment" onClose={() => setCommentEdit(null)}>
           <form
@@ -1463,7 +2136,7 @@ export default function Community({
                     commentId: commentEdit.id,
                     text: f.get("text"),
                   },
-                  "Comment updated with edit timestamp.",
+                  "Comment updated.",
                 )
               )
                 setCommentEdit(null);
@@ -1485,8 +2158,9 @@ export default function Community({
           </form>
         </Modal>
       )}
+
       {report && (
-        <Modal title="Report a group post" onClose={() => setReport(null)}>
+        <Modal title="Report a room post" onClose={() => setReport(null)}>
           <form
             className="x1-form"
             onSubmit={async (e) => {
@@ -1499,7 +2173,7 @@ export default function Community({
                     postId: report.id,
                     reason: f.get("reason"),
                   },
-                  "Report recorded for group administrators.",
+                  "Report recorded for room administrators.",
                 )
               )
                 setReport(null);
@@ -1510,8 +2184,7 @@ export default function Community({
               <textarea name="reason" required minLength={5} maxLength={500} />
             </label>
             <p className="x1-caption">
-              This private report goes to the group’s owner and admins. No
-              outside message is sent.
+              Recorded privately for the room’s owner and administrators.
             </p>
             <button className="x1-primary x1-motion-button" disabled={busy}>
               Record report

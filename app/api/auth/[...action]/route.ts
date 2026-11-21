@@ -19,6 +19,7 @@ import {
 import { HttpError, body, protectMutation } from "../../../../backend/middleware/security";
 import { RELEASE_GATES } from "../../../../backend/services/legacy/gates";
 import { isDataOwner } from "../../../../backend/services/market-data/data-service";
+import { getSessionProfileMeta } from "../../../../backend/services/profile/profile";
 import { account, database, rate } from "../../../../database/queries/repository";
 
 export const dynamic = "force-dynamic";
@@ -89,7 +90,10 @@ async function sessionPayload(user: Awaited<ReturnType<typeof getAuthenticatedUs
       gates: RELEASE_GATES,
     };
   }
-  const current = await account(user.userId);
+  const [current, meta] = await Promise.all([
+    account(user.userId),
+    getSessionProfileMeta(user.userId),
+  ]);
   return {
     authenticated: true,
     accepted:
@@ -104,6 +108,12 @@ async function sessionPayload(user: Awaited<ReturnType<typeof getAuthenticatedUs
       displayName: current?.alias ?? user.displayName,
       email: user.email,
       authProvider: user.authProvider,
+      avatarId: meta.avatarId,
+      handle: meta.handle,
+      bio: meta.bio,
+      discoverable: meta.discoverable,
+      unreadNotifications: meta.unreadNotifications,
+      preferences: meta.preferences,
     },
     gates: RELEASE_GATES,
   };

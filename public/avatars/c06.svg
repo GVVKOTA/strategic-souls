@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-hidden="true">
+  <defs>
+    <radialGradient id="bg_c06" cx="36%" cy="28%" r="76%">
+      <stop offset="0%" stop-color="#231B2E"/>
+      <stop offset="100%" stop-color="#0B0910"/>
+    </radialGradient>
+    <linearGradient id="rim_c06" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E8EDF2" stop-opacity="0.34"/>
+      <stop offset="50%" stop-color="#D6A8E8" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#070809" stop-opacity="0.5"/>
+    </linearGradient>
+    <clipPath id="clip_c06">
+      <circle cx="64" cy="64" r="60"/>
+    </clipPath>
+  </defs>
+  <circle cx="64" cy="64" r="61" fill="url(#bg_c06)"/>
+  <g clip-path="url(#clip_c06)">
+    
+    <path d="M64 26 C78 44 78 72 64 90 C50 72 50 44 64 26 Z" fill="#E8EDF2" opacity="0.9"/>
+    <path d="M64 90 C44 82 32 62 34 40 C50 48 60 66 64 90 Z" fill="#B996D9" opacity="0.72"/>
+    <path d="M64 90 C84 82 96 62 94 40 C78 48 68 66 64 90 Z" fill="#B996D9" opacity="0.72"/>
+    <path d="M64 90 C38 92 22 80 18 62 C36 62 52 72 64 90 Z" fill="#7E629E" opacity="0.65"/>
+    <path d="M64 90 C90 92 106 80 110 62 C92 62 76 72 64 90 Z" fill="#7E629E" opacity="0.65"/>
+    <circle cx="64" cy="66" r="4" fill="#0B0910"/>
+  
+  </g>
+  <circle cx="64" cy="64" r="60" fill="none" stroke="url(#rim_c06)" stroke-width="2"/>
+</svg>
