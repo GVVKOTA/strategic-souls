@@ -29,9 +29,12 @@
    - `node operations/scripts/check-x2-release.mjs` -> `typecheck: 0`, `lint: 0`, `tests: 267/267 pass`
    - `uv run --project backend/quant pytest backend/quant/tests -q` -> `29/29 pass`
 3. **GitHub Actions CI (`verify.yml`):**
-   - Pushed `feat/x4-reliability-scan-search-ux` to `origin` and merged into `main`.
+   - Feature branch commit: `313b151` ([Run `44877337780` — `success`](https://github.com/GVVKOTA/strategic-souls/actions/runs/44877337780))
+   - Main merge commit: `6cbb53e6c24289957d0eebab4877ab628f997c9b` ([Run `44877341521` — `success`](https://github.com/GVVKOTA/strategic-souls/actions/runs/44877341521))
 4. **Cloudflare Workers Builds (`0727e904-48ad-4e75-9b26-1d2123ec5063`):**
-   - Automatic build (`pnpm run build`) and deployment (`npx wrangler deploy`) triggered on `main`.
+   - **Cloudflare Build UUID:** `add957e5-bed0-4bd5-92d9-6985aa193a83` (`status: "stopped"`, `build_outcome: "success"`)
+   - **Active Cloudflare Deployment ID:** `07b8d310-e33b-400c-b888-91f77a662ebd` (`100%` traffic)
+   - **Active Cloudflare Worker Version ID:** `705a62c9-8e75-4d3c-b938-60190c8d8b57`
 
 ---
 
