@@ -45,7 +45,7 @@ function qualityBadgeLabel(quality: MarketOverviewCard["quality"]): string {
     case "PUBLISHED_EOD":
       return "EOD";
     case "REFERENCE":
-      return "Official";
+      return "Daily reference";
     case "STALE":
       return "Stale";
     case "RESTRICTED":
@@ -55,6 +55,17 @@ function qualityBadgeLabel(quality: MarketOverviewCard["quality"]): string {
     default:
       return "Unavailable";
   }
+}
+
+function formatObservedLabel(card: MarketOverviewCard): string {
+  if (!card.sourceObservedAtUTC) return "";
+  if (
+    card.sourceObservedPrecision === "DATE_ONLY" ||
+    !card.sourceObservedAtUTC.includes("T")
+  ) {
+    return ` · Ref date ${card.sourceObservedAtUTC}`;
+  }
+  return ` · Observed ${card.sourceObservedAtUTC}`;
 }
 
 function MiniSpark({ values, positive }: { values: number[]; positive: boolean }) {
@@ -278,41 +289,44 @@ export default function MarketOverviewGrid({
   }
 
   return (
-    <section aria-labelledby="x51-markets-heading">
-      <div className="x51-section-head">
-        <div>
-          <h2 id="x51-markets-heading">Markets</h2>
-          <p className="x51-section-sub">
-            9 instruments · 3×3 workspace ·{" "}
+    <section className="x53-dashboard-hero" aria-labelledby="x53-dashboard-title">
+      <div className="x53-dashboard-head">
+        <h1 id="x53-dashboard-title" className="x53-dashboard-title">
+          Strategic Dashboard
+        </h1>
+        <div className="x53-dashboard-bar">
+          <span className="x1-caption">
             {saveBadge
               ? saveBadge
               : layout.version > 0
                 ? `Synced · v${layout.version}`
-                : "Default global watchlist"}
-            {asOfUTC ? ` · Checked ${new Date(asOfUTC).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}
-          </p>
-        </div>
-        <div className="x1-actions" style={{ gap: 6 }}>
-          <button
-            type="button"
-            className="x1-secondary"
-            style={{ minHeight: 38, padding: "0 11px", fontSize: "0.82rem" }}
-            onClick={() => void loadOverview()}
-            disabled={loading}
-            aria-label="Refresh 9 market cards"
-          >
-            <RefreshCw size={14} />
-            <span>Refresh</span>
-          </button>
-          <button
-            type="button"
-            className="x51-accent-btn"
-            style={{ minHeight: 38, padding: "0 12px", fontSize: "0.82rem" }}
-            onClick={openCustomize}
-          >
-            <SlidersHorizontal size={14} />
-            <span>Customize 9</span>
-          </button>
+                : "9 customizable instruments"}
+            {asOfUTC
+              ? ` · Checked ${new Date(asOfUTC).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+              : ""}
+          </span>
+          <div className="x1-actions" style={{ gap: 6 }}>
+            <button
+              type="button"
+              className="x1-secondary"
+              style={{ minHeight: 38, padding: "0 11px", fontSize: "0.82rem" }}
+              onClick={() => void loadOverview()}
+              disabled={loading}
+              aria-label="Refresh 9 market cards"
+            >
+              <RefreshCw size={14} />
+              <span>Refresh</span>
+            </button>
+            <button
+              type="button"
+              className="x51-accent-btn"
+              style={{ minHeight: 38, padding: "0 12px", fontSize: "0.82rem" }}
+              onClick={openCustomize}
+            >
+              <SlidersHorizontal size={14} />
+              <span>Customize 9</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -367,7 +381,7 @@ export default function MarketOverviewGrid({
                 role="listitem"
                 className="x51-mcard"
                 onClick={() => onOpenAsset(card.canonicalId)}
-                title={`${card.name} (${card.venue}) · ${qualityBadgeLabel(card.quality)} · ${card.provider}${card.sourceObservedAtUTC ? ` · As of ${card.sourceObservedAtUTC}` : ""}`}
+                title={`${card.name} (${card.venue}) · ${qualityBadgeLabel(card.quality)} · ${card.provider}${formatObservedLabel(card)}`}
               >
                 <div className="x51-mcard-top">
                   <div style={{ minWidth: 0 }}>

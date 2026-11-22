@@ -1,0 +1,81 @@
+/**
+ * Strategic Souls X5.3 — Canonical Global Workspace Navigation Contract.
+ * Single source of truth for the exact 4-item three-dot Global menu and focused views.
+ */
+
+export type GlobalPrimaryMenuId =
+  | "DASHBOARD"
+  | "INTELLIGENCE"
+  | "HEATMAP"
+  | "GLOBE_FOCUS";
+
+export type GlobalView =
+  | GlobalPrimaryMenuId
+  | "PORTFOLIO"
+  | "WATCHLISTS"
+  | "MARKET_EXPLORER";
+
+export type IntelligenceSubView = "HEADLINES" | "CALENDAR" | "MARKET_VOX";
+
+export type GlobalMenuItem = {
+  readonly id: GlobalPrimaryMenuId;
+  readonly label: string;
+  readonly description: string;
+};
+
+/**
+ * Exact 4-entry Global three-dot menu contract (X5.3 Section 03).
+ * Order and user-facing labels are strictly locked.
+ */
+export const GLOBAL_MENU_ITEMS: readonly GlobalMenuItem[] = Object.freeze([
+  {
+    id: "DASHBOARD",
+    label: "Strategic Dashboard",
+    description: "9 markets, portfolio, 3D globe & calendar",
+  },
+  {
+    id: "INTELLIGENCE",
+    label: "Market Intelligence / Economic Calendar",
+    description: "Headlines, official calendar & Market Vox",
+  },
+  {
+    id: "HEATMAP",
+    label: "Heatmap",
+    description: "NSE sector explorer, heatmaps & comparison",
+  },
+  {
+    id: "GLOBE_FOCUS",
+    label: "Strategic Globe",
+    description: "Interactive 3D Earth, events & venues",
+  },
+]);
+
+export function parseGlobalViewParam(raw: string | null | undefined): GlobalView {
+  if (!raw) return "DASHBOARD";
+  const norm = raw.trim().toLowerCase();
+  if (norm === "intelligence" || norm === "news" || norm === "calendar" || norm === "market-vox") {
+    return "INTELLIGENCE";
+  }
+  if (norm === "heatmap" || norm === "sectors") return "HEATMAP";
+  if (norm === "globe" || norm === "globe_focus" || norm === "strategic-globe") {
+    return "GLOBE_FOCUS";
+  }
+  if (norm === "portfolio") return "PORTFOLIO";
+  if (norm === "watchlists" || norm === "watchlist") return "WATCHLISTS";
+  if (norm === "market-explorer" || norm === "market explorer" || norm === "coverage") {
+    return "MARKET_EXPLORER";
+  }
+  return "DASHBOARD";
+}
+
+export function parseIntelligenceSubViewParam(
+  raw: string | null | undefined,
+): IntelligenceSubView {
+  if (!raw) return "HEADLINES";
+  const norm = raw.trim().toLowerCase();
+  if (norm === "calendar") return "CALENDAR";
+  if (norm === "market-vox" || norm === "market_vox" || norm === "vox" || norm === "polls") {
+    return "MARKET_VOX";
+  }
+  return "HEADLINES";
+}

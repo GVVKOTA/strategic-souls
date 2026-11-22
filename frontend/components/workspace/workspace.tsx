@@ -51,6 +51,13 @@ import AuthPanel, {
   type AuthSessionResponse,
 } from "../../features/auth/auth-panel";
 import { api, Modal, WorkspaceSkeleton, type WorkspaceState } from "./shared";
+import {
+  GLOBAL_MENU_ITEMS,
+  parseGlobalViewParam,
+  parseIntelligenceSubViewParam,
+  type GlobalView,
+  type IntelligenceSubView,
+} from "./global-menu";
 
 type View = "Global" | "Strategy" | "Community" | "Settings";
 
@@ -73,10 +80,9 @@ export default function X1Workspace() {
     [followRequests, setFollowRequests] = useState<
       { handle: string; displayName: string; avatarId: string; createdAt: string }[]
     >([]),
-    [globalSectionJump, setGlobalSectionJump] = useState<{
-      target: string;
-      nonce: number;
-    } | null>(null),
+    [globalView, setGlobalViewState] = useState<GlobalView>("DASHBOARD"),
+    [intelligenceSubView, setIntelligenceSubView] =
+      useState<IntelligenceSubView>("HEADLINES"),
     [quickMenuOpen, setQuickMenuOpen] = useState(false),
     [profileRevision, setProfileRevision] = useState(0),
     [data, setData] = useState<MarketSnapshot | null>(null),
@@ -103,7 +109,6 @@ export default function X1Workspace() {
       "INDIAN_EQUITIES" | "MCX_FUTURES" | "MY_WATCHLIST" | "ECB_DAILY" | "CUSTOM_CSV" | undefined
     >(undefined),
     [sharedFormula, setSharedFormula] = useState(""),
-    [globalPanel, setGlobalPanel] = useState("Overview"),
     [strategyPanel, setStrategyPanel] = useState("Soul Scan"),
     [busy, setBusy] = useState(false),
     [sessionError, setSessionError] = useState(""),
@@ -115,7 +120,39 @@ export default function X1Workspace() {
     [earthQuality, setEarthQuality] = useState<EarthQualityPreference>("auto");
 
   const avatarTriggerRef = useRef<HTMLButtonElement>(null);
+  const drawerTriggerRef = useRef<HTMLButtonElement>(null);
+  const drawerCloseRef = useRef<HTMLButtonElement>(null);
   const previousView = useRef<"Global" | "Strategy" | "Community">("Global");
+
+  const selectGlobalView = useCallback(
+    (next: GlobalView, sub?: IntelligenceSubView) => {
+      setGlobalViewState(next);
+      if (sub) setIntelligenceSubView(sub);
+      const url =
+        next === "DASHBOARD"
+          ? "/?view=global"
+          : next === "INTELLIGENCE" && sub
+            ? `/?view=global&section=intelligence&tab=${sub.toLowerCase()}`
+            : `/?view=global&section=${next.toLowerCase()}`;
+      window.history.replaceState(null, "", url);
+      window.scrollTo({ top: 0, behavior: "instant" });
+      document.getElementById("x1-main")?.focus();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!sectionDrawerOpen) return;
+    drawerCloseRef.current?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSectionDrawerOpen(false);
+        drawerTriggerRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [sectionDrawerOpen]);
 
   useEffect(() => {
     try {
@@ -262,9 +299,16 @@ export default function X1Workspace() {
           setSettingsSection(sec);
         }
       }
+      if (params.get("section") && target !== "settings") {
+        setGlobalViewState(parseGlobalViewParam(params.get("section")));
+        if (params.get("tab")) {
+          setIntelligenceSubView(parseIntelligenceSubViewParam(params.get("tab")));
+        }
+      }
       if (params.get("panel")) {
-        setGlobalPanel(params.get("panel")!);
-        setStrategyPanel(params.get("panel")!);
+        const panelParam = params.get("panel")!;
+        setGlobalViewState(parseGlobalViewParam(panelParam));
+        setStrategyPanel(panelParam);
       }
     });
 
@@ -573,10 +617,13 @@ export default function X1Workspace() {
             <>
               <div className="x51-topbar-left">
                 <button
+                  ref={drawerTriggerRef}
                   type="button"
                   className="x51-menu-btn"
                   aria-label="Open Global sections menu"
+                  aria-haspopup="dialog"
                   aria-expanded={sectionDrawerOpen}
+                  aria-controls="x53-sections-drawer"
                   onClick={() => setSectionDrawerOpen((v) => !v)}
                 >
                   <MoreVertical size={18} />
@@ -968,7 +1015,6 @@ export default function X1Workspace() {
             >
               {view === "Global" ? (
                 <Global
-                  key={"global-" + globalPanel}
                   data={data}
                   workspace={workspace}
                   authenticated={isSignedIn && accepted === true}
@@ -987,14 +1033,25 @@ export default function X1Workspace() {
                   }}
                   refreshData={refreshData}
                   refreshing={refreshing}
-                  initialPanel={globalPanel}
+                  globalView={globalView}
+                  onGlobalViewChange={selectGlobalView}
+                  intelligenceSubView={intelligenceSubView}
+                  onIntelligenceSubViewChange={(sub) => {
+                    setIntelligenceSubView(sub);
+                    if (globalView === "INTELLIGENCE") {
+                      window.history.replaceState(
+                        null,
+                        "",
+                        `/?view=global&section=intelligence&tab=${sub.toLowerCase()}`,
+                      );
+                    }
+                  }}
                   onNavigate={navigate}
                   earthQuality={earthQuality}
                   portfolioBackdrop={authUser?.portfolioBackdrop}
                   privateTickerEnabled={!!authUser?.preferences?.privateTickerEnabled}
                   privateTickerMode={authUser?.preferences?.privateTickerMode ?? "HOLDINGS"}
                   onProfileSynced={handleProfileSynced}
-                  sectionJump={globalSectionJump}
                 />
               ) : view === "Strategy" ? (
                 <Strategy
@@ -1222,36 +1279,48 @@ export default function X1Workspace() {
           </Suspense>
         </Modal>
       )}
-      {/* Left Section Navigation Drawer (Global / Strategy vertical three-dot button) */}
+      {/* Left Section Navigation Drawer (Global exact 4-item contract / Strategy 2-item contract) */}
       {sectionDrawerOpen && (
         <>
           <div
             className="x51-drawer-backdrop"
             aria-hidden="true"
-            onClick={() => setSectionDrawerOpen(false)}
+            onClick={() => {
+              setSectionDrawerOpen(false);
+              drawerTriggerRef.current?.focus();
+            }}
           />
           <aside
+            id="x53-sections-drawer"
             className="x51-drawer"
             role="dialog"
-            aria-label={`${view} sections`}
+            aria-modal="true"
+            aria-label={`${view} menu`}
           >
             <div className="x51-drawer-head">
-              <h3>{view === "Strategy" ? "Strategy Builder" : "Global Sections"}</h3>
+              <h3>{view === "Strategy" ? "Strategy Builder" : "Global"}</h3>
               <button
+                ref={drawerCloseRef}
                 type="button"
                 className="x1-icon-button"
                 aria-label="Close sections drawer"
-                onClick={() => setSectionDrawerOpen(false)}
+                onClick={() => {
+                  setSectionDrawerOpen(false);
+                  drawerTriggerRef.current?.focus();
+                }}
               >
                 <X size={16} />
               </button>
             </div>
-            <div className="x51-drawer-list">
+            <nav
+              className="x51-drawer-list"
+              aria-label={view === "Strategy" ? "Strategy sections" : "Global sections"}
+            >
               {view === "Strategy"
                 ? (
                     [
                       ["Soul Scan", "Classic (50 rules) & Advanced Soul Genome"],
-                      ["Formula Lab", "Standalone BSM, IV, CAGR, XIRR & Historical"],
+                      ["Formula Lab", "Correlation, BSM/IV, CAGR, XIRR & Historical"],
                     ] as const
                   ).map(([sec, desc]) => (
                     <button
@@ -1261,9 +1330,11 @@ export default function X1Workspace() {
                         "x51-drawer-item" +
                         (strategyPanel === sec ? " is-active" : "")
                       }
+                      aria-current={strategyPanel === sec ? "page" : undefined}
                       onClick={() => {
                         setStrategyPanel(sec);
                         setSectionDrawerOpen(false);
+                        drawerTriggerRef.current?.focus();
                       }}
                     >
                       <span>
@@ -1273,36 +1344,38 @@ export default function X1Workspace() {
                       <ArrowRight size={14} />
                     </button>
                   ))
-                : (
-                    [
-                      ["Markets", "9 customizable cards (3×3 matrix)"],
-                      ["My Portfolio", "Holdings & cost-basis allocation"],
-                      ["Market Intelligence", "Verified announcements & news"],
-                      ["NSE Sectors & Heatmaps", "Sector indices, heatmaps & comparison"],
-                      ["Daily Market Pulse", "NIFTY 50 & Gold session sentiment polls"],
-                      ["Strategic Globe", "Daily Briefing, 3D Earth & 2D Map"],
-                      ["Economic Calendar", "Official RBI, FOMC, BLS, ECB schedules"],
-                      ["Watchlists", "Private saved instrument lists"],
-                      ["Market Explorer", "Source health & official references"],
-                    ] as const
-                  ).map(([sec, desc]) => (
-                    <button
-                      key={sec}
-                      type="button"
-                      className="x51-drawer-item"
-                      onClick={() => {
-                        setGlobalSectionJump({ target: sec, nonce: Date.now() });
-                        setSectionDrawerOpen(false);
-                      }}
-                    >
-                      <span>
-                        <strong>{sec}</strong>
-                        <small>{desc}</small>
-                      </span>
-                      <ArrowRight size={14} />
-                    </button>
-                  ))}
-            </div>
+                : GLOBAL_MENU_ITEMS.map((item) => {
+                    const isActive =
+                      globalView === item.id ||
+                      (item.id === "DASHBOARD" &&
+                        (globalView === "PORTFOLIO" ||
+                          globalView === "WATCHLISTS" ||
+                          globalView === "MARKET_EXPLORER"));
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={
+                          "x51-drawer-item" + (isActive ? " is-active" : "")
+                        }
+                        aria-current={globalView === item.id ? "page" : undefined}
+                        onClick={() => {
+                          setSectionDrawerOpen(false);
+                          selectGlobalView(
+                            item.id,
+                            item.id === "INTELLIGENCE" ? "HEADLINES" : undefined,
+                          );
+                        }}
+                      >
+                        <span>
+                          <strong>{item.label}</strong>
+                          <small>{item.description}</small>
+                        </span>
+                        <ArrowRight size={14} />
+                      </button>
+                    );
+                  })}
+            </nav>
           </aside>
         </>
       )}
@@ -1379,13 +1452,35 @@ export default function X1Workspace() {
               <div>
                 <dt>Strategic Globe</dt>
                 <dd>
-                  Interactive 3D Earth (NASA Blue/Black Marble) paired with a
-                  synchronized 2D NASA GIBS satellite world map.
+                  Enlarged, multi-level zoomable natural-color 3D Earth (NASA
+                  Blue/Black Marble) with 24 exchange venues, USGS M4.5+
+                  earthquakes, NASA EONET natural events, and country profiles.
+                </dd>
+              </div>
+              <div>
+                <dt>Focused Tools (3-dot Menu)</dt>
+                <dd>
+                  Open Market Intelligence / Economic Calendar (Headlines,
+                  Calendar &amp; Market Vox), Heatmap (NSE sector leaders &amp;
+                  Asset Comparison), or focused Strategic Globe from the top-left
+                  menu.
                 </dd>
               </div>
             </dl>
           )}
           <div className="x1-actions">
+            {view === "Global" && (
+              <button
+                type="button"
+                className="x1-secondary"
+                onClick={() => {
+                  setContextHelpOpen(false);
+                  selectGlobalView("MARKET_EXPLORER");
+                }}
+              >
+                Data Coverage &amp; Sources
+              </button>
+            )}
             <button
               type="button"
               className="x1-secondary"
@@ -1394,7 +1489,7 @@ export default function X1Workspace() {
                 setAbout(true);
               }}
             >
-              About Strategic Souls X5.1
+              About Strategic Souls X5.3
             </button>
           </div>
         </Modal>
@@ -1409,18 +1504,18 @@ export default function X1Workspace() {
             <div>
               <dt>Release</dt>
               <dd>
-                X5.1 · Obsidian Genome / The Research Network (9-Card Markets,
-                Economic Calendar, 50-Preset Classic &amp; Advanced Soul Genome,
-                Strategic Globe &amp; Community Research Network)
+                X5.3 · The Focused Intelligence Terminal (Strategic Dashboard,
+                Zoomable 3D Earth, Redesigned Economic Calendar, Market Vox,
+                Compact Soul Scan &amp; Empirical Evidence)
               </dd>
             </div>
             <div>
               <dt>Data</dt>
               <dd>
-                ECB daily FX, US Treasury daily yields, and NASA GIBS
-                public-domain satellite imagery (keyless), plus owner-gated
-                broker/EOD and licensed UCDP/ACLED conflict adapters when
-                configured.
+                ECB daily FX, US Treasury daily yields, USGS earthquakes, NASA
+                EONET natural events, and NASA Blue/Black Marble historical
+                textures (public domain), plus owner-gated broker/EOD and
+                licensed news/conflict adapters when configured.
               </dd>
             </div>
             <div>

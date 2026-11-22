@@ -49,6 +49,7 @@ export type MarketOverviewCard = {
   provider: string;
   sourceUrl: string;
   sourceObservedAtUTC: string | null;
+  sourceObservedPrecision?: "DATE_ONLY" | "TIMESTAMP" | "UNAVAILABLE";
   ingestedAtUTC: string;
   quality: QuoteQuality;
   marketSession: MarketSessionState;

@@ -286,9 +286,13 @@ export function buildMarketOverviewCards(
         sparkline: pts && pts.length >= 10 ? pts.slice(-30) : null,
         provider: point.provider,
         sourceUrl: point.sourceUrl,
-        sourceObservedAtUTC: point.sourceDate
-          ? `${point.sourceDate}T16:00:00.000Z`
-          : null,
+        // Preserve provider timestamp precision without synthesizing artificial wall-clock times on date-only observations.
+        sourceObservedAtUTC: point.sourceDate ? point.sourceDate : null,
+        sourceObservedPrecision: !point.sourceDate
+          ? "UNAVAILABLE"
+          : point.sourceDate.includes("T")
+            ? "TIMESTAMP"
+            : "DATE_ONLY",
         ingestedAtUTC: point.retrievedAt ?? snapshot.asOf,
         quality,
         marketSession: session.state,
@@ -326,6 +330,7 @@ export function buildMarketOverviewCards(
         : "Commercial Feed Not Connected",
       sourceUrl: entry?.sourceUrl ?? "",
       sourceObservedAtUTC: null,
+      sourceObservedPrecision: "UNAVAILABLE",
       ingestedAtUTC: snapshot.asOf,
       quality: isRestrictedExchange ? "RESTRICTED" : "NOT_CONNECTED",
       marketSession: session.state,

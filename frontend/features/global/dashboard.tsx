@@ -1,24 +1,16 @@
 "use client";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeft,
   ArrowRight,
-  ArrowUpRight,
   Plus,
-  Pause,
-  Play,
-  List,
-  Globe2,
-  MapPin,
-  Minus,
   Star,
   Search,
   Trash2,
   MoveUp,
   MoveDown,
-  ShieldCheck,
   Wallet,
   RefreshCw,
-  RotateCcw,
   Image as ImageIcon,
   SlidersHorizontal,
 } from "lucide-react";
@@ -30,11 +22,6 @@ import type {
   PortfolioBackdropSettings,
   UserProfileSnapshot,
 } from "../../../backend/services/profile/profile";
-import {
-  EXCHANGES,
-  exchangeSession,
-  type Exchange,
-} from "../../../backend/services/market-data/exchanges";
 import {
   X2_INSTRUMENTS,
   registryInstrument,
@@ -52,11 +39,13 @@ import {
   api,
   number,
   moment,
-  InfoTip,
   type WorkspaceState,
   type Notice,
 } from "../../components/workspace/shared";
-import ScrollTabs from "../../components/workspace/scroll-tabs";
+import type {
+  GlobalView,
+  IntelligenceSubView,
+} from "../../components/workspace/global-menu";
 import PrivateMarketPanel from "./private-market-panel";
 import MarketOverviewGrid from "./market-grid";
 import EconomicCalendar, {
@@ -66,6 +55,7 @@ import PortfolioAllocation from "./portfolio-allocation";
 import MarketIntelligenceNews from "./market-intelligence";
 import SectorExplorer from "./sector-explorer";
 import DailyMarketPulse from "./daily-pulse";
+import StrategicGlobe from "./strategic-globe";
 import type {
   CountryProfile,
   DailyBriefingItem,
@@ -75,7 +65,6 @@ import type {
 } from "../../../backend/services/intelligence/news-and-disasters";
 import type { GeopoliticalExposurePathway } from "../../../backend/services/market-data/sectors-and-ecosystem";
 import type { WatchRegionsState } from "../../../backend/services/user/preferences-store";
-import type { MapFocusTarget } from "../earth/world-conflict-map";
 
 type IntelligenceApiPayload = {
   asOfUTC: string;
@@ -103,44 +92,7 @@ type IntelligenceApiPayload = {
   watchRegions: WatchRegionsState | null;
 };
 const AssetTerminal = lazy(() => import("./asset-terminal"));
-const GlobeCanvas = lazy(() => import("./globe-canvas"));
-const WorldConflictMap = lazy(() => import("../earth/world-conflict-map"));
-function DeferredGlobe(props: React.ComponentProps<typeof GlobeCanvas>) {
-  const host = useRef<HTMLDivElement>(null),
-    [ready, setReady] = useState(false);
-  useEffect(() => {
-    const el = host.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setReady(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: "80px" },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-  return (
-    <div className="x1-deferred-globe" ref={host}>
-      {ready ? (
-        <Suspense
-          fallback={
-            <div className="x1-globe-loading">Preparing satellite Earth…</div>
-          }
-        >
-          <GlobeCanvas {...props} />
-        </Suspense>
-      ) : (
-        <div className="x1-globe-loading">
-          Satellite Earth loads as it comes into view.
-        </div>
-      )}
-    </div>
-  );
-}
+
 type Props = {
   data: MarketSnapshot | null;
   workspace: WorkspaceState | null;
@@ -163,14 +115,16 @@ type Props = {
   openEventChart?: (ctx: EconomicEventChartContext) => void;
   refreshData: () => void;
   refreshing?: boolean;
-  initialPanel?: string;
+  globalView: GlobalView;
+  onGlobalViewChange: (view: GlobalView, sub?: IntelligenceSubView) => void;
+  intelligenceSubView: IntelligenceSubView;
+  onIntelligenceSubViewChange: (sub: IntelligenceSubView) => void;
   onNavigate?: (view: "Global" | "Strategy" | "Community") => void;
   earthQuality?: "auto" | "balanced" | "reduced";
   portfolioBackdrop?: PortfolioBackdropSettings;
   privateTickerEnabled?: boolean;
   privateTickerMode?: "HOLDINGS" | "WATCHLIST";
   onProfileSynced?: (profile: UserProfileSnapshot) => void;
-  sectionJump?: { target: string; nonce: number } | null;
 };
 export function assetName(id: string, data: MarketSnapshot | null) {
   return (
@@ -241,40 +195,18 @@ export default function Global({
   openEventChart,
   refreshData,
   refreshing = false,
-  initialPanel,
+  globalView,
+  onGlobalViewChange,
+  intelligenceSubView,
+  onIntelligenceSubViewChange,
   onNavigate,
   earthQuality = "auto",
   portfolioBackdrop,
   privateTickerEnabled = false,
   privateTickerMode = "HOLDINGS",
   onProfileSynced,
-  sectionJump,
 }: Props) {
-  const [panel, setPanelState] = useState(initialPanel || "Overview"),
-    [selected, setSelected] = useState<Exchange | null>(
-      EXCHANGES.find((e) => e.id === "XNSE") || null,
-    ),
-    [globeFocusCoords, setGlobeFocusCoords] = useState<{
-      lat: number;
-      lon: number;
-      nonce: number;
-    } | null>(null),
-    [mapFocusTarget, setMapFocusTarget] = useState<MapFocusTarget | null>(null),
-    [globeConflicts, setGlobeConflicts] = useState<
-      { id: string; lat: number; lon: number }[]
-    >([]),
-    [selectedConflictId, setSelectedConflictId] = useState<string | null>(null),
-    [region, setRegion] = useState("All"),
-    [exchangeSearch, setExchangeSearch] = useState(""),
-    [resetToken, setResetToken] = useState(0),
-    [mode, setMode] = useState<"Globe" | "List">("Globe"),
-    [auto, setAuto] = useState(true),
-    [motionOverride, setMotionOverride] = useState(false),
-    [zoom, setZoom] = useState(1),
-    [fallback, setFallback] = useState(false),
-    [rendererFallback, setRendererFallback] = useState(false),
-    [tourActive, setTourActive] = useState(false),
-    [listId, setListId] = useState(""),
+  const [listId, setListId] = useState(""),
     [search, setSearch] = useState(""),
     [edit, setEdit] = useState<
       "list" | "portfolio" | "transaction" | "rename" | null
@@ -295,13 +227,6 @@ export default function Global({
     if (!portfolioBackdrop) return;
     queueMicrotask(() => setBackdropDraft(portfolioBackdrop));
   }, [portfolioBackdrop]);
-
-  const marketsRef = useRef<HTMLDivElement>(null);
-  const portfolioSectionRef = useRef<HTMLDivElement>(null);
-  const newsSectionRef = useRef<HTMLDivElement>(null);
-  const sectorsSectionRef = useRef<HTMLDivElement>(null);
-  const pulseSectionRef = useRef<HTMLDivElement>(null);
-  const calendarSectionRef = useRef<HTMLDivElement>(null);
 
   const [intel, setIntel] = useState<IntelligenceApiPayload | null>(null);
   const [intelLoading, setIntelLoading] = useState(true);
@@ -325,33 +250,6 @@ export default function Global({
       alive = false;
     };
   }, [authenticated]);
-
-  useEffect(() => {
-    if (!sectionJump) return;
-    const t = sectionJump.target;
-    if (t === "Portfolio" || t === "Watchlists" || t === "Market Explorer") {
-      queueMicrotask(() => setPanelState(t));
-      return;
-    }
-    queueMicrotask(() => setPanelState("Overview"));
-    window.setTimeout(() => {
-      if (t === "Markets") {
-        marketsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      } else if (t === "My Portfolio") {
-        portfolioSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      } else if (t === "Market Intelligence") {
-        newsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      } else if (t === "NSE Sectors & Heatmaps") {
-        sectorsSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      } else if (t === "Daily Market Pulse") {
-        pulseSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      } else if (t === "Economic Calendar") {
-        calendarSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      } else if (t === "Strategic Globe") {
-        earthSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-    }, 60);
-  }, [sectionJump]);
 
   async function saveBackdropSettings() {
     if (!authenticated) {
@@ -438,47 +336,18 @@ export default function Global({
       );
     }
   }
-  useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches)
-      queueMicrotask(() => setAuto(false));
-  }, []);
-  useEffect(() => {
-    if (!tourActive || mode !== "Globe" || rendererFallback) return;
-    const hubs = ["XNSE", "XLON", "XNYS", "XTKS"]
-      .map((id) => EXCHANGES.find((e) => e.id === id))
-      .filter((e): e is Exchange => !!e);
-    if (!hubs.length) return;
-    let step = 0;
-    queueMicrotask(() => {
-      setRegion("All");
-      setAuto(false);
-      setSelected(hubs[0]);
-    });
-    const timer = window.setInterval(() => {
-      step = (step + 1) % hubs.length;
-      setSelected(hubs[step]);
-    }, 3600);
-    return () => window.clearInterval(timer);
-  }, [tourActive, mode, rendererFallback]);
-  const setPanel = (value: string) => {
-    setPanelState(value);
-    window.scrollTo({ top: 0, behavior: "instant" });
-  };
+
   const lists = workspace?.records.filter((r) => r.kind === "watchlist") || [],
     activeList = lists.find((l) => l.id === listId) || lists[0],
     portfolios = workspace?.portfolios || [],
     [portfolioId, setPortfolioId] = useState("");
   const portfolio =
     portfolios.find((p) => p.id === portfolioId) || portfolios[0];
-  const venues = useMemo(
-    () => EXCHANGES.filter((e) => region === "All" || e.region === region),
-    [region],
+  const totalWatchlistItems = lists.reduce(
+    (sum, l) => sum + (l.payload.items?.length ?? 0),
+    0,
   );
-  const listedVenues = venues.filter((v) =>
-    (v.name + " " + v.mic + " " + v.city + " " + v.country)
-      .toLowerCase()
-      .includes(exchangeSearch.toLowerCase()),
-  );
+
   const registry = useMemo(
     () => [
       ...[...(data?.quotes || []), ...(data?.yields || [])].map((q) => ({
@@ -547,702 +416,334 @@ export default function Global({
       version: activeList.version,
       items,
     });
-  const earthSectionRef = useRef<HTMLDivElement>(null);
-  const mapSectionRef = useRef<HTMLDivElement>(null);
-  const currentSession =
-    selected && data ? exchangeSession(selected, data.asOf) : null;
-  const selectVenue = (venue: Exchange) => {
-    setTourActive(false);
-    setSelected(venue);
-    setAuto(false);
+
+  const focusedHeaderTitle: Record<Exclude<GlobalView, "DASHBOARD">, string> = {
+    INTELLIGENCE: "Market Intelligence / Economic Calendar",
+    HEATMAP: "Heatmap",
+    GLOBE_FOCUS: "Strategic Globe",
+    PORTFOLIO: "My Portfolio",
+    WATCHLISTS: "Watchlists",
+    MARKET_EXPLORER: "Data Coverage & Sources",
   };
-  const investigateOnMap = (venue: Exchange) => {
-    setMapFocusTarget((prev) => ({
-      lat: venue.lat,
-      lon: venue.lon,
-      zoom: 5.2,
-      label: `${venue.city}, ${venue.country} · ${venue.mic}`,
-      exchangeId: venue.id,
-      nonce: (prev?.nonce ?? 0) + 1,
-    }));
-    mapSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-  const viewOnGlobe = (coords: {
-    lat: number;
-    lon: number;
-    label: string;
-    exchangeId?: string;
-    conflictId?: string;
-  }) => {
-    setMode("Globe");
-    setTourActive(false);
-    setAuto(false);
-    if (coords.exchangeId) {
-      const ex = EXCHANGES.find((e) => e.id === coords.exchangeId);
-      if (ex) setSelected(ex);
-    }
-    if (coords.conflictId) {
-      setSelectedConflictId(coords.conflictId);
-    }
-    setGlobeFocusCoords((prev) => ({
-      lat: coords.lat,
-      lon: coords.lon,
-      nonce: (prev?.nonce ?? 0) + 1,
-    }));
-    earthSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
+
   return (
     <>
-      <ScrollTabs
-        label="Global views"
-        options={["Overview", "Watchlists", "Portfolio", "Market Explorer"]}
-        active={panel}
-        onChange={setPanel}
-      />
-      {panel !== "Overview" && (
-        <header className="x1-page-title">
-          <div>
-            <h1>{panel}</h1>
-            <InfoTip label="About Global">
-              Published reference data and private research. Source dates and
-              units accompany each value. Portfolio values are manual cost records
-              until entitled valuation quotes are connected.
-            </InfoTip>
-          </div>
-          <div className="x1-actions">
+      {globalView !== "DASHBOARD" && (
+        <header className="x53-focused-bar">
+          <div className="x53-focused-bar-left">
             <button
               type="button"
-              className="x1-primary x1-motion-button"
-              onClick={() => onNavigate?.("Strategy")}
+              className="x1-secondary x53-back-btn"
+              onClick={() => onGlobalViewChange("DASHBOARD")}
             >
-              Run a Soul Scan
-              <ArrowRight size={16} />
+              <ArrowLeft size={15} aria-hidden="true" />
+              <span>Back to Dashboard</span>
             </button>
+            <h1 className="x53-focused-title">{focusedHeaderTitle[globalView]}</h1>
+          </div>
+          <div className="x1-actions" style={{ gap: 6 }}>
             <button
-              className="x1-secondary x1-motion-button"
+              type="button"
+              className="x1-secondary"
+              style={{ minHeight: 38, fontSize: "0.82rem" }}
               onClick={refreshData}
               disabled={refreshing}
               aria-busy={refreshing}
             >
-              <RefreshCw size={16} />
-              {refreshing ? "Refreshing…" : "Refresh"}
+              <RefreshCw size={14} />
+              <span>{refreshing ? "Refreshing…" : "Refresh"}</span>
             </button>
+            {globalView === "MARKET_EXPLORER" && onNavigate && (
+              <button
+                type="button"
+                className="x51-accent-btn"
+                style={{ minHeight: 38, fontSize: "0.82rem" }}
+                onClick={() => onNavigate("Strategy")}
+              >
+                <span>Soul Scan</span>
+                <ArrowRight size={14} />
+              </button>
+            )}
           </div>
         </header>
       )}
-      {panel === "Overview" && (
-        <div className="x51-global-stack">
-          {/* 1. MARKETS — 9 Rearrangeable Cards (3×3 on Desktop & Mobile) */}
-          <div ref={marketsRef}>
-            <MarketOverviewGrid
-              authenticated={authenticated}
-              onOpenAsset={openAsset}
-              onRequireAuth={onRequireAuth}
-              notify={notify}
-            />
-          </div>
 
-          {authenticated && isOwner && (
-            <PrivateMarketPanel
-              isOwner={isOwner}
-              authenticated={authenticated}
-              compact
-              openAsset={openAsset}
-              analyze={analyze}
-              notify={notify}
-            />
-          )}
+      {/* =====================================================================
+          MAIN GLOBAL OVERVIEW — STRICTLY 4 CONTENT BLOCKS (X5.3 Section 02):
+          A. Centered "Strategic Dashboard" + 9 Market Cards
+          B. My Portfolio & Watchlist (compact overview; details on click)
+          C. Enlarged, Truly Zoomable 3D Strategic Globe (NO 2D map)
+          D. Redesigned Economic Calendar (at very bottom)
+         ===================================================================== */}
+      {globalView === "DASHBOARD" && (
+        <div className="x53-dashboard-stack" data-global-layout="x53-4-blocks">
+          {/* BLOCK A: Centered "Strategic Dashboard" + 9 Market Cards */}
+          <MarketOverviewGrid
+            authenticated={authenticated}
+            onOpenAsset={openAsset}
+            onRequireAuth={onRequireAuth}
+            notify={notify}
+          />
 
-          {/* 2. MY PORTFOLIO — Summary Preview + Dedicated Full Portfolio View */}
-          <section ref={portfolioSectionRef} aria-labelledby="x51-portfolio-heading">
-            <div className="x51-section-head">
-              <div>
-                <h2 id="x51-portfolio-heading">My Portfolio</h2>
-                <p className="x51-section-sub">
-                  Private manual ledger · Never shared publicly · Cost basis only
-                </p>
-              </div>
-              <div className="x1-actions" style={{ gap: 6 }}>
-                <button
-                  type="button"
-                  className="x1-secondary"
-                  style={{ minHeight: 38, padding: "0 11px", fontSize: "0.82rem" }}
-                  onClick={() => setPanel("Watchlists")}
-                >
-                  <Star size={14} />
-                  <span>Watchlists ({workspace ? lists.length : 0})</span>
-                </button>
-                <button
-                  type="button"
-                  className="x51-accent-btn"
-                  style={{ minHeight: 38, padding: "0 12px", fontSize: "0.82rem" }}
-                  onClick={() => setPanel("Portfolio")}
-                >
-                  <Wallet size={14} />
-                  <span>Open Portfolio</span>
-                  <ArrowRight size={14} />
-                </button>
-              </div>
-            </div>
-            {portfolios.length > 0 && portfolio ? (
-              <div className="x51-holdings-table">
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    flexWrap: "wrap",
-                    gap: 10,
-                    padding: "12px 14px",
-                    borderBottom: "1px solid var(--x51-hairline)",
-                    background: "var(--x51-surface-elevated)",
-                  }}
-                >
+          {/* BLOCK B: My Portfolio + Watchlist Compact Overview */}
+          <section
+            className="x53-pw-section"
+            aria-labelledby="x53-portfolio-heading"
+          >
+            <div className="x53-pw-grid">
+              <article className="x53-pw-card">
+                <div className="x53-pw-card-head">
                   <div>
-                    <strong>{portfolio.name}</strong>{" "}
-                    <span className="x51-pill x51-pill-green">Manual Ledger</span>{" "}
-                    <span className="x51-pill">Broker: Not Connected</span>
-                  </div>
-                  <div className="x1-caption" style={{ fontVariantNumeric: "tabular-nums" }}>
-                    Cost basis:{" "}
-                    <strong>
-                      {portfolio.payload.currency} {number(portfolio.summary.investedCost)}
-                    </strong>{" "}
-                    · Cash:{" "}
-                    <strong>
-                      {portfolio.payload.currency} {number(portfolio.summary.cash)}
-                    </strong>
-                  </div>
-                </div>
-                {portfolio.summary.holdings.length > 0 ? (
-                  portfolio.summary.holdings.slice(0, 5).map((h) => (
-                    <button
-                      key={h.symbol}
-                      type="button"
-                      className="x51-holding-row"
-                      onClick={() => openAsset(h.symbol)}
-                    >
-                      <strong>{h.symbol}</strong>
-                      <span>Qty {number(h.quantity, 4)}</span>
-                      <span>
-                        Avg {portfolio.payload.currency} {number(h.averageCost)}
-                      </span>
-                      <span className="x1-caption">
-                        Basis {number(h.basis)}
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <div style={{ padding: "14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <h2 id="x53-portfolio-heading">My Portfolio</h2>
                     <span className="x1-caption">
-                      No holdings recorded yet in {portfolio.name}.
+                      Private manual ledger · Cost basis only
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="x51-accent-btn"
+                    style={{ minHeight: 38, padding: "0 12px", fontSize: "0.82rem" }}
+                    onClick={() =>
+                      authenticated
+                        ? onGlobalViewChange("PORTFOLIO")
+                        : onRequireAuth?.()
+                    }
+                  >
+                    <Wallet size={14} aria-hidden="true" />
+                    <span>{authenticated ? "Open" : "Sign in"}</span>
+                    <ArrowRight size={14} aria-hidden="true" />
+                  </button>
+                </div>
+
+                {authenticated && portfolio ? (
+                  <div className="x53-pw-metrics">
+                    <div>
+                      <small>Holdings</small>
+                      <strong>{portfolio.summary.holdings.length}</strong>
+                    </div>
+                    <div>
+                      <small>Cost basis ({portfolio.payload.currency})</small>
+                      <strong>{number(portfolio.summary.investedCost)}</strong>
+                    </div>
+                    <div>
+                      <small>
+                        {portfolio.summary.cash < 0
+                          ? "Cash (unfunded ledger)"
+                          : `Cash (${portfolio.payload.currency})`}
+                      </small>
+                      <strong>{number(portfolio.summary.cash)}</strong>
+                    </div>
+                  </div>
+                ) : authenticated ? (
+                  <div className="x53-pw-empty">
+                    <span className="x1-caption">
+                      No portfolio recorded yet.
                     </span>
                     <button
                       type="button"
-                      className="x1-secondary"
-                      style={{ minHeight: 36, fontSize: "0.82rem" }}
+                      className="x1-text-button"
                       onClick={() => {
-                        setPanel("Portfolio");
-                        openEditor("transaction");
+                        onGlobalViewChange("PORTFOLIO");
+                        setEdit("portfolio");
                       }}
                     >
-                      <Plus size={14} />
-                      <span>Record transaction</span>
+                      <Plus size={14} /> Create manual portfolio
+                    </button>
+                  </div>
+                ) : (
+                  <div className="x53-pw-empty">
+                    <span className="x1-caption">
+                      Track private manual holdings and cost-basis allocation.
+                    </span>
+                    <button
+                      type="button"
+                      className="x1-text-button"
+                      onClick={() => onRequireAuth?.()}
+                    >
+                      Sign in to save <ArrowRight size={13} />
                     </button>
                   </div>
                 )}
-              </div>
-            ) : (
-              <div className="x51-empty-cta">
-                <p className="x1-caption" style={{ margin: 0 }}>
-                  Track private manual holdings and cash movements in INR, USD,
-                  EUR, or GBP — with customizable backdrops and an opt-in private ticker.
-                </p>
-                <button
-                  type="button"
-                  className="x1-secondary"
-                  style={{ flexShrink: 0 }}
-                  onClick={() => {
-                    if (!authenticated) {
-                      onRequireAuth?.();
-                      return;
-                    }
-                    setPanel("Portfolio");
-                    setEdit("portfolio");
-                  }}
-                >
-                  <Plus size={14} />
-                  <span>
-                    {authenticated ? "Create manual portfolio" : "Sign in to track portfolio"}
-                  </span>
-                </button>
-              </div>
-            )}
+              </article>
 
-            {/* [12] Portfolio Allocation Donut (cost-basis + honest negative-cash note) */}
-            {portfolios.length > 0 && portfolio && (
-              <PortfolioAllocation
-                currency={portfolio.payload.currency || "INR"}
-                cash={portfolio.summary.cash}
-                holdings={portfolio.summary.holdings.map((h) => ({
-                  symbol: h.symbol,
-                  quantity: h.quantity,
-                  basis: h.basis,
-                }))}
-                onRecordDeposit={() => {
-                  setPanel("Portfolio");
-                  openEditor("transaction");
-                }}
-              />
-            )}
+              <article className="x53-pw-card">
+                <div className="x53-pw-card-head">
+                  <div>
+                    <h2>Watchlist</h2>
+                    <span className="x1-caption">
+                      Saved instruments &amp; quick asset terminal
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="x1-secondary"
+                    style={{ minHeight: 38, padding: "0 12px", fontSize: "0.82rem" }}
+                    onClick={() =>
+                      authenticated
+                        ? onGlobalViewChange("WATCHLISTS")
+                        : onRequireAuth?.()
+                    }
+                  >
+                    <Star size={14} aria-hidden="true" />
+                    <span>{authenticated ? "Manage" : "Sign in"}</span>
+                    <ArrowRight size={14} aria-hidden="true" />
+                  </button>
+                </div>
+
+                {authenticated ? (
+                  <div className="x53-pw-metrics">
+                    <div>
+                      <small>Lists</small>
+                      <strong>{lists.length}</strong>
+                    </div>
+                    <div>
+                      <small>Tracked symbols</small>
+                      <strong>{totalWatchlistItems}</strong>
+                    </div>
+                    <div>
+                      <small>Active list</small>
+                      <strong>{activeList ? activeList.name : "None"}</strong>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="x53-pw-empty">
+                    <span className="x1-caption">
+                      Build private watchlists across FX, indices, and equities.
+                    </span>
+                    <button
+                      type="button"
+                      className="x1-text-button"
+                      onClick={() => onRequireAuth?.()}
+                    >
+                      Sign in to save <ArrowRight size={13} />
+                    </button>
+                  </div>
+                )}
+              </article>
+            </div>
           </section>
 
-          {/* C. MARKET INTELLIGENCE NEWS [15] — Central Full-Width Feature */}
-          <div ref={newsSectionRef}>
+          {/* BLOCK C: ONE Much Bigger, Truly Zoomable 3D Strategic Globe (NO 2D Map) */}
+          <StrategicGlobe
+            data={data}
+            hazards={intel?.hazards.events ?? []}
+            briefing={intel?.briefing ?? null}
+            countries={intel?.countries ?? []}
+            geopoliticsPathways={intel?.geopoliticsPathways ?? []}
+            watchRegions={intel?.watchRegions ?? null}
+            authenticated={authenticated}
+            onRequireAuth={onRequireAuth}
+            onWatchRegionsChange={(next) =>
+              setIntel((prev) => (prev ? { ...prev, watchRegions: next } : prev))
+            }
+            onOpenAsset={openAsset}
+            earthQuality={earthQuality}
+            notify={notify}
+          />
+
+          {/* BLOCK D: Redesigned Economic Calendar — ALWAYS LAST BLOCK */}
+          <EconomicCalendar
+            authenticated={authenticated}
+            onRequireAuth={onRequireAuth}
+            onOpenEventChart={openEventChart}
+            notify={notify}
+          />
+        </div>
+      )}
+
+      {/* =====================================================================
+          FOCUSED VIEW 2: Market Intelligence / Economic Calendar
+          Compact internal tabs: [ Headlines | Calendar | Market Vox ]
+         ===================================================================== */}
+      {globalView === "INTELLIGENCE" && (
+        <div className="x53-focused-stack">
+          <div
+            className="x53-subtabs"
+            role="tablist"
+            aria-label="Market Intelligence and Economic Calendar tabs"
+          >
+            {(
+              [
+                ["HEADLINES", "Headlines"],
+                ["CALENDAR", "Calendar"],
+                ["MARKET_VOX", "Market Vox"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={intelligenceSubView === id}
+                className={
+                  "x53-subtab" + (intelligenceSubView === id ? " is-active" : "")
+                }
+                onClick={() => onIntelligenceSubViewChange(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {intelligenceSubView === "HEADLINES" && (
             <MarketIntelligenceNews
               news={intel?.news ?? null}
               loading={intelLoading}
               onOpenAsset={openAsset}
             />
-          </div>
-
-          {/* D. NSE SECTOR EXPLORER [16] + MINIATURE EXPANDABLE HEATMAPS [17] + ASSET COMPARISON [13] */}
-          <div ref={sectorsSectionRef}>
-            <SectorExplorer data={data} onOpenAsset={openAsset} />
-          </div>
-
-          {/* E. NIFTY & GOLD DAILY MARKET PULSE [19] */}
-          <div ref={pulseSectionRef}>
-            <DailyMarketPulse
-              authenticated={authenticated}
-              onRequireAuth={onRequireAuth}
-              notify={notify}
-            />
-          </div>
-
-          {/* F. ONE UNIFIED STRATEGIC GLOBE ([20] Briefing -> 3D Earth -> Inline 2D Map [21]-[25]) */}
-          <section
-            className="x6-earth-showcase"
-            ref={earthSectionRef}
-            aria-label="Strategic Globe 3D Earth and Integrated 2D Map"
-          >
-            <Panel
-              title="Strategic Globe"
-              kicker="Daily World Briefing · 3D Earth · Integrated 2D Intelligence Map"
-              className="x1-globe-panel"
-              action={
-                <div className="x1-segment" aria-label="Exchange view">
-                  {(["Globe", "List"] as const).map((m) => (
-                    <button
-                      key={m}
-                      aria-pressed={mode === m}
-                      onClick={() => setMode(m)}
-                    >
-                      {m === "Globe" ? (
-                        <Globe2 size={15} />
-                      ) : (
-                        <List size={15} />
-                      )}
-                      <span>{m}</span>
-                    </button>
-                  ))}
-                </div>
-              }
-            >
-              {/* [20] Daily World Briefing at top of Strategic Globe */}
-              {intel?.briefing && (
-                <div style={{ marginBottom: 12 }} aria-label="Daily World Briefing">
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 8,
-                      marginBottom: 8,
-                    }}
-                  >
-                    <strong style={{ fontSize: "0.88rem", color: "var(--x1-title-blue)" }}>
-                      Daily World Briefing
-                    </strong>
-                    <span className="x1-caption">
-                      Verified USGS, NASA EONET &amp; statutory schedules
-                    </span>
-                  </div>
-                  {intel.briefing.items.length > 0 ? (
-                    <div className="x52-briefing-strip">
-                      {intel.briefing.items.slice(0, 4).map((item) => (
-                        <div key={item.id} className="x52-briefing-item">
-                          <div>
-                            <div className="x52-news-meta" style={{ marginBottom: 4 }}>
-                              <span className="x51-pill">{item.sourceName}</span>
-                              <span>{item.occurredAtUTC.slice(0, 10)}</span>
-                            </div>
-                            <strong style={{ fontSize: "0.84rem", display: "block" }}>
-                              {item.headline}
-                            </strong>
-                            <p className="x1-caption" style={{ margin: "3px 0 0" }}>
-                              {item.detail}
-                            </p>
-                          </div>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-                            <button
-                              type="button"
-                              className="x1-text-button"
-                              onClick={() => {
-                                viewOnGlobe({
-                                  lat: item.lat,
-                                  lon: item.lon,
-                                  label: item.headline,
-                                });
-                                setMapFocusTarget((prev) => ({
-                                  lat: item.lat,
-                                  lon: item.lon,
-                                  label: item.headline,
-                                  regionId: item.regionId,
-                                  nonce: (prev?.nonce ?? 0) + 1,
-                                }));
-                              }}
-                            >
-                              Explore on globe <ArrowRight size={12} />
-                            </button>
-                            <a
-                              href={item.sourceUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="x1-caption"
-                              style={{ color: "var(--x1-title-blue)", textDecoration: "none" }}
-                            >
-                              Source <ArrowUpRight size={11} />
-                            </a>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="x1-caption" style={{ margin: 0 }}>
-                      {intel.briefing.emptyMessage}
-                    </p>
-                  )}
-                </div>
-              )}
-              <div className="x1-globe-toolbar">
-                <label className="x1-inline-label">
-                  Region
-                  <select
-                    aria-label="Exchange region"
-                    value={region}
-                    onChange={(e) => setRegion(e.target.value)}
-                  >
-                    {[
-                      "All",
-                      "Americas",
-                      "Europe",
-                      "Middle East/Africa",
-                      "Asia-Pacific",
-                    ].map((r) => (
-                      <option key={r}>{r}</option>
-                    ))}
-                  </select>
-                </label>
-                <span className="x1-caption">
-                  {mode === "List" ? listedVenues.length : venues.length} venues
-                  · city markers
-                  {globeConflicts.length > 0
-                    ? ` · ${globeConflicts.length} sourced conflict markers`
-                    : ""}
-                </span>
-              </div>
-              {mode === "Globe" ? (
-                <div className="x1-globe-stage">
-                  <Suspense
-                    fallback={
-                      <div className="x1-globe-loading">
-                        Preparing the exchange globe…
-                      </div>
-                    }
-                  >
-                    <DeferredGlobe
-                      venues={[...venues]}
-                      selected={selected}
-                      autoRotate={auto}
-                      motionOverride={motionOverride}
-                      zoom={zoom}
-                      resetToken={resetToken}
-                      focusCoords={globeFocusCoords}
-                      conflictPoints={globeConflicts}
-                      selectedConflictId={selectedConflictId}
-                      earthQuality={earthQuality}
-                      onSelectConflict={(id) => {
-                        setSelectedConflictId(id);
-                        mapSectionRef.current?.scrollIntoView({
-                          behavior: "smooth",
-                          block: "start",
-                        });
-                      }}
-                      onPause={() => {
-                        setTourActive(false);
-                        setAuto(false);
-                      }}
-                      onSelect={selectVenue}
-                      onZoom={setZoom}
-                      forceFallback={fallback}
-                      onFallbackChange={setRendererFallback}
-                    />
-                  </Suspense>
-                  <div className="x1-globe-controls">
-                    <button
-                      aria-label={
-                        auto ? "Pause globe rotation" : "Start globe rotation"
-                      }
-                      aria-pressed={auto}
-                      disabled={rendererFallback}
-                      onClick={() => {
-                        setTourActive(false);
-                        setMotionOverride(true);
-                        setAuto(!auto);
-                      }}
-                    >
-                      {auto ? <Pause size={15} /> : <Play size={15} />}
-                    </button>
-                    <button
-                      aria-label="Zoom out"
-                      disabled={rendererFallback || zoom <= 0.8}
-                      onClick={() => setZoom((z) => Math.max(0.8, z - 0.1))}
-                    >
-                      <Minus size={15} />
-                    </button>
-                    <button
-                      aria-label="Zoom in"
-                      disabled={rendererFallback || zoom >= 1.35}
-                      onClick={() => setZoom((z) => Math.min(1.35, z + 0.1))}
-                    >
-                      <Plus size={15} />
-                    </button>
-                    <button
-                      aria-label="Reset globe view"
-                      disabled={rendererFallback}
-                      onClick={() => {
-                        setTourActive(false);
-                        setZoom(1);
-                        setAuto(false);
-                        setSelected(
-                          EXCHANGES.find((v) => v.id === "XNSE") || null,
-                        );
-                        setResetToken((n) => n + 1);
-                      }}
-                    >
-                      <RotateCcw size={15} />
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    className="x1-secondary x1-globe-tour-btn"
-                    aria-pressed={tourActive}
-                    disabled={rendererFallback}
-                    onClick={() => setTourActive((v) => !v)}
-                  >
-                    {tourActive ? "Stop tour" : "Explore Earth"}
-                  </button>
-                  {zoom >= 1.25 && selected && (
-                    <button
-                      type="button"
-                      className="x51-globe-zoom-cta"
-                      onClick={() => investigateOnMap(selected)}
-                    >
-                      <MapPin size={15} />
-                      <span>Open 2D Satellite Map · {selected.city}</span>
-                    </button>
-                  )}
-                  <span className="x1-globe-hint">
-                    {rendererFallback
-                      ? "Natural-color static image"
-                      : tourActive
-                        ? "Touring 4 global hubs"
-                        : "Drag to rotate · Zoom for 2D map"}
-                  </span>
-                </div>
-              ) : (
-                <div className="x1-exchange-list">
-                  <label className="x1-search">
-                    <Search size={16} />
-                    <input
-                      value={exchangeSearch}
-                      onChange={(e) => setExchangeSearch(e.target.value)}
-                      aria-label="Search exchanges"
-                      placeholder="Find an exchange or city…"
-                    />
-                  </label>
-                  {listedVenues.map((v) => (
-                    <button
-                      key={v.id}
-                      aria-pressed={selected?.id === v.id}
-                      onClick={() => selectVenue(v)}
-                    >
-                      <span>
-                        <strong>{v.mic}</strong>
-                        {v.city} · {v.country}
-                      </span>
-                      <span>
-                        {data
-                          ? exchangeSession(v, data.asOf).label
-                          : "Schedule unknown"}
-                        <ArrowUpRight size={15} />
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="x1-globe-legend">
-                <span>
-                  <i />
-                  Exchange city · grouped venues
-                </span>
-                <span className="x1-muted">
-                  Illustrative hub connections · no capital-flow data
-                </span>
-              </div>
-              {selected && (
-                <div className="x1-exchange-detail">
-                  <div>
-                    <p className="x1-kicker">
-                      {selected.city}, {selected.country} · {selected.mic}
-                    </p>
-                    <h3>{selected.name}</h3>
-                    <span className="x1-caption">
-                      {currentSession?.localTime ||
-                        "Clock awaiting server time"}{" "}
-                      · {selected.timeZone}
-                    </span>
-                  </div>
-                  <span
-                    className={
-                      "x1-badge " +
-                      (currentSession?.state === "OPEN"
-                        ? "x1-scheduled-open"
-                        : "")
-                    }
-                  >
-                    {currentSession?.label || "Schedule unknown"}
-                  </span>
-                  <p className="x1-caption">
-                    {currentSession?.reason || "Calendar not connected."} Index
-                    data not connected.
-                  </p>
-                  <div className="x1-exchange-links">
-                    <button
-                      type="button"
-                      className="x1-secondary"
-                      onClick={() => investigateOnMap(selected)}
-                    >
-                      <MapPin size={14} />
-                      Investigate on 2D Map
-                    </button>
-                    {EXCHANGES.filter(
-                      (v) =>
-                        v.clusterKey === selected.clusterKey &&
-                        v.id !== selected.id,
-                    ).map((v) => (
-                      <button
-                        key={v.id}
-                        className="x1-text-button"
-                        onClick={() => selectVenue(v)}
-                      >
-                        {v.name}
-                        <ArrowRight size={13} />
-                      </button>
-                    ))}
-                    <SourceLink href={selected.website}>
-                      Open market view
-                    </SourceLink>
-                    <SourceLink href={selected.calendarUrl}>
-                      Official calendar
-                    </SourceLink>
-                  </div>
-                </div>
-              )}
-              <details className="x1-small-details">
-                <summary>Accessibility &amp; Earth sources</summary>
-                <p>
-                  List view provides every venue without 3D interaction. Focus the
-                  globe and use arrow keys to rotate; +/− zooms within bounds.
-                  Imagery: NASA Blue Marble &amp; Black Marble (public domain).
-                </p>
-                <button
-                  className="x1-text-button"
-                  onClick={() => setFallback(!fallback)}
-                >
-                  {fallback
-                    ? "Restore WebGL globe"
-                    : "Use 2D compatibility view"}
-                </button>
-              </details>
-
-              {/* Compact Realistic 2D World Map DIRECTLY UNDERNEATH 3D Earth inside the SAME Strategic Globe Panel */}
-              <div ref={mapSectionRef}>
-                <Suspense
-                  fallback={
-                    <WorkspaceSkeleton
-                      label="Loading integrated 2D map…"
-                      kind="panel"
-                    />
-                  }
-                >
-                  <WorldConflictMap
-                    hazards={intel?.hazards.events ?? []}
-                    countries={intel?.countries ?? []}
-                    geopoliticsPathways={intel?.geopoliticsPathways ?? []}
-                    watchRegions={intel?.watchRegions ?? null}
-                    authenticated={authenticated}
-                    onRequireAuth={onRequireAuth}
-                    onWatchRegionsChange={(next) =>
-                      setIntel((prev) =>
-                        prev ? { ...prev, watchRegions: next } : prev,
-                      )
-                    }
-                    focusTarget={mapFocusTarget}
-                    externalConflictId={selectedConflictId}
-                    onViewOnGlobe={viewOnGlobe}
-                    onConflictsLoaded={setGlobeConflicts}
-                    onOpenAsset={openAsset}
-                    onSelectExchange={selectVenue}
-                    notify={notify}
-                  />
-                </Suspense>
-              </div>
-            </Panel>
-          </section>
-
-          {/* G. ECONOMIC CALENDAR [04]/[14] — ALWAYS AT THE VERY BOTTOM OF GLOBAL */}
-          <div ref={calendarSectionRef}>
+          )}
+          {intelligenceSubView === "CALENDAR" && (
             <EconomicCalendar
               authenticated={authenticated}
               onRequireAuth={onRequireAuth}
               onOpenEventChart={openEventChart}
               notify={notify}
             />
-          </div>
-
-          <div className="x1-source-note">
-            <ShieldCheck size={18} />
-            <div>
-              <strong>Source aware, always.</strong>
-              <p>
-                ECB daily FX, US Treasury yields, USGS earthquakes, and NASA
-                EONET events are official public feeds. Commercial exchange and
-                newswire feeds display pending states until licensed keys are added.
-              </p>
-              <button
-                className="x1-text-button"
-                onClick={() => setPanel("Market Explorer")}
-              >
-                Review data coverage
-                <ArrowRight size={14} />
-              </button>
-            </div>
-          </div>
+          )}
+          {intelligenceSubView === "MARKET_VOX" && (
+            <DailyMarketPulse
+              authenticated={authenticated}
+              onRequireAuth={onRequireAuth}
+              notify={notify}
+            />
+          )}
         </div>
       )}
-      {panel === "Watchlists" && (
+
+      {/* =====================================================================
+          FOCUSED VIEW 3: Heatmap (NSE Sector Explorer & Asset Comparison)
+         ===================================================================== */}
+      {globalView === "HEATMAP" && (
+        <div className="x53-focused-stack">
+          <SectorExplorer data={data} onOpenAsset={openAsset} />
+        </div>
+      )}
+
+      {/* =====================================================================
+          FOCUSED VIEW 4: Strategic Globe (Immersive Focus on Same ONE 3D Earth)
+         ===================================================================== */}
+      {globalView === "GLOBE_FOCUS" && (
+        <div className="x53-focused-stack">
+          <StrategicGlobe
+            data={data}
+            hazards={intel?.hazards.events ?? []}
+            briefing={intel?.briefing ?? null}
+            countries={intel?.countries ?? []}
+            geopoliticsPathways={intel?.geopoliticsPathways ?? []}
+            watchRegions={intel?.watchRegions ?? null}
+            authenticated={authenticated}
+            onRequireAuth={onRequireAuth}
+            onWatchRegionsChange={(next) =>
+              setIntel((prev) => (prev ? { ...prev, watchRegions: next } : prev))
+            }
+            onOpenAsset={openAsset}
+            earthQuality={earthQuality}
+            focused
+            notify={notify}
+          />
+        </div>
+      )}
+
+      {globalView === "WATCHLISTS" && (
         <div className="x1-work-grid">
           <Panel
             title="Your lists"
@@ -1429,7 +930,7 @@ export default function Global({
           </Panel>
         </div>
       )}
-      {panel === "Portfolio" && (
+      {globalView === "PORTFOLIO" && (
         <>
           {(() => {
             const activePreset = resolveBannerPreset(backdropDraft.presetId);
@@ -1681,6 +1182,16 @@ export default function Global({
                   </div>
                 ))}
               </div>
+              <PortfolioAllocation
+                currency={portfolio.payload.currency || "INR"}
+                cash={portfolio.summary.cash}
+                holdings={portfolio.summary.holdings.map((h) => ({
+                  symbol: h.symbol,
+                  quantity: h.quantity,
+                  basis: h.basis,
+                }))}
+                onRecordDeposit={() => openEditor("transaction")}
+              />
               <Panel
                 title="Holdings at recorded cost"
                 action={
@@ -1788,7 +1299,7 @@ export default function Global({
           )}
         </>
       )}
-      {panel === "Market Explorer" && (
+      {globalView === "MARKET_EXPLORER" && (
         <MarketExplorer
           data={data}
           authenticated={authenticated}
