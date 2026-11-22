@@ -39,6 +39,7 @@ type Props = {
   motionPref: "system" | "minimal" | "full";
   onMotionChange: (next: "system" | "minimal" | "full") => void;
   busy?: boolean;
+  onOpenMyProfile?: () => void;
   onOpenSettings: (section: SettingsSection) => void;
   onOpenSaved: () => void;
   onOpenHelp: () => void;
@@ -67,6 +68,7 @@ export default function AccountQuickPanel({
   motionPref,
   onMotionChange,
   busy = false,
+  onOpenMyProfile,
   onOpenSettings,
   onOpenSaved,
   onOpenHelp,
@@ -183,7 +185,8 @@ export default function AccountQuickPanel({
                 className="x6-quick-pill"
                 onClick={() => {
                   onClose();
-                  onOpenSettings("profile");
+                  if (handle && onOpenMyProfile) onOpenMyProfile();
+                  else onOpenSettings("profile");
                 }}
               >
                 <UserRound size={15} />

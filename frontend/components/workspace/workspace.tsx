@@ -181,6 +181,16 @@ export default function X1Workspace() {
   const refreshLock = useRef(false);
   const researchDirty = useRef(false);
   const authRef = useRef({ authenticated: false, accepted: false });
+  const [mobileChatActive, setMobileChatActive] = useState(false);
+
+  useEffect(() => {
+    const onChatActive = (event: Event) => {
+      setMobileChatActive(!!(event as CustomEvent<boolean>).detail);
+    };
+    window.addEventListener("x54-mobile-chat-active", onChatActive);
+    return () =>
+      window.removeEventListener("x54-mobile-chat-active", onChatActive);
+  }, []);
 
   useEffect(() => {
     authRef.current = {
@@ -282,10 +292,12 @@ export default function X1Workspace() {
         target = params.get("view")?.toLowerCase(),
         sec = params.get("section")?.toLowerCase();
       if (target === "strategy") setView("Strategy");
-      if (target === "community") {
+      const rawProf = (params.get("profile") || params.get("handle") || "")
+        .trim()
+        .replace(/^@+/, "");
+      if (target === "community" || rawProf) {
         setView("Community");
-        const prof = params.get("profile")?.trim().replace(/^@/, "");
-        if (prof) setInitialProfileHandle(prof);
+        if (rawProf) setInitialProfileHandle(rawProf);
       }
       if (target === "settings") {
         setView("Settings");
@@ -553,7 +565,7 @@ export default function X1Workspace() {
 
   return (
     <div
-      className="x1-app"
+      className={"x1-app" + (mobileChatActive ? " is-mobile-chat-active" : "")}
       data-motion={motionPref === "minimal" ? "minimal" : "system"}
       data-density={densityPref}
     >
@@ -635,7 +647,13 @@ export default function X1Workspace() {
                   authenticated={isSignedIn && accepted === true}
                   onAsset={setAsset}
                   onCommunity={(query) => {
-                    setCommunitySearch(query);
+                    const trimmed = query.trim();
+                    if (trimmed.startsWith("@") && trimmed.length >= 2) {
+                      setInitialProfileHandle(trimmed.slice(1));
+                      setCommunitySearch("");
+                    } else {
+                      setCommunitySearch(trimmed);
+                    }
                     setCommunityTab("web");
                     setCommunitySavedOnly(false);
                     setCommunityTabNonce((n) => n + 1);
@@ -776,12 +794,29 @@ export default function X1Workspace() {
                                 border: "1px solid var(--x51-hairline)",
                               }}
                             >
-                              <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                              <button
+                                type="button"
+                                className="x1-text-button"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  minWidth: 0,
+                                  padding: 0,
+                                }}
+                                onClick={() => {
+                                  setBellOpen(false);
+                                  setInitialProfileHandle(req.handle);
+                                  setCommunityTab("web");
+                                  setCommunityTabNonce((n) => n + 1);
+                                  navigate("Community");
+                                }}
+                              >
                                 <AvatarBadge avatarId={req.avatarId} size={26} alt="" />
                                 <span style={{ fontSize: "0.82rem", overflow: "hidden", textOverflow: "ellipsis" }}>
                                   @{req.handle}
                                 </span>
-                              </div>
+                              </button>
                               <div style={{ display: "flex", gap: 4 }}>
                                 <button
                                   type="button"
@@ -885,6 +920,17 @@ export default function X1Workspace() {
               motionPref={motionPref}
               onMotionChange={updateMotionPref}
               busy={busy}
+              onOpenMyProfile={() => {
+                if (authUser?.handle) {
+                  setInitialProfileHandle(authUser.handle);
+                  setCommunityTab("web");
+                  setCommunitySavedOnly(false);
+                  setCommunityTabNonce((n) => n + 1);
+                  navigate("Community");
+                } else {
+                  openSettings("profile");
+                }
+              }}
               onOpenSettings={openSettings}
               onOpenSaved={() => {
                 setCommunityTab("web");
@@ -1145,6 +1191,7 @@ export default function X1Workspace() {
                     setStrategyPanel("Soul Scan");
                     navigate("Strategy");
                   }}
+                  onMobileChatActive={setMobileChatActive}
                 />
               )}
             </div>
@@ -1489,7 +1536,7 @@ export default function X1Workspace() {
                 setAbout(true);
               }}
             >
-              About Strategic Souls X5.3
+              About Strategic Souls X5.4
             </button>
           </div>
         </Modal>
@@ -1504,9 +1551,8 @@ export default function X1Workspace() {
             <div>
               <dt>Release</dt>
               <dd>
-                X5.3 · The Focused Intelligence Terminal (Strategic Dashboard,
-                Zoomable 3D Earth, Redesigned Economic Calendar, Market Vox,
-                Compact Soul Scan &amp; Empirical Evidence)
+                X5.4 · Premium Mobile UI, Public Research Profiles, Telegram-like
+                Chats &amp; Cleaner Soul Scanner
               </dd>
             </div>
             <div>

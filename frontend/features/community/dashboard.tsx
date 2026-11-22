@@ -174,6 +174,7 @@ export default function Community({
   initialTab,
   tabNonce = 0,
   onOpenSettings,
+  onOpenProfile,
 }: {
   authenticated?: boolean;
   onRequireAuth?: () => void;
@@ -185,6 +186,7 @@ export default function Community({
   initialTab?: CommunityTab;
   tabNonce?: number;
   onOpenSettings?: (section: SettingsSection) => void;
+  onOpenProfile?: (handle: string) => void;
 }) {
   const [tab, setTab] = useState<CommunityTab>(
     initialTab || (authenticated ? "rooms" : "explore"),
@@ -390,6 +392,10 @@ export default function Community({
   }
 
   async function openPublicProfile(handle: string) {
+    if (onOpenProfile) {
+      onOpenProfile(handle);
+      return;
+    }
     if (!authenticated) {
       onRequireAuth?.();
       return;
@@ -1386,6 +1392,7 @@ export default function Community({
                           key={`${group.id}-${profileRevision}`}
                           groupId={group.id}
                           notify={notify}
+                          onOpenProfile={(h) => void openPublicProfile(h)}
                         />
                       </>
                     )}
@@ -1443,6 +1450,7 @@ export default function Community({
                 else if (v === "Discover") setTab("explore");
               }}
               notify={notify}
+              onOpenProfile={(h) => void openPublicProfile(h)}
               onOpenGroup={(id) => {
                 setGroupId(id);
                 setCursor("");
@@ -1488,6 +1496,10 @@ export default function Community({
               }
             }}
             notify={notify}
+            onOpenProfile={(h) => {
+              setInboxOpen(false);
+              void openPublicProfile(h);
+            }}
             shareSoul={networkShare}
             onClearShare={() => setNetworkShare(null)}
             onOpenGroup={(id) => {
@@ -1857,7 +1869,6 @@ export default function Community({
                 const input: Record<string, unknown> = { action };
                 for (const [key, value] of f) input[key] = value;
                 if (modal === "profile") {
-                  input.discoverable = f.get("discoverable") === "on";
                   input.avatar = currentUserAvatarId || body?.avatar || "a01";
                 }
                 if (modal === "invite") input.groupId = groupId;
@@ -1918,14 +1929,11 @@ export default function Community({
                       placeholder="The questions and markets you study."
                     />
                   </label>
-                  <label className="x1-checkbox">
-                    <input
-                      type="checkbox"
-                      name="discoverable"
-                      defaultChecked={true}
-                    />
-                    Allow other signed-in members to find my @handle in Explore
-                  </label>
+                  <p className="x1-caption" style={{ margin: 0 }}>
+                    Your @BodyID creates a public researcher profile so others can
+                    find and follow your public Souls. Direct messages, portfolios,
+                    drafts, and email stay strictly private.
+                  </p>
                 </>
               ) : modal === "invite" ? (
                 <>

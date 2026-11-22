@@ -1,26 +1,26 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
   Bookmark,
-  Check,
+  ChevronRight,
   Copy,
-  ExternalLink,
   Globe2,
   MessageSquare,
   Pencil,
   Pin,
   PinOff,
-  QrCode,
   Send,
   Trash2,
   UserCheck,
   UserPlus,
   Users,
 } from "lucide-react";
-import type { PublishedSoulCard } from "../../../backend/services/community/research-network";
+import type {
+  PublicResearcherSearchItem,
+  PublishedSoulCard,
+} from "../../../backend/services/community/research-network";
 import type { UserProfileSnapshot } from "../../../backend/services/profile/profile";
-import { buildQrSvgString } from "../../lib/qr-svg";
 import {
   Empty,
   Modal,
@@ -29,37 +29,12 @@ import {
   type Notice,
 } from "../../components/workspace/shared";
 import AvatarBadge from "../account/avatar-badge";
-import AvatarStudio from "../account/avatar-studio";
 import type { SettingsSection } from "../account/account-quick-panel";
 import CommunityGroupsWorkspace from "./dashboard";
+import PublicProfileSheet from "./public-profile-sheet";
 import { SocialWorkspace, type SocialView } from "./social-workspace";
 
 type PrimaryCommunityTab = "web" | "chats" | "groups";
-
-type PublicProfileResponse = {
-  profile: {
-    handle: string;
-    displayName: string;
-    bio: string;
-    avatarId: string;
-    age: number | null;
-    genderSymbol: "MALE" | "FEMALE" | "HIDDEN";
-    bannerPresetId: string;
-    bannerPosition: "top" | "center" | "bottom";
-    bannerOverlay: number;
-    instagramHandle: string;
-    websiteUrl: string;
-    researchInterests: string[];
-    discoverable: boolean;
-    isMe: boolean;
-    followState: "NONE" | "PENDING" | "ACTIVE";
-    canMessage: boolean;
-    counts: { followers: number; following: number; publishedSouls: number };
-    pinnedSouls: PublishedSoulCard[];
-    posts: PublishedSoulCard[];
-    portfolioValueVisibility: string;
-  };
-};
 
 type SoulComment = {
   id: string;
@@ -82,6 +57,8 @@ type Props = {
     avatarId?: string;
     handle?: string | null;
     bio?: string;
+    discoverable?: boolean;
+    legacyPrivateProfile?: boolean;
     genderSymbol?: "MALE" | "FEMALE" | "HIDDEN";
     instagramHandle?: string;
     bannerPresetId?: string;
@@ -96,13 +73,8 @@ type Props = {
   onProfileSynced?: (profile: UserProfileSnapshot) => void;
   onOpenAsset: (symbol: string) => void;
   onCopyToStrategy: (formula: string) => void;
+  onMobileChatActive?: (active: boolean) => void;
 };
-
-function genderLabel(g?: "MALE" | "FEMALE" | "HIDDEN"): string {
-  if (g === "MALE") return "Male";
-  if (g === "FEMALE") return "Female";
-  return "";
-}
 
 export default function ResearchNetworkShell({
   authenticated,
@@ -120,9 +92,11 @@ export default function ResearchNetworkShell({
   onProfileSynced,
   onOpenAsset,
   onCopyToStrategy,
+  onMobileChatActive,
 }: Props) {
   const [tab, setTab] = useState<PrimaryCommunityTab>(initialTab);
   const [chatView, setChatView] = useState<SocialView>("Messages");
+  const [pendingThreadId, setPendingThreadId] = useState("");
   const [modeFilter, setModeFilter] = useState<"ALL" | "CLASSIC" | "ADVANCED">(
     "ALL",
   );
@@ -135,16 +109,22 @@ export default function ResearchNetworkShell({
   const [posts, setPosts] = useState<PublishedSoulCard[]>([]);
   const [loadingFeed, setLoadingFeed] = useState(true);
   const [myProfile, setMyProfile] = useState<UserProfileSnapshot | null>(null);
-  const [avatarStudioOpen, setAvatarStudioOpen] = useState(false);
-  const [qrHandle, setQrHandle] = useState<string | null>(null);
+  const [legacyBannerDismissed, setLegacyBannerDismissed] = useState(false);
+  const [optingPublic, setOptingPublic] = useState(false);
 
-  // Public researcher profile modal
-  const [viewedProfile, setViewedProfile] = useState<
-    PublicProfileResponse["profile"] | null
-  >(null);
-  const [profileLoading, setProfileLoading] = useState(false);
+  // Compact researcher search results
+  const [researchers, setResearchers] = useState<PublicResearcherSearchItem[]>(
+    [],
+  );
+  const [searchingResearchers, setSearchingResearchers] = useState(false);
 
-  // Comments drawer modal
+  // ONE canonical public researcher profile surface
+  const [activeProfileHandle, setActiveProfileHandle] = useState<string | null>(
+    initialProfileHandle ? initialProfileHandle.trim().replace(/^@+/, "").toLowerCase() : null,
+  );
+  const pushedProfileHistoryRef = useRef(false);
+
+  // Comments modal
   const [discussPost, setDiscussPost] = useState<PublishedSoulCard | null>(
     null,
   );
@@ -222,84 +202,193 @@ export default function ResearchNetworkShell({
     };
   }, [tab, loadWebFeed]);
 
-  const openResearcherProfile = useCallback(
-    async (rawHandle: string) => {
-      const clean = rawHandle.trim().replace(/^@/, "");
-      if (!clean) return;
-      setProfileLoading(true);
-      try {
-        const res = await api<PublicProfileResponse>(
-          `/api/community/network?view=profile&handle=${encodeURIComponent(clean)}`,
-        );
-        setViewedProfile(res.profile);
-      } catch (err) {
-        notify(
-          err instanceof Error ? err.message : `Could not open @${clean}.`,
-          true,
-        );
-      } finally {
-        setProfileLoading(false);
-      }
-    },
-    [notify],
-  );
-
-  // [28] Support QR deep link /?view=community&profile=<handle>
+  // Real debounced public researcher search (replaces giant banner!)
+  const trimmedSearch = searchQuery.trim().replace(/^@+/, "");
   useEffect(() => {
-    if (!initialProfileHandle) return;
+    if (trimmedSearch.length < 1) return;
     let alive = true;
-    queueMicrotask(() => {
-      if (alive) void openResearcherProfile(initialProfileHandle);
-    });
+    const timer = window.setTimeout(async () => {
+      if (!alive) return;
+      setSearchingResearchers(true);
+      try {
+        const res = await api<{ researchers: PublicResearcherSearchItem[] }>(
+          `/api/community/network?view=search&q=${encodeURIComponent(trimmedSearch)}`,
+        );
+        if (alive) setResearchers(res.researchers ?? []);
+      } catch {
+        if (alive) setResearchers([]);
+      } finally {
+        if (alive) setSearchingResearchers(false);
+      }
+    }, 180);
     return () => {
       alive = false;
+      window.clearTimeout(timer);
     };
-  }, [initialProfileHandle, openResearcherProfile]);
+  }, [trimmedSearch]);
+  const visibleResearchers = trimmedSearch.length >= 1 ? researchers : [];
+  const isSearchingResearchers = trimmedSearch.length >= 1 && searchingResearchers;
 
-  async function toggleFollow(handle: string, currentlyFollowingOrPending: boolean) {
+  // Deep-link synchronization & browser Back button support for canonical PublicProfileSheet
+  const openResearcherProfile = useCallback((rawHandle: string) => {
+    const clean = rawHandle.trim().replace(/^@+/, "").toLowerCase();
+    if (!clean) return;
+    setActiveProfileHandle(clean);
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("view", "community");
+        url.searchParams.set("profile", clean);
+        url.searchParams.delete("handle");
+        window.history.pushState(
+          { x54Profile: clean },
+          "",
+          url.pathname + url.search,
+        );
+        pushedProfileHistoryRef.current = true;
+      } catch {
+        /* Ignore history restrictions */
+      }
+    }
+  }, []);
+
+  const closeResearcherProfile = useCallback(() => {
+    setActiveProfileHandle(null);
+    if (typeof window !== "undefined") {
+      if (pushedProfileHistoryRef.current) {
+        pushedProfileHistoryRef.current = false;
+        try {
+          window.history.back();
+          return;
+        } catch {
+          /* Fall through to replaceState */
+        }
+      }
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("profile");
+        url.searchParams.delete("handle");
+        window.history.replaceState(null, "", url.pathname + url.search);
+      } catch {
+        /* Ignore */
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!initialProfileHandle) return;
+    const clean = initialProfileHandle.trim().replace(/^@+/, "").toLowerCase();
+    if (clean) {
+      queueMicrotask(() => setActiveProfileHandle(clean));
+    }
+  }, [initialProfileHandle, tabNonce]);
+
+  useEffect(() => {
+    const onPop = () => {
+      const params = new URLSearchParams(window.location.search);
+      const fromUrl = params.get("profile") || params.get("handle");
+      pushedProfileHistoryRef.current = false;
+      setActiveProfileHandle(
+        fromUrl ? fromUrl.trim().replace(/^@+/, "").toLowerCase() : null,
+      );
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  async function handleMessageFromProfile(targetHandle: string) {
     if (!authenticated) {
       onRequireAuth?.();
       return;
     }
-    setActionBusy("follow:" + handle);
     try {
-      const res = await api<{ ok: boolean; state: "NONE" | "PENDING" | "ACTIVE" }>(
-        "/api/community/network",
-        {
-          action: "follow",
-          handle,
-          active: !currentlyFollowingOrPending,
-        },
+      const res = await api<{ threadId?: string }>("/api/x2/social", {
+        action: "start-thread",
+        handle: targetHandle,
+      });
+      if (res.threadId) {
+        setActiveProfileHandle(null);
+        pushedProfileHistoryRef.current = false;
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("profile");
+          url.searchParams.delete("handle");
+          window.history.replaceState(null, "", url.pathname + url.search);
+        } catch {
+          /* Ignore */
+        }
+        setTab("chats");
+        setChatView("Messages");
+        setPendingThreadId(res.threadId);
+      }
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : `Could not message @${targetHandle}.`,
+        true,
       );
-      setViewedProfile((prev) =>
-        prev && prev.handle === handle
-          ? {
-              ...prev,
-              followState: res.state,
-              counts: {
-                ...prev.counts,
-                followers:
-                  res.state === "ACTIVE" && prev.followState !== "ACTIVE"
-                    ? prev.counts.followers + 1
-                    : res.state === "NONE" && prev.followState === "ACTIVE"
-                      ? Math.max(0, prev.counts.followers - 1)
-                      : prev.counts.followers,
-              },
-            }
-          : prev,
+    }
+  }
+
+  async function quickFollowFromSearch(person: PublicResearcherSearchItem) {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    const wantFollow = person.followState === "NONE";
+    setActionBusy("follow:" + person.handle);
+    try {
+      const res = await api<{
+        state: "NONE" | "PENDING" | "ACTIVE";
+        counts?: { followers: number };
+      }>("/api/community/network", {
+        action: "follow",
+        handle: person.handle,
+        active: wantFollow,
+      });
+      setResearchers((prev) =>
+        prev.map((r) =>
+          r.handle === person.handle
+            ? {
+                ...r,
+                followState: res.state,
+                followers: res.counts?.followers ?? r.followers,
+              }
+            : r,
+        ),
       );
       void loadMyProfile();
       notify(
         res.state === "ACTIVE"
-          ? `Following @${handle}.`
+          ? `Following @${person.handle}.`
           : res.state === "PENDING"
-            ? `Follow request sent to @${handle}.`
-            : `Unfollowed @${handle}.`,
+            ? `Follow request sent to @${person.handle}.`
+            : `Unfollowed @${person.handle}.`,
       );
     } catch (err) {
-      notify(err instanceof Error ? err.message : "Follow action failed.", true);
+      notify(err instanceof Error ? err.message : "Follow failed.", true);
     } finally {
       setActionBusy("");
+    }
+  }
+
+  async function optInLegacyPublic() {
+    if (!authenticated || optingPublic) return;
+    setOptingPublic(true);
+    try {
+      const res = await api<{ profile: UserProfileSnapshot }>("/api/profile", {
+        action: "update-preferences",
+        social: { discoverable: true },
+      });
+      setMyProfile(res.profile);
+      onProfileSynced?.(res.profile);
+      notify("Your researcher profile is now publicly discoverable.");
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : "Could not update profile visibility.",
+        true,
+      );
+    } finally {
+      setOptingPublic(false);
     }
   }
 
@@ -327,7 +416,7 @@ export default function ResearchNetworkShell({
             : p,
         ),
       );
-      notify(next ? "Saved to your research bookmarks." : "Removed from Saved.");
+      notify(next ? "Saved to your bookmarks." : "Removed from Saved.");
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not save Soul.", true);
     } finally {
@@ -351,7 +440,7 @@ export default function ResearchNetworkShell({
       setPosts((prev) =>
         prev.map((p) => (p.id === post.id ? { ...p, pinned: next } : p)),
       );
-      notify(next ? "Pinned Soul to your profile (max 3)." : "Unpinned Soul.");
+      notify(next ? "Pinned Soul to your profile." : "Unpinned Soul.");
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not update pin.", true);
     } finally {
@@ -458,178 +547,182 @@ export default function ResearchNetworkShell({
     myProfile?.displayName ?? currentUser?.displayName ?? "Researcher";
   const handle = myProfile?.handle ?? currentUser?.handle ?? null;
   const avatarId = myProfile?.avatarId ?? currentUser?.avatarId ?? "a01";
-  const genderSym =
-    myProfile?.genderSymbol ?? currentUser?.genderSymbol ?? "HIDDEN";
-  const visibleAge =
-    myProfile?.showAge && typeof myProfile.age === "number" ? myProfile.age : null;
-  const bio = myProfile?.bio ?? currentUser?.bio ?? "";
-  const instagram =
-    myProfile?.instagramHandle ?? currentUser?.instagramHandle ?? "";
-  const website = myProfile?.websiteUrl ?? "";
-  const interests = myProfile?.researchInterests ?? [];
   const counts = myProfile?.counts ??
     currentUser?.counts ?? { followers: 0, following: 0, publishedSouls: 0 };
-  const myPinnedSouls = posts.filter((p) => p.isMine && p.pinned).slice(0, 3);
-  const cleanSearchHandle = searchQuery.trim().replace(/^@/, "");
-
-  const qrUrl = qrHandle
-    ? `${typeof window !== "undefined" ? window.location.origin : "https://strategic-souls.vishnukota20071005.workers.dev"}/?view=community&profile=${encodeURIComponent(qrHandle)}`
-    : "";
-  const qrSvg = qrUrl ? buildQrSvgString(qrUrl, 196) : "";
+  const isLegacyPrivate =
+    authenticated &&
+    !legacyBannerDismissed &&
+    (myProfile?.legacyPrivateProfile ?? currentUser?.legacyPrivateProfile === true);
 
   return (
-    <div className="x51-global-stack">
-      {/* 1. CLEAN UNDERSTATED VERTICAL PERSONAL PROFILE */}
-      <section className="x52-vertical-profile" aria-label="Your researcher profile">
-        <AvatarBadge
-          avatarId={avatarId}
-          size={58}
-          ring
-          alt={`${displayName} avatar`}
-        />
-
+    <div className="x51-global-stack" style={{ gap: 12 }}>
+      {/* 1. COMPACT MY PROFILE STRIP (keeps Web | Chats | Groups near top on mobile!) */}
+      <div className="x54-my-strip" aria-label="Your researcher identity">
         {authenticated ? (
           <>
-            <div>
-              <h2 style={{ margin: "2px 0 0", fontSize: "1.14rem" }}>
-                {displayName}
-              </h2>
-              <div className="x52-profile-meta-row" style={{ marginTop: 3 }}>
-                <span>{handle ? `@${handle}` : "No Body ID set yet"}</span>
-                {visibleAge !== null && <span>· Age {visibleAge}</span>}
-                {genderLabel(genderSym) && <span>· {genderLabel(genderSym)}</span>}
-              </div>
-            </div>
-
-            {bio && (
-              <p className="x1-caption" style={{ maxWidth: 460, margin: 0 }}>
-                {bio}
-              </p>
-            )}
-
-            {(instagram || website || interests.length > 0) && (
-              <div className="x51-chip-row" style={{ justifyContent: "center" }}>
-                {instagram && (
-                  <a
-                    className="x51-pill"
-                    href={`https://instagram.com/${encodeURIComponent(instagram)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    @{instagram} <ExternalLink size={11} />
-                  </a>
-                )}
-                {website && (
-                  <a
-                    className="x51-pill"
-                    href={website}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Website <ExternalLink size={11} />
-                  </a>
-                )}
-                {interests.map((tag) => (
-                  <span key={tag} className="x51-pill">
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <div className="x51-profile-stats">
-              <div>
-                <strong>{counts.followers}</strong>
-                <span>Followers</span>
-              </div>
-              <div>
-                <strong>{counts.following}</strong>
-                <span>Following</span>
-              </div>
-              <div>
-                <strong>{counts.publishedSouls}</strong>
-                <span>Souls</span>
-              </div>
-            </div>
-
-            <div className="x1-actions" style={{ justifyContent: "center", flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="x1-secondary"
-                style={{ minHeight: 36, fontSize: "0.82rem" }}
-                onClick={() => onOpenSettings("profile")}
-              >
-                <Pencil size={13} />
-                <span>{handle ? "Edit Profile" : "Set @BodyID"}</span>
-              </button>
+            <button
+              type="button"
+              className="x54-my-strip-main"
+              onClick={() =>
+                handle
+                  ? openResearcherProfile(handle)
+                  : onOpenSettings("profile")
+              }
+            >
+              <AvatarBadge
+                avatarId={avatarId}
+                displayName={displayName}
+                size={40}
+                ring
+              />
+              <span className="x54-my-strip-text">
+                <span className="x54-my-strip-name">{displayName}</span>
+                <span className="x54-my-strip-sub">
+                  {handle
+                    ? `@${handle} · ${counts.publishedSouls} Souls · ${counts.followers} Followers`
+                    : "Claim your public @BodyID"}
+                </span>
+              </span>
+            </button>
+            <div className="x54-my-strip-actions">
               {handle && (
                 <button
                   type="button"
-                  className="x1-secondary"
-                  style={{ minHeight: 36, fontSize: "0.82rem" }}
-                  onClick={() => setQrHandle(handle)}
+                  className="x54-strip-btn"
+                  onClick={() => openResearcherProfile(handle)}
                 >
-                  <QrCode size={13} />
-                  <span>Share QR</span>
+                  <span>Profile</span>
+                  <ChevronRight size={14} aria-hidden="true" />
                 </button>
               )}
+              <button
+                type="button"
+                className="x54-strip-btn"
+                aria-label={handle ? "Edit profile" : "Set Body ID"}
+                onClick={() => onOpenSettings("profile")}
+              >
+                <Pencil size={13} aria-hidden="true" />
+                <span>{handle ? "Edit" : "Set @BodyID"}</span>
+              </button>
             </div>
-
-            {myPinnedSouls.length > 0 && (
-              <div style={{ width: "100%", marginTop: 4 }}>
-                <div className="x51-chip-row" style={{ justifyContent: "center" }}>
-                  {myPinnedSouls.map((ps) => (
-                    <span key={ps.id} className="x51-pill x51-pill-blue">
-                      <Pin size={11} /> {ps.title}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
           </>
         ) : (
           <>
-            <h2 style={{ margin: "2px 0 0", fontSize: "1.12rem" }}>Research Network</h2>
-            <p className="x1-caption" style={{ maxWidth: 440, margin: 0 }}>
-              Explore public research Souls from independent analysts. Sign in
-              to claim your unique @BodyID, follow researchers, and join Research Rooms.
-            </p>
+            <div className="x54-my-strip-text">
+              <span className="x54-my-strip-name">Research Network</span>
+              <span className="x54-my-strip-sub">
+                Explore public Souls · Sign in to claim @BodyID
+              </span>
+            </div>
             <button
               type="button"
-              className="x51-accent-btn"
-              style={{ minHeight: 38 }}
+              className="x54-btn-primary"
               onClick={onRequireAuth}
             >
-              Sign in to set @BodyID
+              Sign in
             </button>
           </>
         )}
-      </section>
+      </div>
 
-      {/* Body ID Quick Jump Banner when user types in Community Header search */}
-      {cleanSearchHandle.length >= 2 && (
-        <div
-          className="x1-callout"
-          style={{ justifyContent: "space-between", flexWrap: "wrap" }}
-        >
+      {/* One-time consent notice ONLY for legacy private profiles (never bulk-exposed silently!) */}
+      {isLegacyPrivate && (
+        <div className="x54-legacy-optin" role="region" aria-label="Legacy private profile notice">
           <span>
-            Searching Research Network for <strong>{searchQuery}</strong>
+            Your legacy profile <strong>@{handle}</strong> stays hidden until you opt in.
+            DMs, portfolios, and drafts always stay private.
           </span>
-          <button
-            type="button"
-            className="x51-accent-btn"
-            style={{ minHeight: 34, fontSize: "0.82rem" }}
-            disabled={profileLoading}
-            onClick={() => void openResearcherProfile(cleanSearchHandle)}
-          >
-            {profileLoading
-              ? "Looking up…"
-              : `Open @${cleanSearchHandle} Profile`}
-          </button>
+          <div className="x1-actions" style={{ gap: 6 }}>
+            <button
+              type="button"
+              className="x54-btn-primary"
+              disabled={optingPublic}
+              onClick={() => void optInLegacyPublic()}
+            >
+              {optingPublic ? "Updating…" : "Make profile public"}
+            </button>
+            <button
+              type="button"
+              className="x54-tiny-btn"
+              onClick={() => setLegacyBannerDismissed(true)}
+            >
+              Keep hidden
+            </button>
+          </div>
         </div>
       )}
 
-      {/* 2. EXACTLY THREE PRIMARY COMMUNITY TABS: WEB | CHATS | GROUPS */}
+      {/* 2. COMPACT RESEARCHER SEARCH RESULTS */}
+      {trimmedSearch.length >= 1 && (
+        <section className="x54-search-results" aria-label="Matching researchers">
+          <div className="x54-search-results-head">
+            <span>
+              {isSearchingResearchers
+                ? `Searching "${trimmedSearch}"…`
+                : `Researchers (${visibleResearchers.length})`}
+            </span>
+          </div>
+          {visibleResearchers.map((person) => (
+            <div className="x54-search-row" key={person.handle}>
+              <button
+                type="button"
+                className="x54-search-row-tap"
+                onClick={() => openResearcherProfile(person.handle)}
+              >
+                <AvatarBadge
+                  avatarId={person.avatarId}
+                  displayName={person.displayName}
+                  size={38}
+                />
+                <span className="x54-search-row-meta">
+                  <strong>{person.displayName}</strong>
+                  <span className="x54-search-row-handle">
+                    @{person.handle} · {person.followers} followers · {person.publishedSouls} Souls
+                  </span>
+                </span>
+              </button>
+              {!person.isMe && (
+                <button
+                  type="button"
+                  className={
+                    person.followState === "NONE"
+                      ? "x54-btn-primary"
+                      : "x54-btn-ghost"
+                  }
+                  disabled={actionBusy === "follow:" + person.handle}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void quickFollowFromSearch(person);
+                  }}
+                >
+                  {person.followState === "ACTIVE" ? (
+                    <>
+                      <UserCheck size={13} aria-hidden="true" />
+                      <span>Following</span>
+                    </>
+                  ) : person.followState === "PENDING" ? (
+                    <span>Requested</span>
+                  ) : (
+                    <>
+                      <UserPlus size={13} aria-hidden="true" />
+                      <span>Follow</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          ))}
+          {!isSearchingResearchers && visibleResearchers.length === 0 && (
+            <div className="x54-search-row">
+              <span className="x1-caption">
+                No public researcher matched &ldquo;{trimmedSearch}&rdquo;.
+              </span>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* 3. PRIMARY COMMUNITY TABS: WEB | CHATS | GROUPS */}
       <div
         className="x1-segment"
         role="tablist"
@@ -677,7 +770,7 @@ export default function ResearchNetworkShell({
                   className={"x51-chip" + (modeFilter === m ? " is-active" : "")}
                   onClick={() => setModeFilter(m)}
                 >
-                  {m === "ALL" ? "All Modes" : m === "CLASSIC" ? "Classic" : "Advanced"}
+                  {m === "ALL" ? "All" : m === "CLASSIC" ? "Classic" : "Advanced"}
                 </button>
               ))}
               <button
@@ -732,7 +825,7 @@ export default function ResearchNetworkShell({
           </div>
 
           {loadingFeed ? (
-            <div className="x1-callout">Loading Research Network Souls…</div>
+            <div className="x1-callout">Loading published Souls…</div>
           ) : posts.length === 0 ? (
             <Empty
               title={
@@ -741,9 +834,8 @@ export default function ResearchNetworkShell({
                   : "No published Souls match this filter"
               }
             >
-              Run a Classic or Advanced scan in Strategy Builder and tap{" "}
-              <strong>Post Soul</strong> to share transparent, reproducible
-              research with the network.
+              Run a scan in Strategy and tap <strong>Post Soul</strong> to share
+              transparent research on Community Web.
             </Empty>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -753,7 +845,7 @@ export default function ResearchNetworkShell({
                     <button
                       type="button"
                       className="x51-soul-author-btn"
-                      onClick={() => void openResearcherProfile(post.authorHandle)}
+                      onClick={() => openResearcherProfile(post.authorHandle)}
                     >
                       <AvatarBadge
                         avatarId={post.authorAvatarId}
@@ -777,7 +869,9 @@ export default function ResearchNetworkShell({
                       <span className="x51-pill x51-pill-green">
                         {post.mode} · {post.timeframe}
                       </span>
-                      <span className="x51-pill">{post.audience}</span>
+                      {post.audience !== "PUBLIC" && (
+                        <span className="x51-pill">{post.audience}</span>
+                      )}
                     </div>
                   </div>
 
@@ -809,7 +903,7 @@ export default function ResearchNetworkShell({
 
                   <div className="x1-caption">
                     <strong>{post.evidenceStatus}</strong> ·{" "}
-                    {post.sourceAttribution} · <em>{post.riskNote}</em>
+                    {post.sourceAttribution}
                   </div>
 
                   <div className="x51-soul-actions">
@@ -837,19 +931,8 @@ export default function ResearchNetworkShell({
                       onClick={() => void copyPublishedSoul(post)}
                     >
                       <Copy size={14} />
-                      <span>Make a Copy</span>
+                      <span>Copy</span>
                     </button>
-                    {!post.isMine && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void openResearcherProfile(post.authorHandle)
-                        }
-                      >
-                        <UserPlus size={14} />
-                        <span>Profile / Follow</span>
-                      </button>
-                    )}
                     {post.isMine && (
                       <>
                         <button
@@ -883,27 +966,26 @@ export default function ResearchNetworkShell({
         </section>
       )}
 
-      {/* TAB 2: CHATS — 1-to-1 Direct Messages & Message Requests (Never claims E2EE) */}
+      {/* TAB 2: CHATS — Telegram-like Compact Messenger */}
       {tab === "chats" && (
         <section aria-label="Direct Chats">
-          <div className="x1-callout" style={{ marginBottom: 12 }}>
-            Private 1-to-1 research messaging, message requests, and Soul
-            sharing. Conversations are stored server-side with account-scoped
-            access controls (not end-to-end encrypted).
-          </div>
           {authenticated ? (
             <SocialWorkspace
               view={chatView}
               onView={setChatView}
               notify={notify}
               query={searchQuery}
+              initialThreadId={pendingThreadId}
+              onClearInitialThread={() => setPendingThreadId("")}
+              onOpenProfile={openResearcherProfile}
               onOpenGroup={() => setTab("groups")}
+              onMobileChatActive={onMobileChatActive}
             />
           ) : (
-            <Empty title="Sign in for Private Chats">
+            <Empty title="Sign in for Direct Chats">
               <button
                 type="button"
-                className="x51-accent-btn"
+                className="x54-btn-primary"
                 onClick={onRequireAuth}
               >
                 Sign in to access Chats
@@ -913,7 +995,7 @@ export default function ResearchNetworkShell({
         </section>
       )}
 
-      {/* TAB 3: GROUPS — Full Collaborative Research Rooms & Directory */}
+      {/* TAB 3: GROUPS — Private Research Rooms */}
       {tab === "groups" && (
         <CommunityGroupsWorkspace
           authenticated={authenticated}
@@ -925,44 +1007,47 @@ export default function ResearchNetworkShell({
           profileRevision={profileRevision}
           initialTab="rooms"
           onOpenSettings={onOpenSettings}
+          onOpenProfile={openResearcherProfile}
         />
       )}
 
-      {/* 50-Avatar Studio Modal */}
-      {avatarStudioOpen && (
-        <AvatarStudio
-          open={avatarStudioOpen}
-          currentAvatarId={avatarId}
-          displayName={displayName}
-          handle={handle}
-          onClose={() => setAvatarStudioOpen(false)}
-          onSaved={(updatedProfile) => {
-            setMyProfile(updatedProfile);
-            onProfileSynced?.(updatedProfile);
-            setAvatarStudioOpen(false);
-            notify("Avatar updated across your profile and Research Network.");
-          }}
-        />
-      )}
-
-      {/* Discuss / Comments Modal */}
+      {/* Discuss / Comments Modal — all @handles open canonical PublicProfileSheet */}
       {discussPost && (
         <Modal
           title={`Discuss · ${discussPost.title}`}
           onClose={() => setDiscussPost(null)}
         >
           <p className="x1-caption" style={{ marginTop: 0 }}>
-            By @{discussPost.authorHandle} · <code>{discussPost.formula}</code>
+            By{" "}
+            <button
+              type="button"
+              className="x1-text-button"
+              style={{ padding: 0, fontSize: "inherit" }}
+              onClick={() => {
+                const h = discussPost.authorHandle;
+                setDiscussPost(null);
+                openResearcherProfile(h);
+              }}
+            >
+              @{discussPost.authorHandle}
+            </button>{" "}
+            · <code>{discussPost.formula}</code>
           </p>
           {commentsLoading ? (
             <p role="status">Loading discussion…</p>
           ) : comments.length === 0 ? (
             <p className="x1-caption">
-              No discussion notes yet. Share a constructive research critique or
-              question below.
+              No comments yet. Share a constructive question or critique below.
             </p>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                marginBottom: 12,
+              }}
+            >
               {comments.map((c) => (
                 <div
                   key={c.id}
@@ -981,10 +1066,25 @@ export default function ResearchNetworkShell({
                       marginBottom: 4,
                     }}
                   >
-                    <AvatarBadge avatarId={c.authorAvatar} size={24} alt="" />
-                    <strong style={{ fontSize: "0.84rem" }}>
-                      @{c.authorHandle}
-                    </strong>
+                    <button
+                      type="button"
+                      className="x1-text-button"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: 0,
+                      }}
+                      onClick={() => {
+                        setDiscussPost(null);
+                        openResearcherProfile(c.authorHandle);
+                      }}
+                    >
+                      <AvatarBadge avatarId={c.authorAvatar} size={24} alt="" />
+                      <strong style={{ fontSize: "0.84rem" }}>
+                        @{c.authorHandle}
+                      </strong>
+                    </button>
                     <span className="x1-caption">{moment(c.createdAt)}</span>
                   </div>
                   <p style={{ margin: 0, fontSize: "0.88rem" }}>{c.text}</p>
@@ -994,19 +1094,19 @@ export default function ResearchNetworkShell({
           )}
           <form className="x1-form" onSubmit={submitComment}>
             <label>
-              Add research comment
+              Add comment
               <textarea
                 rows={2}
                 maxLength={1000}
                 required
                 value={commentText}
                 onChange={(e) => setCommentText(e.target.value)}
-                placeholder="Ask about assumptions, universe coverage, or out-of-sample risk…"
+                placeholder="Ask about assumptions, coverage, or risk…"
               />
             </label>
             <button
               type="submit"
-              className="x51-accent-btn"
+              className="x54-btn-primary"
               disabled={actionBusy === "comment" || !commentText.trim()}
             >
               <Send size={14} />
@@ -1018,177 +1118,26 @@ export default function ResearchNetworkShell({
         </Modal>
       )}
 
-      {/* [28] Body ID QR Sharing Modal (Zero External CDNs, Public Handle Only) */}
-      {qrHandle && (
-        <Modal title={`Share @${qrHandle}`} onClose={() => setQrHandle(null)}>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, textAlign: "center" }}>
-            <div
-              className="x52-qr-frame"
-              aria-label={`QR code linking to public profile @${qrHandle}`}
-              dangerouslySetInnerHTML={{ __html: qrSvg }}
-            />
-            <code className="x51-soul-formula" style={{ maxWidth: "100%" }}>
-              {qrUrl}
-            </code>
-            <p className="x1-caption" style={{ margin: 0 }}>
-              Encodes only your public Body ID profile link. Never includes email,
-              session tokens, or private portfolio records.
-            </p>
-            <div className="x1-actions" style={{ justifyContent: "center", flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="x1-secondary"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(qrUrl);
-                    notify("Profile link copied.");
-                  } catch {
-                    notify("Copy the URL shown above.");
-                  }
-                }}
-              >
-                <Copy size={14} />
-                <span>Copy link</span>
-              </button>
-              <button
-                type="button"
-                className="x1-secondary"
-                onClick={() => {
-                  const blob = new Blob([qrSvg], { type: "image/svg+xml" });
-                  const u = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = u;
-                  a.download = `strategic-souls-${qrHandle}-qr.svg`;
-                  document.body.appendChild(a);
-                  a.click();
-                  a.remove();
-                  URL.revokeObjectURL(u);
-                }}
-              >
-                <span>Download QR (.svg)</span>
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* Public Researcher Body ID Profile Sheet */}
-      {viewedProfile && (
-        <Modal
-          title={`@${viewedProfile.handle}`}
-          onClose={() => setViewedProfile(null)}
-        >
-          <div className="x52-vertical-profile" style={{ marginBottom: 12 }}>
-            <AvatarBadge
-              avatarId={viewedProfile.avatarId}
-              size={58}
-              ring
-              alt=""
-            />
-            <h3 style={{ margin: "2px 0 0" }}>{viewedProfile.displayName}</h3>
-            <div className="x52-profile-meta-row">
-              <span>@{viewedProfile.handle}</span>
-              {typeof viewedProfile.age === "number" && (
-                <span>· Age {viewedProfile.age}</span>
-              )}
-              {genderLabel(viewedProfile.genderSymbol) && (
-                <span>· {genderLabel(viewedProfile.genderSymbol)}</span>
-              )}
-            </div>
-            {viewedProfile.bio && (
-              <p className="x1-caption" style={{ margin: 0 }}>
-                {viewedProfile.bio}
-              </p>
-            )}
-            <div className="x51-profile-stats">
-              <div>
-                <strong>{viewedProfile.counts.followers}</strong>
-                <span>Followers</span>
-              </div>
-              <div>
-                <strong>{viewedProfile.counts.following}</strong>
-                <span>Following</span>
-              </div>
-              <div>
-                <strong>{viewedProfile.counts.publishedSouls}</strong>
-                <span>Souls</span>
-              </div>
-            </div>
-            <div className="x1-actions" style={{ justifyContent: "center", flexWrap: "wrap" }}>
-              <button
-                type="button"
-                className="x1-secondary"
-                style={{ minHeight: 36, fontSize: "0.82rem" }}
-                onClick={() => setQrHandle(viewedProfile.handle)}
-              >
-                <QrCode size={13} />
-                <span>QR</span>
-              </button>
-              {!viewedProfile.isMe && (
-                <button
-                  type="button"
-                  className={
-                    viewedProfile.followState === "NONE"
-                      ? "x51-accent-btn"
-                      : "x1-secondary"
-                  }
-                  disabled={actionBusy === "follow:" + viewedProfile.handle}
-                  onClick={() =>
-                    void toggleFollow(
-                      viewedProfile.handle,
-                      viewedProfile.followState !== "NONE",
-                    )
-                  }
-                >
-                  {viewedProfile.followState === "ACTIVE" ? (
-                    <>
-                      <UserCheck size={14} /> Following
-                    </>
-                  ) : viewedProfile.followState === "PENDING" ? (
-                    <>
-                      <Check size={14} /> Pending
-                    </>
-                  ) : (
-                    <>
-                      <UserPlus size={14} /> Follow
-                    </>
-                  )}
-                </button>
-              )}
-              {!viewedProfile.isMe && viewedProfile.canMessage && (
-                <button
-                  type="button"
-                  className="x1-secondary"
-                  onClick={() => {
-                    setViewedProfile(null);
-                    setTab("chats");
-                  }}
-                >
-                  <MessageSquare size={14} /> Message
-                </button>
-              )}
-            </div>
-          </div>
-
-          {viewedProfile.posts.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <strong style={{ fontSize: "0.88rem" }}>
-                Published Souls ({viewedProfile.posts.length})
-              </strong>
-              {viewedProfile.posts.slice(0, 6).map((p) => (
-                <div key={p.id} className="x51-soul-card" style={{ padding: 10 }}>
-                  <strong>{p.title}</strong>
-                  <code className="x51-soul-formula">{p.formula}</code>
-                  <span className="x1-caption">
-                    {p.mode} · {p.timeframe} · {moment(p.createdAt)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="x1-caption">No visible published Souls yet.</p>
-          )}
-        </Modal>
+      {/* ONE Canonical Public Researcher Profile Surface */}
+      {activeProfileHandle && (
+        <PublicProfileSheet
+          handle={activeProfileHandle}
+          authenticated={authenticated}
+          onClose={closeResearcherProfile}
+          onOpenProfile={openResearcherProfile}
+          onMessageUser={handleMessageFromProfile}
+          onOpenSettings={() => onOpenSettings("profile")}
+          onCopyToStrategy={(f) => {
+            closeResearcherProfile();
+            onCopyToStrategy(f);
+          }}
+          onRequireAuth={onRequireAuth}
+          onProfileMutated={() => {
+            void loadMyProfile();
+            if (tab === "web") void loadWebFeed();
+          }}
+          notify={notify}
+        />
       )}
     </div>
   );

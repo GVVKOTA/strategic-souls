@@ -360,6 +360,155 @@
   display: grid;
   gap: 16px;
 }
+
+/* ---------- X5.4 Clean Mobile Profile Editor & Preview Header ---------- */
+.x54-settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.x54-settings-preview-card {
+  border-radius: 14px;
+  border: 1px solid var(--x1-divider);
+  background: var(--x1-bg);
+  overflow: hidden;
+}
+
+.x54-settings-banner {
+  position: relative;
+  height: 104px;
+  background-size: cover;
+  background-position: center;
+}
+
+.x54-settings-banner-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(7, 8, 9, 0.1) 0%, rgba(7, 8, 9, 0.82) 100%);
+}
+
+.x54-settings-preview-body {
+  padding: 0 14px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.x54-settings-avatar-ring {
+  margin-top: -38px;
+  position: relative;
+  z-index: 2;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--x1-bg);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  display: inline-flex;
+}
+
+.x54-settings-preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  width: 100%;
+}
+
+.x54-settings-preview-meta h2 {
+  margin: 0;
+  font-size: 1.12rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.x54-settings-preview-meta p {
+  margin: 0;
+}
+
+.x54-settings-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+
+.x54-settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.x54-settings-group {
+  margin: 0;
+  padding: 12px 14px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--x1-divider);
+  background: var(--x1-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.x54-settings-group legend {
+  padding: 0 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--x1-title-blue);
+  letter-spacing: 0.02em;
+}
+
+.x54-settings-group input,
+.x54-settings-group select,
+.x54-settings-group textarea {
+  font-size: 1rem;
+}
+
+.x54-settings-group .x1-checkbox {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.x54-settings-group .x1-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex: 0 0 18px;
+  margin: 0;
+}
+
+/* Stack vertically on phones (< 640px) so Age/Gender labels NEVER wrap awkwardly! */
+.x54-optional-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+@media (min-width: 640px) {
+  .x54-optional-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.x54-r2-status-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--x1-divider);
+  background: var(--x1-surface-2);
+  font-size: 0.82rem;
+  color: var(--x1-text-secondary);
+}
+
+.x54-r2-status-note strong {
+  color: var(--x1-text-primary);
+}
 .x6-community-preview-box {
   padding: 14px 16px;
   border-radius: 10px;

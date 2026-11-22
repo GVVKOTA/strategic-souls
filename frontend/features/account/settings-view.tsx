@@ -25,7 +25,10 @@ import type {
   UserProfileSnapshot,
 } from "../../../backend/services/profile/profile";
 import { resolveAvatarPreset } from "../../../backend/services/profile/avatars";
-import { BANNER_PRESETS } from "../../../backend/services/profile/banners";
+import {
+  BANNER_PRESETS,
+  resolveBannerPreset,
+} from "../../../backend/services/profile/banners";
 import { api, Modal, moment, type Notice } from "../../components/workspace/shared";
 import AvatarBadge from "./avatar-badge";
 import AvatarStudio from "./avatar-studio";
@@ -107,7 +110,6 @@ export default function SettingsView({
   const [instagramHandle, setInstagramHandle] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [interestsText, setInterestsText] = useState("");
-  const [bannerUploadMsg, setBannerUploadMsg] = useState("");
 
   // Account erasure confirmation state
   const [eraseOpen, setEraseOpen] = useState(false);
@@ -424,158 +426,182 @@ export default function SettingsView({
           ) : profile ? (
             <>
               {section === "profile" && (
-                <div className="x1-panel">
-                  <div className="x6-profile-hero-card">
-                    <AvatarBadge
-                      avatarId={profile.avatarId}
-                      size={76}
-                      ring
-                      alt={`${profile.displayName} avatar`}
-                    />
-                    <div className="x6-profile-hero-info">
-                      <h2>{profile.displayName}</h2>
-                      <p className="x1-caption">
-                        {profile.handle ? `@${profile.handle}` : "No Body ID set yet"} ·{" "}
-                        {currentPreset.name}
-                      </p>
-                      <div className="x1-actions" style={{ flexWrap: "wrap", gap: 8 }}>
+                <div className="x1-panel x54-settings-panel">
+                  {/* Unified Banner + Overlapping Avatar Editable Preview Header */}
+                  <div className="x54-settings-preview-card">
+                    <div
+                      className="x54-settings-banner"
+                      style={{
+                        background: resolveBannerPreset(bannerPresetId).gradient,
+                        backgroundPosition: bannerPosition,
+                      }}
+                    >
+                      <div className="x54-settings-banner-veil" />
+                    </div>
+                    <div className="x54-settings-preview-body">
+                      <div className="x54-settings-avatar-ring">
+                        <AvatarBadge
+                          avatarId={profile.avatarId}
+                          size={72}
+                          alt={`${displayName || profile.displayName} avatar`}
+                        />
+                      </div>
+                      <div className="x54-settings-preview-meta">
+                        <h2>{displayName || profile.displayName}</h2>
+                        <p className="x1-caption">
+                          {handle ? `@${handle}` : "No @BodyID set yet"} ·{" "}
+                          {currentPreset.name}
+                        </p>
+                      </div>
+                      <div className="x54-settings-preview-actions">
                         <button
                           type="button"
-                          className="x1-secondary"
+                          className="x54-strip-btn"
                           onClick={() => setStudioOpen(true)}
                         >
-                          <ImageIcon size={15} />
-                          <span>Change avatar</span>
+                          <ImageIcon size={14} aria-hidden="true" />
+                          <span>Edit avatar</span>
                         </button>
                         <button
                           type="button"
-                          className="x1-secondary"
-                          onClick={() => {
-                            setBannerUploadMsg("");
-                            setBannerModalOpen(true);
-                          }}
+                          className="x54-strip-btn"
+                          onClick={() => setBannerModalOpen(true)}
                         >
-                          <span>Change banner</span>
+                          <span>Banner</span>
                         </button>
                         <button
                           type="button"
-                          className="x1-secondary"
+                          className="x54-strip-btn"
                           onClick={() => setPreviewModalOpen(true)}
                         >
-                          <span>Preview profile</span>
+                          <span>Preview</span>
                         </button>
                       </div>
                     </div>
                   </div>
 
-                  <form className="x1-form x6-settings-form" onSubmit={saveProfileFields}>
-                    <label>
-                      Display name
-                      <input
-                        type="text"
-                        value={displayName}
-                        maxLength={40}
-                        required
-                        onChange={(e) => setDisplayName(e.target.value)}
-                        placeholder="Your researcher name"
-                      />
-                    </label>
-
-                    <label>
-                      Body ID (@handle)
-                      <input
-                        type="text"
-                        value={handle}
-                        maxLength={25}
-                        onChange={(e) =>
-                          setHandle(
-                            e.target.value
-                              .replace(/^@/, "")
-                              .toLowerCase()
-                              .replace(/[^a-z0-9_]/g, ""),
-                          )
-                        }
-                        placeholder="e.g. market_explorer"
-                      />
-                    </label>
-
-                    <div className="x1-form-grid">
+                  <form className="x1-form x54-settings-form" onSubmit={saveProfileFields}>
+                    <fieldset className="x54-settings-group">
+                      <legend>Essentials</legend>
                       <label>
-                        Age (optional · hidden by default)
+                        Display name
                         <input
-                          type="number"
-                          min={18}
-                          max={120}
-                          value={age}
-                          onChange={(e) => setAge(e.target.value)}
-                          placeholder="Leave blank or 18+"
+                          type="text"
+                          value={displayName}
+                          maxLength={40}
+                          required
+                          onChange={(e) => setDisplayName(e.target.value)}
+                          placeholder="Your researcher name"
                         />
                       </label>
+
                       <label>
-                        Gender (optional · hidden by default)
-                        <select
-                          value={genderSymbol}
+                        Body ID (@handle)
+                        <input
+                          type="text"
+                          value={handle}
+                          maxLength={25}
                           onChange={(e) =>
-                            setGenderSymbol(e.target.value as GenderSymbolOption)
+                            setHandle(
+                              e.target.value
+                                .replace(/^@/, "")
+                                .toLowerCase()
+                                .replace(/[^a-z0-9_]/g, ""),
+                            )
                           }
-                        >
-                          <option value="HIDDEN">Hidden (Default)</option>
-                          <option value="MALE">Male</option>
-                          <option value="FEMALE">Female</option>
-                        </select>
+                          placeholder="e.g. market_explorer"
+                        />
+                        <span className="x1-caption">
+                          Creates your public researcher profile. Direct messages,
+                          portfolios, drafts, and email always remain private.
+                        </span>
                       </label>
-                    </div>
 
-                    <label className="x1-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={showAge}
-                        onChange={(e) => setShowAge(e.target.checked)}
-                      />
-                      Show my age on my public Body ID profile (date of birth is never collected)
-                    </label>
+                      <label>
+                        Short bio
+                        <textarea
+                          value={bio}
+                          maxLength={320}
+                          rows={3}
+                          onChange={(e) => setBio(e.target.value)}
+                          placeholder="Markets, horizons, or hypotheses you study"
+                        />
+                      </label>
+                    </fieldset>
 
-                    <label>
-                      Instagram handle (optional)
-                      <input
-                        value={instagramHandle}
-                        maxLength={32}
-                        onChange={(e) => setInstagramHandle(e.target.value)}
-                        placeholder="username (without @)"
-                      />
-                    </label>
+                    <fieldset className="x54-settings-group">
+                      <legend>Interests &amp; Links</legend>
+                      <label>
+                        Research interests (comma-separated, max 6)
+                        <input
+                          value={interestsText}
+                          maxLength={180}
+                          onChange={(e) => setInterestsText(e.target.value)}
+                          placeholder="Macro, Indian Equities, Volatility, FX"
+                        />
+                      </label>
 
-                    <label>
-                      Short bio
-                      <textarea
-                        value={bio}
-                        maxLength={320}
-                        rows={3}
-                        onChange={(e) => setBio(e.target.value)}
-                        placeholder="What markets or hypotheses do you study?"
-                      />
-                    </label>
+                      <div className="x54-optional-grid">
+                        <label>
+                          Instagram (optional)
+                          <input
+                            value={instagramHandle}
+                            maxLength={32}
+                            onChange={(e) => setInstagramHandle(e.target.value)}
+                            placeholder="username (without @)"
+                          />
+                        </label>
+                        <label>
+                          Website URL (optional)
+                          <input
+                            type="url"
+                            value={websiteUrl}
+                            maxLength={200}
+                            onChange={(e) => setWebsiteUrl(e.target.value)}
+                            placeholder="https://example.com"
+                          />
+                        </label>
+                      </div>
+                    </fieldset>
 
-                    <label>
-                      Research interests (comma-separated, max 6)
-                      <input
-                        value={interestsText}
-                        maxLength={180}
-                        onChange={(e) => setInterestsText(e.target.value)}
-                        placeholder="Macro, Indian Equities, Volatility, FX"
-                      />
-                    </label>
+                    <fieldset className="x54-settings-group">
+                      <legend>Optional details (hidden by default)</legend>
+                      <div className="x54-optional-grid">
+                        <label>
+                          Age
+                          <input
+                            type="number"
+                            min={18}
+                            max={120}
+                            value={age}
+                            onChange={(e) => setAge(e.target.value)}
+                            placeholder="Optional (18+)"
+                          />
+                        </label>
+                        <label>
+                          Gender
+                          <select
+                            value={genderSymbol}
+                            onChange={(e) =>
+                              setGenderSymbol(e.target.value as GenderSymbolOption)
+                            }
+                          >
+                            <option value="HIDDEN">Hidden (Default)</option>
+                            <option value="MALE">Male</option>
+                            <option value="FEMALE">Female</option>
+                          </select>
+                        </label>
+                      </div>
 
-                    <label>
-                      Website URL (optional)
-                      <input
-                        type="url"
-                        value={websiteUrl}
-                        maxLength={200}
-                        onChange={(e) => setWebsiteUrl(e.target.value)}
-                        placeholder="https://example.com"
-                      />
-                    </label>
+                      <label className="x1-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={showAge}
+                          onChange={(e) => setShowAge(e.target.checked)}
+                        />
+                        <span>Show my age on my public Body ID profile</span>
+                      </label>
+                    </fieldset>
 
                     <div className="x1-actions">
                       <button
@@ -590,10 +616,10 @@ export default function SettingsView({
                     </div>
                   </form>
 
-                  {/* Click-to-open Banner & Custom Upload Modal ([08] R2 notice shown ONLY inside this modal) */}
+                  {/* Banner Preset Modal — honest R2 status */}
                   {bannerModalOpen && (
                     <Modal
-                      title="Change Profile Banner"
+                      title="Profile Banner"
                       onClose={() => setBannerModalOpen(false)}
                     >
                       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -614,7 +640,7 @@ export default function SettingsView({
                           ))}
                         </div>
                         <label>
-                          Alignment
+                          Banner alignment
                           <select
                             value={bannerPosition}
                             onChange={(e) =>
@@ -626,80 +652,85 @@ export default function SettingsView({
                             <option value="bottom">Bottom</option>
                           </select>
                         </label>
-                        <label>
-                          Upload custom image (PNG/JPEG/WebP, max 2 MB)
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp"
-                            onChange={async (e) => {
-                              const file = e.target.files?.[0];
-                              if (!file) return;
-                              setBannerUploadMsg("");
-                              const fd = new FormData();
-                              fd.append("file", file);
-                              fd.append("purpose", "profile-banner");
-                              try {
-                                const r = await fetch("/api/media/upload", {
-                                  method: "POST",
-                                  body: fd,
-                                });
-                                const j = (await r.json()) as { error?: string };
-                                setBannerUploadMsg(
-                                  r.ok
-                                    ? "Banner uploaded."
-                                    : j.error ||
-                                        "Custom file uploads await Cloudflare R2 activation on this deployment. Select a built-in banner above.",
-                                );
-                              } catch {
-                                setBannerUploadMsg(
-                                  "Upload unavailable. Select a built-in banner above.",
-                                );
-                              }
-                            }}
-                          />
-                        </label>
-                        {bannerUploadMsg && (
-                          <p className="x1-caption" role="status" style={{ margin: 0 }}>
-                            {bannerUploadMsg}
-                          </p>
-                        )}
+                        <div className="x54-r2-status-note" role="note">
+                          <strong>Custom image upload unavailable</strong>
+                          <span>
+                            Custom photo uploads require Cloudflare R2 object
+                            storage, which is not enabled on this deployment.
+                            Select any of the 8 built-in banner presets above and
+                            click Save profile.
+                          </span>
+                        </div>
                         <div className="x1-actions">
                           <button
                             type="button"
                             className="x1-primary"
                             onClick={() => setBannerModalOpen(false)}
                           >
-                            Apply selection
+                            Done
                           </button>
                         </div>
                       </div>
                     </Modal>
                   )}
 
-                  {/* Click-to-open Compact Profile Preview Modal */}
+                  {/* Unified Public Profile Preview Modal */}
                   {previewModalOpen && (
                     <Modal
                       title="Public Profile Preview"
                       onClose={() => setPreviewModalOpen(false)}
                     >
-                      <div className="x52-vertical-profile" style={{ marginBottom: 0 }}>
-                        <AvatarBadge avatarId={profile.avatarId} size={58} ring alt="" />
-                        <h3 style={{ margin: "2px 0 0" }}>
-                          {displayName || profile.displayName}
-                        </h3>
-                        <div className="x52-profile-meta-row">
-                          <span>{handle ? `@${handle}` : "@BodyID_not_set"}</span>
-                          {showAge && age && <span>· Age {age}</span>}
-                          {genderSymbol !== "HIDDEN" && (
-                            <span>· {genderSymbol === "MALE" ? "Male" : "Female"}</span>
-                          )}
+                      <div className="x54-settings-preview-card" style={{ marginBottom: 0 }}>
+                        <div
+                          className="x54-settings-banner"
+                          style={{
+                            background: resolveBannerPreset(bannerPresetId).gradient,
+                            backgroundPosition: bannerPosition,
+                          }}
+                        >
+                          <div className="x54-settings-banner-veil" />
                         </div>
-                        {bio.trim() && (
-                          <p className="x1-caption" style={{ margin: 0 }}>{bio.trim()}</p>
-                        )}
-                        <p className="x1-caption" style={{ margin: 0 }}>
-                          Email and private portfolios are never displayed publicly.
-                        </p>
+                        <div className="x54-settings-preview-body">
+                          <div className="x54-settings-avatar-ring">
+                            <AvatarBadge avatarId={profile.avatarId} size={72} alt="" />
+                          </div>
+                          <div className="x54-settings-preview-meta">
+                            <h3 style={{ margin: 0 }}>
+                              {displayName || profile.displayName}
+                              {genderSymbol === "MALE"
+                                ? " ♂"
+                                : genderSymbol === "FEMALE"
+                                  ? " ♀"
+                                  : ""}
+                              {showAge && age ? ` · ${age}y` : ""}
+                            </h3>
+                            <p className="x1-caption" style={{ color: "var(--x1-title-blue)" }}>
+                              {handle ? `@${handle}` : "@BodyID_not_set"}
+                            </p>
+                          </div>
+                          {bio.trim() && (
+                            <p className="x1-caption" style={{ margin: 0 }}>
+                              {bio.trim()}
+                            </p>
+                          )}
+                          <div className="x54-profile-stats" style={{ width: "100%" }}>
+                            <div className="x54-stat-cell">
+                              <strong>{profile.counts.publishedSouls}</strong>
+                              <span>Souls</span>
+                            </div>
+                            <div className="x54-stat-cell">
+                              <strong>{profile.counts.followers}</strong>
+                              <span>Followers</span>
+                            </div>
+                            <div className="x54-stat-cell">
+                              <strong>{profile.counts.following}</strong>
+                              <span>Following</span>
+                            </div>
+                          </div>
+                          <p className="x1-caption" style={{ margin: 0 }}>
+                            Email, portfolios, watchlists, drafts, and direct messages are never public.
+                          </p>
+                        </div>
                       </div>
                     </Modal>
                   )}
@@ -961,41 +992,49 @@ export default function SettingsView({
 
                   {profile.hasCommunityProfile ? (
                     <>
-                      <div className="x6-setting-row">
-                        <div>
-                          <strong>Discoverable by @handle</strong>
-                          <p className="x1-caption">
-                            Allow other signed-in researchers to find your public profile by @{profile.handle}. Your email and private scans remain hidden.
-                          </p>
+                      {profile.legacyPrivateProfile ? (
+                        <div className="x6-setting-row">
+                          <div>
+                            <strong>Legacy private profile (@{profile.handle})</strong>
+                            <p className="x1-caption">
+                              Your profile was created under an earlier private setting
+                              and remains hidden until you opt in. Making your researcher
+                              profile public never exposes DMs, portfolios, drafts, or email.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="x1-primary"
+                            disabled={busy}
+                            onClick={() =>
+                              void savePreferences(
+                                { social: { discoverable: true } },
+                                "Your researcher profile is now publicly discoverable.",
+                              )
+                            }
+                          >
+                            Make profile public
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          className="x1-secondary"
-                          role="switch"
-                          aria-checked={profile.social.discoverable}
-                          disabled={busy}
-                          onClick={() =>
-                            void savePreferences(
-                              {
-                                social: {
-                                  discoverable: !profile.social.discoverable,
-                                },
-                              },
-                              !profile.social.discoverable
-                                ? "Your profile is now discoverable by @handle."
-                                : "Your profile is now hidden from search.",
-                            )
-                          }
-                        >
-                          {profile.social.discoverable ? "Discoverable" : "Private"}
-                        </button>
-                      </div>
+                      ) : (
+                        <div className="x6-setting-row">
+                          <div>
+                            <strong>Public researcher profile (@{profile.handle})</strong>
+                            <p className="x1-caption">
+                              Your @BodyID and published Web Souls are discoverable by
+                              design. Direct messages, portfolios, drafts, Graveyard
+                              archive, and email stay strictly private.
+                            </p>
+                          </div>
+                        </div>
+                      )}
 
                       <div className="x6-setting-row">
                         <div>
                           <strong>Who can message you</strong>
                           <p className="x1-caption">
-                            Controls direct research message requests from other members.
+                            Messages are private to participants and server-authorized,
+                            but not end-to-end encrypted.
                           </p>
                         </div>
                         <select

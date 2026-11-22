@@ -7,32 +7,27 @@ import {
   ShieldCheck,
   MessageSquare,
   X,
-  Flag,
-  Pencil,
-  Check,
   ArrowRight,
 } from "lucide-react";
 import { api, Empty, Modal, Panel, moment, type Notice } from "../../components/workspace/shared";
 import AvatarBadge from "../account/avatar-badge";
+import ChatInbox from "./messenger/chat-inbox";
+import ConversationView from "./messenger/conversation-view";
+import type {
+  ChatBody,
+  ChatMessage,
+  ChatThread,
+  InboxThread,
+  SharedSoulRef,
+} from "./messenger/types";
 
 export type SocialView =
-  "Discover" | "Messages" | "Saved" | "Notifications" | "Privacy";
-type Body = {
-  handle: string;
-  displayName: string;
-  avatar: string;
-  bio: string;
-};
-type Soul = {
-  id: string;
-  title: string;
-  summary: string;
-  formula?: string;
-  groupId: string;
-  revision: number;
-  authorHandle?: string;
-  unavailable?: boolean;
-};
+  | "Discover"
+  | "Messages"
+  | "Saved"
+  | "Notifications"
+  | "Privacy";
+
 type Group = {
   id: string;
   name: string;
@@ -40,53 +35,25 @@ type Group = {
   handle: string;
   joined: number;
 };
+
 type SearchResult = {
-  bodies: Body[];
+  bodies: ChatBody[];
   groups: Group[];
-  souls: Soul[];
+  souls: SharedSoulRef[];
   nextBody: string | null;
 };
-type Inbox = {
-  id: string;
-  handle: string;
-  displayName: string;
-  state: string;
-  requestedByMe: number;
-  unread: number;
-  muted: number;
-  updatedAt: string;
-};
-type Message = {
-  id: string;
-  text: string;
-  authorHandle: string;
-  isMine: boolean;
-  createdAt: string;
-  editedAt: string | null;
-  retractedAt: string | null;
-  version: number;
-  status: string;
-  reference: Soul | null;
-};
-type Thread = {
-  id: string;
-  state: string;
-  requestedByMe: boolean;
-  peer: Body;
-  preferences: { muted: number; hidden: number };
-  messages: Message[];
-  nextBefore: string | null;
-};
+
 type Preferences = {
   discoverable: boolean;
   messages: string;
   receipts: boolean;
   notifications: boolean;
 };
+
 type Home = {
-  body: Body | null;
+  body: ChatBody | null;
   preferences: Preferences;
-  inbox: Inbox[];
+  inbox: InboxThread[];
   groups?: { id: string; name: string; role: string }[];
   invitations: {
     id: string;
@@ -102,26 +69,18 @@ type Home = {
     createdAt: string;
     readAt: string | null;
   }[];
-  bookmarks: { kind: string; body?: Body; soul?: Soul; createdAt: string }[];
-  blocked: Body[];
+  bookmarks: {
+    kind: string;
+    body?: ChatBody;
+    soul?: SharedSoulRef;
+    createdAt: string;
+  }[];
+  blocked: ChatBody[];
 };
-type Profile = {
-  body: Body;
-  isMe: boolean;
-  canMessage: boolean;
-  groups: Group[];
-  souls: Soul[];
-};
+
 const endpoint = "/api/x2/social";
-const id = () => crypto.randomUUID();
-const stateLabel = (s: string) =>
-  s === "READ"
-    ? "Read receipt shared"
-    : s === "RECEIVED"
-      ? "Received"
-      : s === "RETRACTED"
-        ? "Retracted"
-        : "Sent to server";
+const newId = () => crypto.randomUUID();
+
 async function read<T>(
   params: Record<string, string>,
   signal?: AbortSignal,
@@ -149,7 +108,8 @@ async function read<T>(
     clearTimeout(timer);
   }
 }
-function Identity({ body }: { body: Body }) {
+
+function Identity({ body }: { body: ChatBody }) {
   return (
     <span className="x2-social-identity">
       <AvatarBadge avatarId={body.avatar} size={36} ring alt="" />
@@ -160,44 +120,56 @@ function Identity({ body }: { body: Body }) {
     </span>
   );
 }
+
 export function SocialWorkspace({
   view,
   onView,
   notify,
   query = "",
+  initialThreadId = "",
+  onClearInitialThread,
+  onOpenProfile,
   onOpenGroup,
   shareSoul,
   onClearShare,
+  onMobileChatActive,
 }: {
   view: SocialView;
   onView: (view: SocialView) => void;
   notify: Notice;
   query?: string;
+  initialThreadId?: string;
+  onClearInitialThread?: () => void;
+  onOpenProfile?: (handle: string) => void;
   onOpenGroup: (id: string) => void;
   shareSoul?: { id: string; revision: number; title: string } | null;
   onClearShare?: () => void;
+  onMobileChatActive?: (active: boolean) => void;
 }) {
-  const [home, setHome] = useState<Home | null>(null),
-    [error, setError] = useState(""),
-    [loading, setLoading] = useState(true),
-    [busy, setBusy] = useState(false),
-    [search, setSearch] = useState(query),
-    [kind, setKind] = useState("all"),
-    [results, setResults] = useState<SearchResult | null>(null),
-    [searching, setSearching] = useState(false),
-    [profile, setProfile] = useState<Profile | null>(null),
-    [threadId, setThreadId] = useState(""),
-    [thread, setThread] = useState<Thread | null>(null),
-    [drafts, setDrafts] = useState<Record<string, string>>({}),
-    [threadSearch, setThreadSearch] = useState(""),
-    [older, setOlder] = useState<Message[]>([]),
-    [edit, setEdit] = useState<Message | null>(null),
-    [report, setReport] = useState<{ kind: string; targetId: string } | null>(
-      null,
-    );
-  const lock = useRef(false),
-    retry = useRef<{ signature: string; key: string } | null>(null),
-    mounted = useRef(true);
+  const [home, setHome] = useState<Home | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState(query);
+  const [kind, setKind] = useState("all");
+  const [results, setResults] = useState<SearchResult | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [threadId, setThreadId] = useState(initialThreadId || "");
+  const [thread, setThread] = useState<ChatThread | null>(null);
+  const [loadingThread, setLoadingThread] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [threadSearch, setThreadSearch] = useState("");
+  const [older, setOlder] = useState<ChatMessage[]>([]);
+  const [editing, setEditing] = useState<ChatMessage | null>(null);
+  const [editText, setEditText] = useState("");
+  const [report, setReport] = useState<{ kind: string; targetId: string } | null>(
+    null,
+  );
+  const lock = useRef(false);
+  const retry = useRef<{ signature: string; key: string } | null>(null);
+  const mounted = useRef(true);
+  const pushedMobileHistoryRef = useRef(false);
+
   const refresh = useCallback(async () => {
     const next = await read<Home>({ view: "home" });
     if (mounted.current) {
@@ -206,11 +178,21 @@ export function SocialWorkspace({
       setLoading(false);
     }
   }, []);
-  const refreshThread = useCallback(async () => {
-    if (!threadId) return;
-    const next = await read<Thread>({ view: "thread", threadId });
-    if (mounted.current) setThread(next);
+
+  const refreshThread = useCallback(async (targetId?: string) => {
+    const activeId = targetId ?? threadId;
+    if (!activeId) return;
+    const next = await read<ChatThread>({ view: "thread", threadId: activeId });
+    if (!mounted.current) return;
+    setThread(next);
+    // Keep older pagination synchronized when an older message was edited or retracted
+    setOlder((prev) => {
+      if (prev.length === 0) return prev;
+      const latestMap = new Map(next.messages.map((m) => [m.id, m]));
+      return prev.map((m) => latestMap.get(m.id) ?? m);
+    });
   }, [threadId]);
+
   useEffect(() => {
     mounted.current = true;
     refresh().catch((e) => {
@@ -223,6 +205,21 @@ export function SocialWorkspace({
       mounted.current = false;
     };
   }, [refresh]);
+
+  useEffect(() => {
+    if (!initialThreadId) return;
+    let alive = true;
+    queueMicrotask(() => {
+      if (!alive) return;
+      setThreadId(initialThreadId);
+      setEditing(null);
+      onClearInitialThread?.();
+    });
+    return () => {
+      alive = false;
+    };
+  }, [initialThreadId, onClearInitialThread]);
+
   useEffect(() => {
     let alive = true;
     queueMicrotask(() => {
@@ -232,10 +229,27 @@ export function SocialWorkspace({
       alive = false;
     };
   }, [query]);
+
+  // Load selected thread
   useEffect(() => {
-    if (!threadId) return;
+    if (!threadId) {
+      let alive = true;
+      queueMicrotask(() => {
+        if (!alive) return;
+        setThread(null);
+        setOlder([]);
+        setEditing(null);
+        setLoadingThread(false);
+      });
+      return () => {
+        alive = false;
+      };
+    }
     const controller = new AbortController();
-    read<Thread>({ view: "thread", threadId }, controller.signal)
+    queueMicrotask(() => {
+      if (!controller.signal.aborted) setLoadingThread(true);
+    });
+    read<ChatThread>({ view: "thread", threadId }, controller.signal)
       .then((s) => {
         setThread(s);
         setError("");
@@ -243,9 +257,60 @@ export function SocialWorkspace({
       })
       .catch((e) => {
         if (e.name !== "AbortError") setError(e.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingThread(false);
       });
     return () => controller.abort();
   }, [threadId]);
+
+  // Mobile single-pane full-screen active chat state + browser Back handling + bottom nav hide
+  useEffect(() => {
+    const active = view === "Messages" && !!threadId;
+    onMobileChatActive?.(active);
+    window.dispatchEvent(
+      new CustomEvent("x54-mobile-chat-active", { detail: active }),
+    );
+    return () => {
+      onMobileChatActive?.(false);
+      window.dispatchEvent(
+        new CustomEvent("x54-mobile-chat-active", { detail: false }),
+      );
+    };
+  }, [onMobileChatActive, threadId, view]);
+
+  useEffect(() => {
+    if (view !== "Messages" || !threadId) return;
+    const isMobile =
+      typeof window !== "undefined" &&
+      window.matchMedia("(max-width: 768px)").matches;
+    if (isMobile && !pushedMobileHistoryRef.current) {
+      try {
+        window.history.pushState({ x54ChatThread: threadId }, "", window.location.href);
+        pushedMobileHistoryRef.current = true;
+      } catch {
+        /* History API optional */
+      }
+    }
+    const onPop = (e: PopStateEvent) => {
+      // If returning from a nested PublicProfileSheet back to this open chat thread, stay in the thread!
+      if (
+        e.state &&
+        typeof e.state === "object" &&
+        (e.state as { x54ChatThread?: string }).x54ChatThread === threadId
+      ) {
+        return;
+      }
+      pushedMobileHistoryRef.current = false;
+      setThreadId("");
+      setThread(null);
+      setEditing(null);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [threadId, view]);
+
+  // Background refresh while tab is visible
   useEffect(() => {
     if (view !== "Messages" && view !== "Notifications") return;
     const timer = setInterval(() => {
@@ -253,9 +318,11 @@ export function SocialWorkspace({
       Promise.all([refresh(), refreshThread()]).catch(() => {
         /* Visible refresh remains available; never simulate incoming status. */
       });
-    }, 15000);
+    }, 12000);
     return () => clearInterval(timer);
   }, [view, refresh, refreshThread]);
+
+  // Discover search
   useEffect(() => {
     if (view !== "Discover") return;
     const controller = new AbortController();
@@ -275,7 +342,12 @@ export function SocialWorkspace({
       controller.abort();
     };
   }, [search, kind, view]);
-  async function mutate(input: Record<string, unknown>, success = "Saved.") {
+
+  async function mutate(
+    input: Record<string, unknown>,
+    success?: string,
+    targetThreadId?: string,
+  ) {
     if (lock.current) return null;
     lock.current = true;
     setBusy(true);
@@ -283,8 +355,10 @@ export function SocialWorkspace({
     try {
       const result = await api<Record<string, unknown>>(endpoint, input);
       await refresh();
-      await refreshThread();
-      notify(success);
+      if (targetThreadId || threadId) {
+        await refreshThread(targetThreadId || threadId);
+      }
+      if (success) notify(success);
       return result;
     } catch (e) {
       setError((e as Error).message);
@@ -295,773 +369,583 @@ export function SocialWorkspace({
       if (mounted.current) setBusy(false);
     }
   }
-  async function openProfile(handle: string) {
-    if (lock.current) return;
-    setLoading(true);
-    try {
-      setProfile(await read<Profile>({ view: "profile", handle }));
-      setError("");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
-  async function message(handle: string) {
+
+  const autoMarkRead = useCallback(
+    (activeThreadId: string, lastMessageId: string) => {
+      void api(endpoint, {
+        action: "mark-read",
+        threadId: activeThreadId,
+        lastMessageId,
+      })
+        .then(() => {
+          setHome((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  inbox: prev.inbox.map((item) =>
+                    item.id === activeThreadId ? { ...item, unread: 0 } : item,
+                  ),
+                }
+              : prev,
+          );
+        })
+        .catch(() => {
+          /* Best-effort read acknowledgement */
+        });
+    },
+    [],
+  );
+
+  async function startChatByHandle(handle: string) {
+    const clean = handle.trim().replace(/^@+/, "");
+    if (!clean) return;
     const r = await mutate(
-      { action: "start-thread", handle },
-      "Conversation ready.",
+      { action: "start-thread", handle: clean },
+      undefined,
     );
     if (typeof r?.threadId === "string") {
-      setProfile(null);
       setThreadId(r.threadId);
       onView("Messages");
     }
   }
-  async function bookmark(
-    kind: "BODY" | "SOUL",
-    targetId: string,
-    active = true,
-  ) {
-    await mutate(
-      { action: "bookmark", kind, targetId, active },
-      active ? "Bookmark saved." : "Bookmark removed.",
+
+  function closeThreadToInbox() {
+    setThreadId("");
+    setThread(null);
+    setEditing(null);
+    setOlder([]);
+    if (pushedMobileHistoryRef.current) {
+      pushedMobileHistoryRef.current = false;
+      try {
+        window.history.back();
+      } catch {
+        /* Ignore */
+      }
+    }
+  }
+
+  async function handleSend() {
+    if (!threadId || lock.current) return;
+    const text = (drafts[threadId] || "").trim();
+    if (!text) return;
+    const signature = threadId + "\n" + text + JSON.stringify(shareSoul);
+    if (!retry.current || retry.current.signature !== signature) {
+      retry.current = { signature, key: newId() };
+    }
+    const res = await mutate({
+      action: "send",
+      threadId,
+      text,
+      soulId: shareSoul?.id,
+      revision: shareSoul?.revision,
+      requestId: retry.current.key,
+    });
+    if (res) {
+      setDrafts((previous) => ({ ...previous, [threadId]: "" }));
+      retry.current = null;
+      onClearShare?.();
+    }
+  }
+
+  async function handleSaveEdit() {
+    if (!editing || lock.current) return;
+    const trimmed = editText.trim();
+    if (!trimmed) return;
+    const res = await mutate(
+      {
+        action: "edit-message",
+        messageId: editing.id,
+        version: editing.version,
+        text: trimmed,
+      },
+      "Message edited.",
+    );
+    if (res) {
+      setEditing(null);
+      setEditText("");
+    }
+  }
+
+  function openCanonicalProfile(handle: string) {
+    if (onOpenProfile) {
+      onOpenProfile(handle);
+    }
+  }
+
+  function bookmark(kindName: "BODY" | "SOUL", targetId: string, active = true) {
+    return mutate(
+      { action: "bookmark", kind: kindName, targetId, active },
+      active ? "Saved." : "Removed from Saved.",
     );
   }
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const controller = new AbortController();
-    if (params.get("handle"))
-      read<Profile>(
-        { view: "profile", handle: params.get("handle")! },
-        controller.signal,
-      )
-        .then(setProfile)
-        .catch((error) => {
-          if (error.name !== "AbortError") setError(error.message);
-        });
-    return () => controller.abort();
-  }, []);
+
+  const unread =
+    home?.notifications.filter((n) => !n.readAt).length ?? 0;
+
   return (
-    <section className="x2-social" aria-busy={busy || loading}>
+    <section
+      className="x2-social"
+      aria-label="Direct messages and community connections"
+    >
       {error && (
-        <div className="x1-callout" role="alert">
-          {error}
+        <div className="x1-callout" role="alert" style={{ marginBottom: 10 }}>
+          <strong>{error}</strong>{" "}
           <button
+            type="button"
             className="x1-text-button"
-            disabled={busy}
             onClick={() => refresh().catch((e) => setError(e.message))}
           >
             Retry
           </button>
         </div>
       )}
-      {loading && <p role="status">Loading research network…</p>}
-      {home && !home.body ? (
-        <Empty title="Set a @handle in your Profile to search & connect">
-          Open Settings → Profile (or click Set up Profile above) to choose your
-          @handle and pick from 50 avatars. Your profile stays private unless you
-          opt into discovery.
-        </Empty>
+
+      {loading && !home ? (
+        <Panel title="Loading chats…">
+          <p className="x1-caption">Checking authorized conversations.</p>
+        </Panel>
+      ) : !home?.body ? (
+        <Panel title="Create your Body ID first">
+          <Empty title="Body ID required for Direct Messages">
+            Set your unique @BodyID in Account &amp; Preferences to send and receive
+            private messages.
+          </Empty>
+        </Panel>
       ) : (
         <>
+          {view === "Messages" && (
+            <div
+              className={
+                "x54-messenger-shell" + (threadId ? " has-active-thread" : "")
+              }
+            >
+              <ChatInbox
+                items={home.inbox}
+                activeThreadId={threadId}
+                query={threadSearch}
+                onQueryChange={setThreadSearch}
+                onSelectThread={(idToOpen) => {
+                  setThreadId(idToOpen);
+                  setEditing(null);
+                }}
+                onOpenProfile={openCanonicalProfile}
+                onStartByHandle={startChatByHandle}
+                busy={busy}
+              />
+
+              <ConversationView
+                thread={thread}
+                older={older}
+                loadingThread={loadingThread}
+                busy={busy}
+                draft={editing ? editText : drafts[threadId] || ""}
+                onDraftChange={(val) => {
+                  if (editing) setEditText(val);
+                  else setDrafts((prev) => ({ ...prev, [threadId]: val }));
+                }}
+                editingMessage={editing}
+                onStartEdit={(m) => {
+                  setEditing(m);
+                  setEditText(m.text);
+                }}
+                onCancelEdit={() => {
+                  setEditing(null);
+                  setEditText("");
+                }}
+                onSubmitSend={() => void handleSend()}
+                onSubmitEdit={() => void handleSaveEdit()}
+                onRetract={(m) =>
+                  void mutate(
+                    {
+                      action: "retract-message",
+                      messageId: m.id,
+                      version: m.version,
+                    },
+                    "Message retracted.",
+                  )
+                }
+                onReportMessage={(m) =>
+                  setReport({ kind: "MESSAGE", targetId: m.id })
+                }
+                onReportPeer={() => {
+                  if (thread) {
+                    setReport({ kind: "BODY", targetId: thread.peer.handle });
+                  }
+                }}
+                onCopyText={(txt) => {
+                  void navigator.clipboard?.writeText(txt);
+                  notify("Copied message text.");
+                }}
+                onBack={closeThreadToInbox}
+                onOpenProfile={openCanonicalProfile}
+                onOpenGroup={onOpenGroup}
+                onToggleMute={() => {
+                  if (!thread) return;
+                  void mutate(
+                    {
+                      action: "thread-view",
+                      threadId: thread.id,
+                      muted: !thread.preferences.muted,
+                      hidden: false,
+                    },
+                    thread.preferences.muted
+                      ? "Conversation unmuted."
+                      : "Conversation muted.",
+                  );
+                }}
+                onHideThread={async () => {
+                  if (!thread) return;
+                  if (
+                    await mutate(
+                      {
+                        action: "thread-view",
+                        threadId: thread.id,
+                        muted: !!thread.preferences.muted,
+                        hidden: true,
+                      },
+                      "Hidden from inbox.",
+                    )
+                  ) {
+                    closeThreadToInbox();
+                  }
+                }}
+                onBlockPeer={async () => {
+                  if (!thread) return;
+                  if (
+                    await mutate(
+                      {
+                        action: "block",
+                        handle: thread.peer.handle,
+                        active: true,
+                      },
+                      `Blocked @${thread.peer.handle}.`,
+                    )
+                  ) {
+                    closeThreadToInbox();
+                  }
+                }}
+                onAcceptRequest={() =>
+                  void mutate(
+                    { action: "accept-thread", threadId },
+                    "Message request accepted.",
+                  )
+                }
+                onDeclineRequest={async () => {
+                  if (
+                    await mutate(
+                      { action: "decline-thread", threadId },
+                      "Message request declined.",
+                    )
+                  ) {
+                    closeThreadToInbox();
+                  }
+                }}
+                onLoadEarlier={async () => {
+                  if (!thread?.nextBefore) return;
+                  const beforeCursor = older.length
+                    ? older[0].createdAt + "|" + older[0].id
+                    : thread.nextBefore;
+                  const page = await read<ChatThread>({
+                    view: "thread",
+                    threadId,
+                    before: beforeCursor,
+                  });
+                  setOlder((previous) => [...page.messages, ...previous]);
+                  setThread((current) =>
+                    current
+                      ? { ...current, nextBefore: page.nextBefore }
+                      : current,
+                  );
+                }}
+                onAutoMarkRead={autoMarkRead}
+                shareSoul={shareSoul}
+                onClearShare={onClearShare}
+              />
+            </div>
+          )}
+
           {view === "Discover" && (
-            <Panel title="Search Researchers, Rooms & Shared Souls">
-              <form
-                className="x2-social-search"
-                onSubmit={(e) => e.preventDefault()}
-              >
-                <label>
-                  <Search size={17} />
-                  <input
-                    aria-label="Search researchers, Research Rooms and Souls"
-                    type="search"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search @handle, display name, Research Room, or Soul…"
-                    maxLength={80}
-                  />
-                </label>
+            <Panel title="Directory">
+              <div className="x2-social-search">
+                <Search size={16} aria-hidden="true" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  maxLength={80}
+                  aria-label="Search public profiles, rooms and shared Souls"
+                  placeholder="Search @BodyID or research rooms"
+                />
                 <select
-                  aria-label="Research search type"
+                  aria-label="Directory category"
                   value={kind}
                   onChange={(e) => setKind(e.target.value)}
                 >
-                  <option value="all">All research</option>
-                  <option value="bodies">Researchers (@handle)</option>
-                  <option value="groups">Research Rooms</option>
+                  <option value="all">All</option>
+                  <option value="bodies">Profiles</option>
+                  <option value="groups">Rooms</option>
                   <option value="souls">Shared Souls</option>
                 </select>
-              </form>
-              {home && !home.preferences.discoverable && (
-                <div className="x1-callout">
-                  <span>
-                    Your profile <strong>@{home.body?.handle}</strong> is currently{" "}
-                    <strong>hidden from search</strong>. Other members cannot find
-                    you by @handle until you enable discovery.
-                  </span>
-                  <button
-                    type="button"
-                    className="x1-secondary"
-                    disabled={busy}
-                    onClick={() =>
-                      void mutate(
-                        {
-                          action: "preferences",
-                          ...home.preferences,
-                          discoverable: true,
-                        },
-                        "Your profile is now discoverable by @handle.",
-                      )
-                    }
-                  >
-                    Make profile discoverable
-                  </button>
-                </div>
-              )}
-              {searching && <p role="status">Searching permitted research…</p>}
-              <details className="x2-social-info">
-                <summary>How @handle discovery and privacy work</summary>
-                <p>
-                  Only members who enable profile discovery and discoverable
-                  Research Room directories appear in search. Internal account
-                  IDs and emails are never searchable. Shared Souls require
-                  current room membership.
-                </p>
-              </details>
+              </div>
+              {searching && <p className="x1-caption">Searching…</p>}
               {results && (
                 <div className="x2-social-results">
                   {results.bodies.map((b) => (
-                    <article key={b.handle}>
+                    <article className="x2-social-card" key={b.handle}>
                       <button
-                        className="x2-social-profile-link"
-                        onClick={() => openProfile(b.handle)}
+                        type="button"
+                        className="x54-search-row-tap"
+                        onClick={() => openCanonicalProfile(b.handle)}
                       >
                         <Identity body={b} />
                       </button>
-                      <p>{b.bio}</p>
+                      <p>{b.bio || "Public researcher profile."}</p>
                       <div className="x1-actions">
                         <button
-                          disabled={busy}
-                          onClick={() => message(b.handle)}
+                          type="button"
+                          onClick={() => openCanonicalProfile(b.handle)}
                         >
-                          <MessageSquare size={15} />
-                          Message
+                          Profile
                         </button>
                         <button
+                          type="button"
                           disabled={busy}
-                          onClick={() => bookmark("BODY", b.handle)}
+                          onClick={() => void startChatByHandle(b.handle)}
                         >
-                          <Bookmark size={15} />
-                          Save researcher
+                          <MessageSquare size={14} /> Message
                         </button>
                       </div>
                     </article>
                   ))}
                   {results.groups.map((g) => (
-                    <article key={g.id}>
-                      <h3>{g.name}</h3>
-                      <small>
-                        @{g.handle} · {g.joined ? "Member" : "Directory only"}
-                      </small>
-                      <p>{g.description}</p>
-                      {g.joined ? (
-                        <button onClick={() => onOpenGroup(g.id)}>
-                          Open Research Room
-                          <ArrowRight size={15} />
-                        </button>
-                      ) : (
-                        <button
-                          disabled={busy}
-                          onClick={() =>
-                            mutate(
-                              { action: "request-join", groupId: g.id },
-                              "Join request saved. A room administrator must accept.",
-                            )
-                          }
-                        >
-                          Request to join
-                        </button>
-                      )}
-                    </article>
-                  ))}
-                  {results.souls.map((s) => (
-                    <article key={s.id}>
-                      <h3>{s.title}</h3>
-                      <small>
-                        Revision {s.revision} · @{s.authorHandle}
-                      </small>
-                      <p>{s.summary}</p>
+                    <article className="x2-social-card" key={g.id}>
+                      <strong>{g.name}</strong>
+                      <small>@{g.handle} · Research room</small>
+                      <p>{g.description || "Private research room."}</p>
                       <div className="x1-actions">
-                        <button onClick={() => onOpenGroup(s.groupId)}>
-                          Open shared Soul
-                        </button>
-                        <button
-                          disabled={busy}
-                          onClick={() => bookmark("SOUL", s.id)}
-                        >
-                          <Bookmark size={15} />
-                          Save Soul
-                        </button>
-                      </div>
-                    </article>
-                  ))}
-                  {!searching &&
-                    !results.bodies.length &&
-                    !results.groups.length &&
-                    !results.souls.length && (
-                      <p className="x1-caption">
-                        {search.trim()
-                          ? `No discoverable researcher, Research Room, or shared Soul matched "${search.trim()}". Profiles stay private unless enabled in Settings.`
-                          : "Enter an @handle, display name, Research Room name, or shared Soul title to search."}
-                      </p>
-                    )}
-                  {results.nextBody && (
-                    <button
-                      disabled={searching}
-                      onClick={async () => {
-                        setSearching(true);
-                        try {
-                          const page = await read<SearchResult>({
-                            view: "search",
-                            q: search,
-                            kind: "bodies",
-                            before: results.nextBody!,
-                          });
-                          setResults((old) =>
-                            old
-                              ? {
-                                  ...old,
-                                  bodies: [...old.bodies, ...page.bodies],
-                                  nextBody: page.nextBody,
-                                }
-                              : page,
-                          );
-                        } catch (e) {
-                          setError((e as Error).message);
-                        } finally {
-                          setSearching(false);
-                        }
-                      }}
-                    >
-                      More researchers
-                    </button>
-                  )}
-                </div>
-              )}
-            </Panel>
-          )}
-          {view === "Messages" && (
-            <div className="x2-social-messages">
-              {shareSoul && !thread && (
-                <p role="status" className="x2-social-share-pending">
-                  Sharing {shareSoul.title}, revision {shareSoul.revision}.
-                  Choose a conversation, or find a recipient in Discover.
-                </p>
-              )}
-              <Panel title="Messages">
-                <input
-                  type="search"
-                  aria-label="Search existing conversations"
-                  value={threadSearch}
-                  onChange={(e) => setThreadSearch(e.target.value)}
-                  placeholder="Find a conversation"
-                  maxLength={80}
-                />
-                <div className="x2-social-thread-list">
-                  {home?.inbox
-                    .filter((c) =>
-                      (c.handle + " " + c.displayName)
-                        .toLowerCase()
-                        .includes(threadSearch.toLowerCase()),
-                    )
-                    .map((c) => (
-                      <button
-                        key={c.id}
-                        aria-pressed={threadId === c.id}
-                        onClick={() => {
-                          setThreadId(c.id);
-                          setThread(null);
-                        }}
-                      >
-                        <strong>@{c.handle}</strong>
-                        <span>
-                          {c.state === "REQUESTED"
-                            ? c.requestedByMe
-                              ? "Request sent"
-                              : "Message request"
-                            : moment(c.updatedAt)}
-                          {c.unread > 0 ? ` · ${c.unread} unread` : ""}
-                          {c.muted ? " · muted" : ""}
-                        </span>
-                      </button>
-                    ))}
-                  {!home?.inbox.length && (
-                    <p className="x1-caption">
-                      Find a researcher in Discover to start a conversation.
-                    </p>
-                  )}
-                </div>
-              </Panel>
-              {thread ? (
-                <Panel
-                  title={"@" + thread.peer.handle}
-                  action={
-                    <button
-                      className="x1-icon-button"
-                      aria-label="Close conversation"
-                      onClick={() => {
-                        setThreadId("");
-                        setThread(null);
-                      }}
-                    >
-                      <X size={17} />
-                    </button>
-                  }
-                >
-                  <div className="x1-actions">
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        mutate(
-                          {
-                            action: "thread-view",
-                            threadId: thread.id,
-                            muted: !thread.preferences.muted,
-                            hidden: false,
-                          },
-                          thread.preferences.muted
-                            ? "Conversation unmuted."
-                            : "Conversation muted.",
-                        )
-                      }
-                    >
-                      {thread.preferences.muted ? "Unmute" : "Mute"}
-                    </button>
-                    <button
-                      disabled={busy}
-                      onClick={async () => {
-                        if (
-                          await mutate(
-                            {
-                              action: "thread-view",
-                              threadId: thread.id,
-                              muted: !!thread.preferences.muted,
-                              hidden: true,
-                            },
-                            "Hidden from your inbox. Messages are not deleted.",
-                          )
-                        ) {
-                          setThreadId("");
-                          setThread(null);
-                        }
-                      }}
-                    >
-                      Hide
-                    </button>
-                    <button
-                      disabled={busy}
-                      onClick={async () => {
-                        if (
-                          await mutate(
-                            {
-                              action: "block",
-                              handle: thread.peer.handle,
-                              active: true,
-                            },
-                            "Profile blocked.",
-                          )
-                        ) {
-                          setThreadId("");
-                          setThread(null);
-                        }
-                      }}
-                    >
-                      Block
-                    </button>
-                  </div>
-                  {thread.state === "REQUESTED" && (
-                    <div className="x1-callout">
-                      <p>
-                        {thread.requestedByMe
-                          ? "Request sent. One introductory message is allowed before acceptance."
-                          : "Accept this request to allow replies."}
-                      </p>
-                      {!thread.requestedByMe && (
-                        <div className="x1-actions">
+                        {g.joined ? (
                           <button
+                            type="button"
+                            onClick={() => onOpenGroup(g.id)}
+                          >
+                            Open Room <ArrowRight size={14} />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
                             disabled={busy}
                             onClick={() =>
-                              mutate(
-                                { action: "accept-thread", threadId },
-                                "Message request accepted.",
+                              void mutate(
+                                { action: "request-join", groupId: g.id },
+                                "Join request sent.",
                               )
                             }
                           >
-                            <Check size={15} />
-                            Accept
+                            Request to join
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                  {results.souls.map((s) => (
+                    <article className="x2-social-card" key={s.id}>
+                      <strong>{s.title}</strong>
+                      <small>
+                        Revision {s.revision}
+                        {s.authorHandle ? ` · @${s.authorHandle}` : ""}
+                      </small>
+                      <p>{s.summary}</p>
+                      <div className="x1-actions">
+                        <button
+                          type="button"
+                          onClick={() => onOpenGroup(s.groupId)}
+                        >
+                          Open in Room
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void bookmark("SOUL", s.id)}
+                        >
+                          <Bookmark size={14} /> Save
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                  {!results.bodies.length &&
+                    !results.groups.length &&
+                    !results.souls.length && (
+                      <Empty title="No matching results">
+                        Try another @BodyID or room name.
+                      </Empty>
+                    )}
+                </div>
+              )}
+            </Panel>
+          )}
+
+          {view === "Saved" && (
+            <Panel title="Saved">
+              <div className="x2-social-results">
+                {home.bookmarks.map((b) => (
+                  <article
+                    className="x2-social-card"
+                    key={b.kind + (b.body?.handle || b.soul?.id)}
+                  >
+                    {b.body ? (
+                      <>
+                        <button
+                          type="button"
+                          className="x54-search-row-tap"
+                          onClick={() => openCanonicalProfile(b.body!.handle)}
+                        >
+                          <Identity body={b.body} />
+                        </button>
+                        <p>{b.body.bio}</p>
+                        <div className="x1-actions">
+                          <button
+                            type="button"
+                            onClick={() => openCanonicalProfile(b.body!.handle)}
+                          >
+                            Open profile
                           </button>
                           <button
+                            type="button"
                             disabled={busy}
-                            onClick={async () => {
-                              if (
-                                await mutate(
-                                  { action: "decline-thread", threadId },
-                                  "Message request declined.",
-                                )
-                              ) {
-                                setThreadId("");
-                                setThread(null);
-                              }
-                            }}
+                            onClick={() =>
+                              void bookmark("BODY", b.body!.handle, false)
+                            }
                           >
-                            Decline
+                            Remove
                           </button>
                         </div>
-                      )}
-                    </div>
-                  )}
-                  {thread.nextBefore && (
-                    <button
-                      disabled={busy}
-                      onClick={async () => {
-                        const page = await read<Thread>({
-                          view: "thread",
-                          threadId,
-                          before: older.length
-                            ? older[0].createdAt + "|" + older[0].id
-                            : thread.nextBefore!,
-                        });
-                        setOlder((previous) => [...page.messages, ...previous]);
-                        setThread((current) =>
-                          current
-                            ? { ...current, nextBefore: page.nextBefore }
-                            : current,
-                        );
-                      }}
-                    >
-                      Earlier messages
-                    </button>
-                  )}
-                  <div
-                    className="x2-social-message-log"
-                    role="log"
-                    aria-label="Private conversation"
-                  >
-                    {[...older, ...thread.messages].map((m) => (
-                      <article className={m.isMine ? "is-mine" : ""} key={m.id}>
-                        <small>
-                          @{m.authorHandle} · {moment(m.createdAt)}
-                        </small>
-                        <p>{m.retractedAt ? "Message retracted." : m.text}</p>
-                        {m.reference && (
-                          <div className="x2-social-reference">
-                            {m.reference.unavailable ? (
-                              "Research reference is no longer available to you."
-                            ) : (
-                              <>
-                                <strong>
-                                  {m.reference.title} · revision{" "}
-                                  {m.reference.revision}
-                                </strong>
-                                <p>{m.reference.summary}</p>
-                                <button
-                                  onClick={() =>
-                                    onOpenGroup(m.reference!.groupId)
-                                  }
-                                >
-                                  Open permitted reference
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        )}
-                        <small>
-                          {stateLabel(m.status)}
-                          {m.editedAt && !m.retractedAt ? " · edited" : ""}
-                        </small>
+                      </>
+                    ) : b.soul ? (
+                      <>
+                        <strong>{b.soul.title}</strong>
+                        <p>{b.soul.summary}</p>
                         <div className="x1-actions">
-                          {m.isMine && !m.retractedAt ? (
-                            <>
-                              <button
-                                disabled={busy}
-                                onClick={() => setEdit(m)}
-                              >
-                                <Pencil size={13} />
-                                Edit
-                              </button>
-                              <button
-                                disabled={busy}
-                                onClick={() =>
-                                  mutate(
-                                    {
-                                      action: "retract-message",
-                                      messageId: m.id,
-                                      version: m.version,
-                                    },
-                                    "Message retracted.",
-                                  )
-                                }
-                              >
-                                Retract
-                              </button>
-                            </>
-                          ) : (
-                            !m.isMine && (
-                              <button
-                                disabled={busy}
-                                onClick={() =>
-                                  setReport({ kind: "MESSAGE", targetId: m.id })
-                                }
-                              >
-                                <Flag size={13} />
-                                Report
-                              </button>
-                            )
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => onOpenGroup(b.soul!.groupId)}
+                          >
+                            Open Room
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() =>
+                              void bookmark("SOUL", b.soul!.id, false)
+                            }
+                          >
+                            Remove
+                          </button>
                         </div>
-                      </article>
-                    ))}
-                  </div>
-                  {thread.messages.length > 0 && (
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        mutate(
-                          {
-                            action: "mark-read",
-                            threadId,
-                            lastMessageId: thread.messages.at(-1)!.id,
-                          },
-                          "Conversation marked read.",
-                        )
-                      }
-                    >
-                      Mark read
-                    </button>
-                  )}
-                  <form
-                    className="x2-social-composer"
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      if (lock.current) return;
-                      const text = drafts[threadId] || "",
-                        signature =
-                          threadId + "\n" + text + JSON.stringify(shareSoul);
-                      if (
-                        !retry.current ||
-                        retry.current.signature !== signature
+                      </>
+                    ) : null}
+                  </article>
+                ))}
+                {!home.bookmarks.length && (
+                  <Empty title="Nothing saved yet">
+                    Save researchers or shared Souls to return to them quickly.
+                  </Empty>
+                )}
+              </div>
+            </Panel>
+          )}
+
+          {view === "Notifications" && (
+            <Panel
+              title="Notifications"
+              action={
+                unread > 0 ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void mutate(
+                        { action: "read-notifications" },
+                        "Notifications marked read.",
                       )
-                        retry.current = { signature, key: id() };
+                    }
+                  >
+                    Mark all read
+                  </button>
+                ) : undefined
+              }
+            >
+              {home.invitations.map((inv) => (
+                <article className="x2-social-card" key={inv.id}>
+                  <strong>Room invitation · {inv.name}</strong>
+                  <small>
+                    Role {inv.role} · expires {moment(inv.expiresAt)}
+                  </small>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={async () => {
                       if (
                         await mutate(
-                          {
-                            action: "send",
-                            threadId,
-                            text,
-                            soulId: shareSoul?.id,
-                            revision: shareSoul?.revision,
-                            requestId: retry.current.key,
-                          },
-                          "Message saved on server.",
+                          { action: "accept-invitation", invitationId: inv.id },
+                          "Joined Research Room.",
                         )
                       ) {
-                        setDrafts((previous) => ({
-                          ...previous,
-                          [threadId]: "",
-                        }));
-                        retry.current = null;
-                        onClearShare?.();
+                        onOpenGroup(inv.groupId);
                       }
                     }}
                   >
-                    {shareSoul && (
-                      <div className="x2-social-reference">
-                        <strong>
-                          {shareSoul.title} · revision {shareSoul.revision}
-                        </strong>
-                        <p>
-                          Reference only. Both participants must still belong to
-                          its group.
-                        </p>
-                        <button type="button" onClick={onClearShare}>
-                          Remove reference
-                        </button>
-                      </div>
-                    )}
-                    <label htmlFor="x2-message-compose">Message</label>
-                    <textarea
-                      id="x2-message-compose"
-                      value={drafts[threadId] || ""}
-                      onChange={(e) =>
-                        setDrafts((previous) => ({
-                          ...previous,
-                          [threadId]: e.target.value,
-                        }))
-                      }
-                      maxLength={4000}
-                      rows={3}
-                      placeholder="Write a private research message"
-                    />
+                    Accept invitation
+                  </button>
+                </article>
+              ))}
+              {home.notifications.map((n) => (
+                <article
+                  className={
+                    "x2-social-card" + (n.readAt ? "" : " is-unread")
+                  }
+                  key={n.id}
+                >
+                  <strong>{n.kind.replaceAll("_", " ")}</strong>
+                  <small>{moment(n.createdAt)}</small>
+                  {n.kind === "MESSAGE" || n.kind === "MESSAGE_REQUEST" ? (
                     <button
-                      type="submit"
-                      disabled={
-                        busy ||
-                        !(drafts[threadId] || "").trim() ||
-                        thread.state === "DECLINED" ||
-                        (thread.state === "REQUESTED" &&
-                          (!thread.requestedByMe || thread.messages.length > 0))
-                      }
+                      type="button"
+                      onClick={() => {
+                        setThreadId(n.targetId);
+                        onView("Messages");
+                      }}
                     >
-                      <Send size={16} />
-                      {busy ? "Sending…" : "Send"}
+                      Open chat
                     </button>
-                    <small>
-                      Private to both participants. No end-to-end encryption
-                      claim. Read receipts are off by default.
-                    </small>
-                  </form>
-                </Panel>
-              ) : (
-                <Empty title="Your research conversations">
-                  Select a thread or find a researcher in Explore. No simulated
-                  online status or typing activity.
+                  ) : n.kind === "NEW_FOLLOWER" ||
+                    n.kind === "FOLLOW_REQUEST" ||
+                    n.kind === "FOLLOW_APPROVED" ? (
+                    <button
+                      type="button"
+                      onClick={() => openCanonicalProfile(n.targetId)}
+                    >
+                      View @{n.targetId}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onOpenGroup(n.targetId)}
+                    >
+                      Open Room
+                    </button>
+                  )}
+                </article>
+              ))}
+              {!home.invitations.length && !home.notifications.length && (
+                <Empty title="All caught up">
+                  Direct message alerts, follow activity, and room invitations
+                  appear here.
                 </Empty>
               )}
-            </div>
-          )}
-          {view === "Saved" && (
-            <Panel title="Saved research">
-              <div className="x2-social-results">
-                {home?.bookmarks.map((b, i) => (
-                  <article key={b.kind + ":" + i}>
-                    {b.body ? (
-                      <button
-                        className="x2-social-profile-link"
-                        onClick={() => openProfile(b.body!.handle)}
-                      >
-                        <Identity body={b.body} />
-                      </button>
-                    ) : b.soul ? (
-                      <>
-                        <h3>{b.soul.title}</h3>
-                        <p>{b.soul.summary}</p>
-                        <button onClick={() => onOpenGroup(b.soul!.groupId)}>
-                          Open Soul
-                        </button>
-                      </>
-                    ) : (
-                      <p className="x1-caption">
-                        This saved item is no longer available.
-                      </p>
-                    )}
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        bookmark(
-                          b.kind as "BODY" | "SOUL",
-                          b.body?.handle || b.soul?.id || "",
-                          false,
-                        )
-                      }
-                    >
-                      Remove
-                    </button>
-                  </article>
-                ))}
-              </div>
-              {!home?.bookmarks.length && (
-                <p className="x1-caption">
-                  Save a permitted researcher or Soul from Explore. Revoked
-                  content is hidden automatically.
-                </p>
-              )}
             </Panel>
           )}
-          {view === "Notifications" && (
-            <Panel title="Notifications">
-              <div className="x2-social-results">
-                {home?.invitations.map((i) => (
-                  <article key={i.id}>
-                    <h3>Invitation · {i.name}</h3>
-                    <p>
-                      {i.role} · expires {moment(i.expiresAt)}
-                    </p>
-                    <div className="x1-actions">
-                      <button
-                        disabled={busy}
-                        onClick={async () => {
-                          const r = await mutate(
-                            { action: "accept-invitation", invitationId: i.id },
-                            "Invitation accepted.",
-                          );
-                          if (typeof r?.groupId === "string")
-                            onOpenGroup(r.groupId);
-                        }}
-                      >
-                        Accept invitation
-                      </button>
-                      <button
-                        disabled={busy}
-                        onClick={() =>
-                          mutate(
-                            {
-                              action: "decline-invitation",
-                              invitationId: i.id,
-                            },
-                            "Invitation declined.",
-                          )
-                        }
-                      >
-                        Decline
-                      </button>
-                    </div>
-                  </article>
-                ))}
-                {home?.notifications.map((n) => (
-                  <article key={n.id}>
-                    <h3>{n.kind.replaceAll("_", " ").toLowerCase()}</h3>
-                    <small>
-                      {moment(n.createdAt)} · {n.readAt ? "Read" : "Unread"}
-                    </small>
-                    <div className="x1-actions">
-                      <button
-                        onClick={() => {
-                          if (n.kind === "MESSAGE") {
-                            setThreadId(n.targetId);
-                            onView("Messages");
-                          } else onOpenGroup(n.targetId);
-                        }}
-                      >
-                        Open
-                      </button>
-                      <button
-                        disabled={busy || !!n.readAt}
-                        onClick={() =>
-                          mutate(
-                            {
-                              action: "read-notification",
-                              notificationId: n.id,
-                            },
-                            "Notification marked read.",
-                          )
-                        }
-                      >
-                        Mark read
-                      </button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-              {!home?.invitations.length && !home?.notifications.length && (
-                <p className="x1-caption">
-                  Actual messages, invitations and group mentions appear here.
-                </p>
-              )}
-            </Panel>
-          )}
-          {view === "Privacy" && home && (
-            <Panel title="Research privacy">
+
+          {view === "Privacy" && (
+            <Panel title="Messaging Privacy & Blocks">
               <form
                 key={JSON.stringify(home.preferences)}
                 className="x1-form"
@@ -1071,32 +955,26 @@ export function SocialWorkspace({
                   await mutate(
                     {
                       action: "preferences",
-                      discoverable: f.has("discoverable"),
+                      discoverable: home.preferences.discoverable,
+                      messages: f.get("messages"),
                       receipts: f.has("receipts"),
                       notifications: f.has("notifications"),
-                      messages: f.get("messages"),
                     },
-                    "Privacy preferences saved.",
+                    "Messaging privacy saved.",
                   );
                 }}
               >
-                <label className="x1-checkbox">
-                  <input
-                    name="discoverable"
-                    type="checkbox"
-                    defaultChecked={home.preferences.discoverable}
-                  />
-                  Allow my profile in Community discovery
-                </label>
                 <label>
-                  Who may start messages?
+                  Who can send message requests
                   <select
                     name="messages"
                     defaultValue={home.preferences.messages}
                   >
-                    <option value="REQUESTS">Allow message requests</option>
+                    <option value="REQUESTS">
+                      Anyone via message request (approval required)
+                    </option>
                     <option value="GROUPS">Shared Research Room members only</option>
-                    <option value="NONE">No incoming messages</option>
+                    <option value="NONE">Nobody</option>
                   </select>
                 </label>
                 <label className="x1-checkbox">
@@ -1105,7 +983,7 @@ export function SocialWorkspace({
                     type="checkbox"
                     defaultChecked={home.preferences.receipts}
                   />
-                  Share explicit read receipts
+                  Share read receipts when I view a conversation
                 </label>
                 <label className="x1-checkbox">
                   <input
@@ -1113,34 +991,23 @@ export function SocialWorkspace({
                     type="checkbox"
                     defaultChecked={home.preferences.notifications}
                   />
-                  In-app message and room notifications
+                  Enable in-app notifications
                 </label>
                 <button disabled={busy} type="submit">
-                  <ShieldCheck size={16} />
-                  {busy ? "Saving…" : "Save privacy"}
+                  <ShieldCheck size={15} /> Save preferences
                 </button>
               </form>
-              <details className="x2-social-info">
-                <summary>Retention and privacy</summary>
-                <p>
-                  Text is stored in the existing database. Hide affects
-                  only your inbox; Retract removes your message text for both
-                  participants. Editing is allowed for 15 minutes. Block
-                  prevents discovery and new messages in either direction.
-                  Account erasure deletes its paired conversations; no
-                  end-to-end encryption is claimed.
-                </p>
-              </details>
-              <h3>Blocked profiles</h3>
+              <h3>Blocked accounts</h3>
               {home.blocked.map((b) => (
                 <div className="x2-social-block" key={b.handle}>
-                  <span>@{b.handle}</span>
+                  <Identity body={b} />
                   <button
+                    type="button"
                     disabled={busy}
                     onClick={() =>
-                      mutate(
+                      void mutate(
                         { action: "block", handle: b.handle, active: false },
-                        "Profile unblocked.",
+                        `Unblocked @${b.handle}.`,
                       )
                     }
                   >
@@ -1155,169 +1022,7 @@ export function SocialWorkspace({
           )}
         </>
       )}
-      {profile && (
-        <Modal
-          title={"@" + profile.body.handle}
-          onClose={() => setProfile(null)}
-        >
-          <Identity body={profile.body} />
-          <p>{profile.body.bio}</p>
-          <div className="x1-actions">
-            {profile.canMessage && (
-              <button
-                disabled={busy}
-                onClick={() => message(profile.body.handle)}
-              >
-                <MessageSquare size={15} />
-                Message
-              </button>
-            )}
-            <button
-              disabled={busy}
-              onClick={() => bookmark("BODY", profile.body.handle)}
-            >
-              <Bookmark size={15} />
-              Save researcher
-            </button>
-            {!profile.isMe && (
-              <>
-                <button
-                  disabled={busy}
-                  onClick={async () => {
-                    if (
-                      await mutate(
-                        {
-                          action: "block",
-                          handle: profile.body.handle,
-                          active: true,
-                        },
-                        "Profile blocked.",
-                      )
-                    )
-                      setProfile(null);
-                  }}
-                >
-                  Block
-                </button>
-                <button
-                  onClick={() =>
-                    setReport({ kind: "BODY", targetId: profile.body.handle })
-                  }
-                >
-                  Report
-                </button>
-              </>
-            )}
-          </div>
-          {!profile.isMe &&
-            home?.groups?.some((g) => ["OWNER", "ADMIN"].includes(g.role)) && (
-              <form
-                className="x1-form"
-                onSubmit={async (event) => {
-                  event.preventDefault();
-                  const f = new FormData(event.currentTarget);
-                  await mutate(
-                    {
-                      action: "invite-body",
-                      handle: profile.body.handle,
-                      groupId: f.get("groupId"),
-                    },
-                    "Viewer invitation saved in the recipient’s inbox.",
-                  );
-                }}
-              >
-                <label>
-                  Invite to a Research Room
-                  <select name="groupId">
-                    {home.groups
-                      .filter((g) => ["OWNER", "ADMIN"].includes(g.role))
-                      .map((g) => (
-                        <option key={g.id} value={g.id}>
-                          {g.name}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <button disabled={busy} type="submit">
-                  Invite
-                </button>
-              </form>
-            )}
-          <p>
-            <a
-              href={
-                "/?view=community&handle=" +
-                encodeURIComponent(profile.body.handle)
-              }
-            >
-              Profile link
-            </a>
-          </p>
-          <h3>Research shared with you</h3>
-          {profile.souls.map((s) => (
-            <article className="x2-social-profile-soul" key={s.id}>
-              <strong>
-                {s.title} · revision {s.revision}
-              </strong>
-              <p>{s.summary}</p>
-              <button
-                onClick={() => {
-                  setProfile(null);
-                  onOpenGroup(s.groupId);
-                }}
-              >
-                Open shared Soul
-              </button>
-            </article>
-          ))}
-          {!profile.souls.length && (
-            <p className="x1-caption">
-              No research is available in your current shared memberships.
-              Public publishing remains disabled.
-            </p>
-          )}
-        </Modal>
-      )}
-      {edit && (
-        <Modal title="Edit message" onClose={() => setEdit(null)}>
-          <form
-            className="x1-form"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              const f = new FormData(e.currentTarget);
-              if (
-                await mutate(
-                  {
-                    action: "edit-message",
-                    messageId: edit.id,
-                    version: edit.version,
-                    text: f.get("text"),
-                  },
-                  "Message edit saved.",
-                )
-              )
-                setEdit(null);
-            }}
-          >
-            <label>
-              Message
-              <textarea
-                name="text"
-                defaultValue={edit.text}
-                maxLength={4000}
-                required
-                rows={4}
-              />
-            </label>
-            <button disabled={busy} type="submit">
-              {busy ? "Saving…" : "Save edit"}
-            </button>
-            <small>
-              15-minute edit window. Concurrent changes are rejected.
-            </small>
-          </form>
-        </Modal>
-      )}
+
       {report && (
         <Modal title="Report research conduct" onClose={() => setReport(null)}>
           <form
@@ -1330,8 +1035,9 @@ export function SocialWorkspace({
                   { action: "report", ...report, reason: f.get("reason") },
                   "Report saved privately for review.",
                 )
-              )
+              ) {
                 setReport(null);
+              }
             }}
           >
             <label>
@@ -1342,6 +1048,7 @@ export function SocialWorkspace({
                 maxLength={1000}
                 required
                 rows={4}
+                placeholder="Describe what happened…"
               />
             </label>
             <button disabled={busy} type="submit">
@@ -1366,6 +1073,7 @@ type Discussion = {
   authorAvatar?: string | null;
   isMine: number;
 };
+
 type GroupNetwork = {
   group: { id: string; name: string; role: string };
   settings: {
@@ -1377,24 +1085,29 @@ type GroupNetwork = {
   requests: { handle: string; displayName: string; createdAt: string }[];
   nextBefore: string | null;
 };
+
 export function GroupNetworkPanel({
   groupId,
   notify,
+  onOpenProfile,
 }: {
   groupId: string;
   notify: Notice;
+  onOpenProfile?: (handle: string) => void;
 }) {
-  const [data, setData] = useState<GroupNetwork | null>(null),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [reply, setReply] = useState<Discussion | null>(null),
-    [text, setText] = useState("");
-  const lock = useRef(false),
-    retry = useRef<{ signature: string; key: string } | null>(null);
+  const [data, setData] = useState<GroupNetwork | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [reply, setReply] = useState<Discussion | null>(null);
+  const [text, setText] = useState("");
+  const lock = useRef(false);
+  const retry = useRef<{ signature: string; key: string } | null>(null);
+
   const refresh = useCallback(
     async () => setData(await read<GroupNetwork>({ view: "group", groupId })),
     [groupId],
   );
+
   useEffect(() => {
     const controller = new AbortController();
     read<GroupNetwork>({ view: "group", groupId }, controller.signal)
@@ -1404,6 +1117,7 @@ export function GroupNetworkPanel({
       });
     return () => controller.abort();
   }, [groupId]);
+
   async function mutate(input: Record<string, unknown>, success: string) {
     if (lock.current) return false;
     lock.current = true;
@@ -1422,13 +1136,15 @@ export function GroupNetworkPanel({
       setBusy(false);
     }
   }
+
   const admin = data && ["OWNER", "ADMIN"].includes(data.group.role);
+
   return (
     <Panel title="Room discussion" className="x2-social-group">
       <div aria-busy={busy}>
         {error && (
           <p className="x1-callout" role="alert">
-            {error}
+            {error}{" "}
             <button onClick={() => refresh().catch((e) => setError(e.message))}>
               Retry
             </button>
@@ -1471,7 +1187,7 @@ export function GroupNetworkPanel({
                   type="checkbox"
                   defaultChecked={!!data?.settings?.discoverable}
                 />
-                List Research Room name and description in Explore directory
+                List Research Room name and description in directory
               </label>
               <label>
                 Pinned Soul ID
@@ -1486,12 +1202,18 @@ export function GroupNetworkPanel({
               </button>
               <small>
                 Discovery exposes metadata only. Membership is still required
-                for content. Accepted join requests receive Viewer access.
+                for content.
               </small>
             </form>
             {data?.requests.map((r) => (
               <div className="x2-social-block" key={r.handle}>
-                <span>@{r.handle}</span>
+                <button
+                  type="button"
+                  className="x1-text-button"
+                  onClick={() => onOpenProfile?.(r.handle)}
+                >
+                  @{r.handle}
+                </button>
                 <div className="x1-actions">
                   <button
                     disabled={busy}
@@ -1533,10 +1255,20 @@ export function GroupNetworkPanel({
         <div className="x2-social-discussions">
           {data?.discussions.map((d) => (
             <article key={d.id} className={d.parentId ? "is-reply" : ""}>
-              <small style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <small
+                style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
                 <AvatarBadge avatarId={d.authorAvatar} size={22} alt="" />
+                <button
+                  type="button"
+                  className="x1-text-button"
+                  style={{ fontSize: "inherit", padding: 0 }}
+                  onClick={() => onOpenProfile?.(d.authorHandle)}
+                >
+                  @{d.authorHandle}
+                </button>
                 <span>
-                  @{d.authorHandle} · {moment(d.createdAt)}
+                  · {moment(d.createdAt)}
                   {d.parentId ? " · reply" : ""}
                 </span>
               </small>
@@ -1598,7 +1330,7 @@ export function GroupNetworkPanel({
         {!data?.discussions.length && (
           <p className="x1-caption">
             Discuss a method, share a permitted research summary, or mention a
-            room member with @handle. Do not paste restricted raw data.
+            room member with @handle.
           </p>
         )}
         <form
@@ -1616,7 +1348,7 @@ export function GroupNetworkPanel({
                 sourceAsOf,
               ].join("|");
             if (!retry.current || retry.current.signature !== signature)
-              retry.current = { signature, key: id() };
+              retry.current = { signature, key: newId() };
             if (
               await mutate(
                 {

@@ -4,6 +4,7 @@ import { resolveAvatarPreset } from "../../../backend/services/profile/avatars";
 
 type Props = {
   avatarId?: string | null;
+  displayName?: string;
   size?: number;
   alt?: string;
   className?: string;
@@ -16,12 +17,14 @@ type Props = {
  */
 export default function AvatarBadge({
   avatarId,
+  displayName,
   size = 38,
-  alt = "",
+  alt,
   className = "",
   ring = false,
 }: Props) {
   const preset = resolveAvatarPreset(avatarId);
+  const resolvedAlt = alt ?? (displayName ? `${displayName} avatar` : "");
   return (
     <span
       className={
@@ -35,7 +38,7 @@ export default function AvatarBadge({
         src={preset.assetPath}
         width={size}
         height={size}
-        alt={alt}
+        alt={resolvedAlt}
         loading="lazy"
         decoding="async"
       />
