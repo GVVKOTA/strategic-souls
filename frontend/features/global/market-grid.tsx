@@ -452,7 +452,7 @@ export default function MarketOverviewGrid({
                     onRequireAuth?.();
                   }}
                 >
-                  Sign in to sync to D1
+                  Sign in to sync across devices
                 </button>
                 .
               </>
@@ -545,9 +545,8 @@ export default function MarketOverviewGrid({
               className="x1-caption"
               style={{ display: "block", marginBottom: 6 }}
             >
-              Replace Slot #{activeSlot + 1} ({" "}
-              <strong>{draftIds[activeSlot]}</strong> ) — search canonical
-              instruments:
+              Choose an instrument for slot {activeSlot + 1} (current:{" "}
+              <strong>{draftIds[activeSlot]}</strong>):
             </label>
             <div className="x51-body-search" style={{ maxWidth: "100%" }}>
               <Search size={15} aria-hidden="true" />

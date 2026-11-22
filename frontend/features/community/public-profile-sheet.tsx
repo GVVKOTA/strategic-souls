@@ -594,7 +594,7 @@ export default function PublicProfileSheet({
                       }}
                     >
                       <QrCode size={15} aria-hidden="true" />
-                      <span>Share QR &amp; link</span>
+                      <span>Share profile</span>
                     </button>
                     <button
                       type="button"
@@ -1056,7 +1056,7 @@ export default function PublicProfileSheet({
                                 onClick={() => void copySoulToDraft(post)}
                               >
                                 <Copy size={13} />
-                                <span>Copy</span>
+                                <span>Copy to Drafts</span>
                               </button>
                               {post.isMine && (
                                 <>
@@ -1146,7 +1146,7 @@ export default function PublicProfileSheet({
                       <h4>Privacy Boundary</h4>
                       <p className="x1-caption" style={{ margin: 0 }}>
                         Public researcher profiles show only intentionally shared
-                        identity details and published Web Souls. Portfolio values,
+                        identity details and published Souls. Portfolio values,
                         watchlists, drafts, Graveyard scans, private CSVs, email,
                         and direct messages stay strictly private.
                       </p>

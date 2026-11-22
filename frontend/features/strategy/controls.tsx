@@ -570,8 +570,8 @@ export function EvidencePanel({
               ))
             ) : (
               <p>
-                No compatible personal cases. Negative-only post-mortems are not
-                a probability denominator.
+                No compatible personal cases yet. Negative-only scan reviews do
+                not form a probability denominator.
               </p>
             )}
             {data.historyLimitReached && (

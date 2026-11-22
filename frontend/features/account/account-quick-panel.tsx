@@ -141,7 +141,7 @@ export default function AccountQuickPanel({
                   {genderSymbol === "MALE" ? " ♂" : genderSymbol === "FEMALE" ? " ♀" : ""}
                 </strong>
                 <span className="x6-quick-handle">
-                  {handle ? `@${handle}` : "No @BodyID set yet"}
+                  {handle ? `@${handle}` : "No Body ID set yet"}
                 </span>
                 <span className="x6-quick-status">
                   {discoverable ? "Discoverable profile" : "Private profile"} · Portfolio hidden

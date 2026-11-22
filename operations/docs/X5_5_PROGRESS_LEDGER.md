@@ -55,8 +55,32 @@
 
 ---
 
-## Phase 2 — Premium UX, Mobile Polish, Performance, Globe & Brand Language (IN PROGRESS)
-- Pending execution.
+## Phase 2 — Premium UX, Mobile Polish, Performance, Globe & Brand Language (DONE)
 
-## Phase 3 — D1 Safety, Security Matrix, Observability, Market-Data Contracts, E2E & Release (PENDING)
-- Pending execution.
+### Delivered Improvements
+1. **Standalone `GRAVEYARD` Heading (Strict Founder Contract):**
+   - Removed subtitle paragraph (`Immutable personal scan archive · original formulas, cutoffs & post-mortems preserved`) directly beneath `GRAVEYARD` in `frontend/features/strategy/workspace.tsx` so `GRAVEYARD` stands alone with zero subtitle/descriptor. Moved immutability explanation to the Strategy `?` Help modal.
+2. **Complete Brand & Plain-Language Vocabulary Polish:**
+   - Removed all visible `@BodyID`, `Community Web`, `Post Soul`, `Cloudflare D1`, `Checking authorized conversations`, `server-authorized`, `COVERAGE BLOCKED`/`COVERAGE VERIFIED`, `PBKDF2-SHA256` (in Auth/Settings; retained technical disclosure on `/trust`), and stale `"public content publishing"` copy across 15 frontend UI files.
+   - Standardized visible product language to `Body ID`, `Soul Feed`, `Soul Network`, `Rooms`, `Publish Soul`, `Publish to Soul Feed`, `Copy to Drafts`, `Share profile`, `Review scan`, and concise Body ID onboarding microcopy.
+3. **Mobile & Desktop UX Polish:**
+   - Community primary tabs (`Soul Feed | Chats | Rooms`) now span full 3-equal-column width (`.x55-comm-tabs`) with zero dead space.
+   - Removed redundant `Profile >` button from `.x54-my-strip` so `@handle · Souls · Followers` no longer truncates to `...` on 390px viewports.
+   - Placed `All Timeframes` + `Newest` selects into a crisp 2-column `.x55-feed-selects` row on mobile.
+   - Tightened Strategy timeframe strip (`.x54-chip-strip.is-tf`) into a clean 5-column single row (`30m | 1h | Daily | Weekly | Monthly`).
+   - Added layout-stable skeleton loading cards (`.x55-skel-card`, reduced-motion safe) in Soul Feed, Chats, and Economic Calendar, plus inline error + Retry UI on Economic Calendar.
+   - Unified duplicated `/api/profile` request in `SettingsView`.
+4. **3D Globe & Bundle Performance:**
+   - `globe-canvas.tsx`: switched `buffers` tracking to `Set<WebGLBuffer>` so deleted buffers are released cleanly; honored in-app `data-motion="minimal"` alongside `prefers-reduced-motion`; capped idle auto-rotation to ~30fps on constrained/reduced devices; skipped 809.9 KB `earth-clouds.jpg` in `reduced` mode; added 15s fetch timeout on textures.
+   - Lazy-loaded `SocialWorkspace` and `CommunityGroupsWorkspace` in `research-network-shell.tsx` and `FormulaLab` and `PatternDrawCanvas` in `strategy/workspace.tsx`.
+   - **Measured Initial Route Chunk Deltas (vs X5.4 Baseline):**
+     - `research-network-shell.js`: **119.2 KB -> 46.3 KB (-61.2% / -72.9 KB)**
+     - `strategy.js`: **117.1 KB -> 84.6 KB (-27.8% / -32.5 KB)**
+     - Total built client JS/CSS across all lazy chunks: `1166.3 KB JS / 263.8 KB CSS` (143 files).
+
+### Phase 2 Verification Gate (PASS)
+- `node operations/scripts/check-x2-release.mjs`: `typecheck` PASS (18.0s), `lint` PASS (48.4s), `tests` PASS (6.1s — **326/326 PASS**, including `tests/unit/x55-language-and-ux.test.mjs`, `tests/unit/x1-palette.test.mjs`, and `tests/unit/x53-terminal-globe-evidence.test.mjs`).
+- `node operations/scripts/run-framework.mjs build`: PASS (5/5 Vinext environments).
+
+## Phase 3 — D1 Safety, Security Matrix, Observability, Market-Data Contracts, E2E & Release (IN PROGRESS)
+- Starting Phase 3 execution.

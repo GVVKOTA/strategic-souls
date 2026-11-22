@@ -1,9 +1,8 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
   Bookmark,
-  ChevronRight,
   Copy,
   Globe2,
   MessageSquare,
@@ -24,15 +23,20 @@ import type { UserProfileSnapshot } from "../../../backend/services/profile/prof
 import {
   Empty,
   Modal,
+  WorkspaceSkeleton,
   api,
   moment,
   type Notice,
 } from "../../components/workspace/shared";
 import AvatarBadge from "../account/avatar-badge";
 import type { SettingsSection } from "../account/account-quick-panel";
-import CommunityGroupsWorkspace from "./dashboard";
 import PublicProfileSheet from "./public-profile-sheet";
-import { SocialWorkspace, type SocialView } from "./social-workspace";
+import type { SocialView } from "./social-workspace";
+
+const CommunityGroupsWorkspace = lazy(() => import("./dashboard"));
+const SocialWorkspace = lazy(() =>
+  import("./social-workspace").then((m) => ({ default: m.SocialWorkspace })),
+);
 
 type PrimaryCommunityTab = "web" | "chats" | "groups";
 
@@ -609,7 +613,7 @@ export default function ResearchNetworkShell({
 
   return (
     <div className="x51-global-stack" style={{ gap: 12 }}>
-      {/* 1. COMPACT MY PROFILE STRIP (keeps Web | Chats | Groups near top on mobile!) */}
+      {/* 1. COMPACT MY PROFILE STRIP (tapping identity opens canonical Profile; Edit opens Settings) */}
       <div className="x54-my-strip" aria-label="Your researcher identity">
         {authenticated ? (
           <>
@@ -633,38 +637,28 @@ export default function ResearchNetworkShell({
                 <span className="x54-my-strip-sub">
                   {handle
                     ? `@${handle} · ${counts.publishedSouls} Souls · ${counts.followers} Followers`
-                    : "Claim your public @BodyID"}
+                    : "Create your Body ID"}
                 </span>
               </span>
             </button>
             <div className="x54-my-strip-actions">
-              {handle && (
-                <button
-                  type="button"
-                  className="x54-strip-btn"
-                  onClick={() => openResearcherProfile(handle)}
-                >
-                  <span>Profile</span>
-                  <ChevronRight size={14} aria-hidden="true" />
-                </button>
-              )}
               <button
                 type="button"
                 className="x54-strip-btn"
-                aria-label={handle ? "Edit profile" : "Set Body ID"}
+                aria-label={handle ? "Edit profile" : "Choose Body ID"}
                 onClick={() => onOpenSettings("profile")}
               >
                 <Pencil size={13} aria-hidden="true" />
-                <span>{handle ? "Edit" : "Set @BodyID"}</span>
+                <span>{handle ? "Edit" : "Choose Body ID"}</span>
               </button>
             </div>
           </>
         ) : (
           <>
             <div className="x54-my-strip-text">
-              <span className="x54-my-strip-name">Research Network</span>
+              <span className="x54-my-strip-name">Soul Network</span>
               <span className="x54-my-strip-sub">
-                Explore public Souls · Sign in to claim @BodyID
+                Explore public Souls · Sign in to create your Body ID
               </span>
             </div>
             <button
@@ -775,12 +769,11 @@ export default function ResearchNetworkShell({
         </section>
       )}
 
-      {/* 3. PRIMARY COMMUNITY TABS: WEB | CHATS | GROUPS */}
+      {/* 3. PRIMARY COMMUNITY TABS: SOUL FEED | CHATS | ROOMS */}
       <div
-        className="x1-segment"
+        className="x1-segment x55-comm-tabs"
         role="tablist"
         aria-label="Community sections"
-        style={{ alignSelf: "stretch" }}
       >
         <button
           type="button"
@@ -789,7 +782,7 @@ export default function ResearchNetworkShell({
           onClick={() => setTab("web")}
         >
           <Globe2 size={15} />
-          <span>Web</span>
+          <span>Soul Feed</span>
         </button>
         <button
           type="button"
@@ -807,14 +800,14 @@ export default function ResearchNetworkShell({
           onClick={() => setTab("groups")}
         >
           <Users size={15} />
-          <span>Groups</span>
+          <span>Rooms</span>
         </button>
       </div>
 
-      {/* TAB 1: WEB — Published Souls Discovery Feed */}
+      {/* TAB 1: SOUL FEED — Published Souls Discovery Feed */}
       {tab === "web" && (
-        <section aria-label="Web Souls Feed">
-          <div className="x51-cal-toolbar">
+        <section aria-label="Soul Feed">
+          <div className="x51-cal-toolbar x55-feed-toolbar">
             <div className="x51-chip-row" role="group" aria-label="Feed mode">
               {(["ALL", "CLASSIC", "ADVANCED"] as const).map((m) => (
                 <button
@@ -834,19 +827,12 @@ export default function ResearchNetworkShell({
                 <Bookmark size={12} /> Saved
               </button>
             </div>
-            <div className="x51-chip-row">
+            <div className="x55-feed-selects">
               <select
                 aria-label="Filter by timeframe"
+                className="x55-feed-select"
                 value={tfFilter}
                 onChange={(e) => setTfFilter(e.target.value)}
-                style={{
-                  background: "var(--x51-surface-card)",
-                  color: "var(--x1-text-primary)",
-                  border: "1px solid var(--x51-hairline-strong)",
-                  borderRadius: 999,
-                  padding: "4px 10px",
-                  fontSize: "0.8rem",
-                }}
               >
                 <option value="ALL">All Timeframes</option>
                 <option value="30m">30 min</option>
@@ -856,19 +842,12 @@ export default function ResearchNetworkShell({
                 <option value="1mo">Monthly</option>
               </select>
               <select
-                aria-label="Sort Web Souls"
+                aria-label="Sort Soul Feed"
+                className="x55-feed-select"
                 value={sort}
                 onChange={(e) =>
                   setSort(e.target.value as "newest" | "following" | "evidence")
                 }
-                style={{
-                  background: "var(--x51-surface-card)",
-                  color: "var(--x1-text-primary)",
-                  border: "1px solid var(--x51-hairline-strong)",
-                  borderRadius: 999,
-                  padding: "4px 10px",
-                  fontSize: "0.8rem",
-                }}
               >
                 <option value="newest">Newest</option>
                 <option value="following">Following</option>
@@ -878,17 +857,20 @@ export default function ResearchNetworkShell({
           </div>
 
           {loadingFeed ? (
-            <div className="x1-callout">Loading published Souls…</div>
+            <div className="x55-feed-skeleton" aria-busy="true" aria-label="Loading Soul Feed">
+              <div className="x55-skel-card" />
+              <div className="x55-skel-card" />
+            </div>
           ) : posts.length === 0 ? (
             <Empty
               title={
                 savedOnly
                   ? "No saved Souls yet"
-                  : "No published Souls match this filter"
+                  : "No Souls match these filters."
               }
             >
-              Run a scan in Strategy and tap <strong>Post Soul</strong> to share
-              transparent research on Community Web.
+              Run a scan in Strategy and tap <strong>Publish Soul</strong> to share
+              transparent research in the Soul Feed.
             </Empty>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -984,7 +966,7 @@ export default function ResearchNetworkShell({
                       onClick={() => void copyPublishedSoul(post)}
                     >
                       <Copy size={14} />
-                      <span>Copy</span>
+                      <span>Copy to Drafts</span>
                     </button>
                     {post.isMine && (
                       <>
@@ -1019,21 +1001,25 @@ export default function ResearchNetworkShell({
         </section>
       )}
 
-      {/* TAB 2: CHATS — Telegram-like Compact Messenger */}
+      {/* TAB 2: CHATS — Lazy-loaded Direct Messenger */}
       {tab === "chats" && (
         <section aria-label="Direct Chats">
           {authenticated ? (
-            <SocialWorkspace
-              view={chatView}
-              onView={setChatView}
-              notify={notify}
-              query={searchQuery}
-              initialThreadId={pendingThreadId}
-              onClearInitialThread={() => setPendingThreadId("")}
-              onOpenProfile={openResearcherProfile}
-              onOpenGroup={() => setTab("groups")}
-              onMobileChatActive={onMobileChatActive}
-            />
+            <Suspense
+              fallback={<WorkspaceSkeleton label="Loading chats…" kind="panel" />}
+            >
+              <SocialWorkspace
+                view={chatView}
+                onView={setChatView}
+                notify={notify}
+                query={searchQuery}
+                initialThreadId={pendingThreadId}
+                onClearInitialThread={() => setPendingThreadId("")}
+                onOpenProfile={openResearcherProfile}
+                onOpenGroup={() => setTab("groups")}
+                onMobileChatActive={onMobileChatActive}
+              />
+            </Suspense>
           ) : (
             <Empty title="Sign in for Direct Chats">
               <button
@@ -1048,20 +1034,24 @@ export default function ResearchNetworkShell({
         </section>
       )}
 
-      {/* TAB 3: GROUPS — Private Research Rooms */}
+      {/* TAB 3: ROOMS — Lazy-loaded Private Research Rooms */}
       {tab === "groups" && (
-        <CommunityGroupsWorkspace
-          authenticated={authenticated}
-          onRequireAuth={onRequireAuth}
-          notify={notify}
-          sharedFormula={sharedFormula}
-          currentUserAvatarId={avatarId}
-          currentUserDisplayName={displayName}
-          profileRevision={profileRevision}
-          initialTab="rooms"
-          onOpenSettings={onOpenSettings}
-          onOpenProfile={openResearcherProfile}
-        />
+        <Suspense
+          fallback={<WorkspaceSkeleton label="Loading Rooms…" kind="workspace" />}
+        >
+          <CommunityGroupsWorkspace
+            authenticated={authenticated}
+            onRequireAuth={onRequireAuth}
+            notify={notify}
+            sharedFormula={sharedFormula}
+            currentUserAvatarId={avatarId}
+            currentUserDisplayName={displayName}
+            profileRevision={profileRevision}
+            initialTab="rooms"
+            onOpenSettings={onOpenSettings}
+            onOpenProfile={openResearcherProfile}
+          />
+        </Suspense>
       )}
 
       {/* Discuss / Comments Modal — all @handles open canonical PublicProfileSheet */}

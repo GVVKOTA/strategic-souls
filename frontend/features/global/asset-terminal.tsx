@@ -1511,9 +1511,9 @@ export default function AssetTerminal({
                 </div>
               ) : (
                 <div className="x1-callout">
-                  No researchers have published a Community Soul matching{" "}
-                  <strong>{id}</strong> yet. Run a scan in Strategy Builder and
-                  use One-Click Post Soul to share your research.
+                  No researchers have published a Soul matching{" "}
+                  <strong>{id}</strong> yet. Run a scan in Strategy and tap
+                  Publish Soul to share your research in the Soul Feed.
                 </div>
               )}
             </div>

@@ -529,7 +529,7 @@ export default function UniversalSearch({
       <Search size={18} />
       <input
         aria-label="Universal search"
-        placeholder="Search HDFC, NIFTY, GOLD, @handle, Rooms, Souls…"
+        placeholder="Search markets, @handle, Souls…"
         type="search"
         autoComplete="off"
         value={query}

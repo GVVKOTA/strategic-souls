@@ -199,12 +199,12 @@ export default function ConversationView({
         <div className="x54-chat-empty-pane">
           <MessageSquare size={28} aria-hidden="true" />
           <strong>
-            {loadingThread ? "Opening conversation…" : "Select a conversation"}
+            {loadingThread ? "Loading messages…" : "Select a conversation"}
           </strong>
           <span>
             {loadingThread
-              ? "Loading server-authorized messages."
-              : "Pick a chat from the inbox or tap any researcher's @BodyID."}
+              ? "Preparing your conversation."
+              : "Pick a chat from the inbox or start one using a Body ID."}
           </span>
         </div>
       </div>

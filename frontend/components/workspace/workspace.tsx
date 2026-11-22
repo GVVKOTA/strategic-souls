@@ -747,7 +747,7 @@ export default function X1Workspace() {
                     aria-label="Search Body ID or Souls"
                     value={communitySearch}
                     onChange={(e) => setCommunitySearch(e.target.value)}
-                    placeholder="Search @BodyID, researcher, or Soul…"
+                    placeholder="Search Body ID or Soul…"
                   />
                 </label>
               </div>
@@ -1155,7 +1155,7 @@ export default function X1Workspace() {
                     setCommunityTabNonce((n) => n + 1);
                     navigate("Community");
                     notify(
-                      "Method ready. Open a Research Room in Groups to create a shared Soul.",
+                      "Method ready. Open a Room to create a shared Soul.",
                     );
                   }}
                 />
@@ -1492,6 +1492,13 @@ export default function X1Workspace() {
                 </dd>
               </div>
               <div>
+                <dt>GRAVEYARD</dt>
+                <dd>
+                  Personal scan archive. Original formulas, cutoffs, digests,
+                  and scan reviews stay preserved and immutable.
+                </dd>
+              </div>
+              <div>
                 <dt>Formula Lab</dt>
                 <dd>
                   Standalone calculator suite (Options &amp; Greeks, IV, CAGR,
@@ -1559,7 +1566,7 @@ export default function X1Workspace() {
                 setAbout(true);
               }}
             >
-              About Strategic Souls X5.4
+              About Strategic Souls X5.5
             </button>
           </div>
         </Modal>
@@ -1568,14 +1575,14 @@ export default function X1Workspace() {
       {about && (
         <Modal title="About Strategic Souls" onClose={() => setAbout(false)}>
           <p>
-            A private financial research workspace by Global Vertex Vectors.
+            A financial research workspace and Soul Network by Global Vertex Vectors.
           </p>
           <dl className="x1-details">
             <div>
               <dt>Release</dt>
               <dd>
-                X5.4 · Premium Mobile UI, Public Research Profiles, Telegram-like
-                Chats &amp; Cleaner Soul Scanner
+                X5.5 · Reliability, Mobile &amp; Desktop Polish, Brand Language
+                Clarity &amp; Market-Data Readiness
               </dd>
             </div>
             <div>
@@ -1590,21 +1597,22 @@ export default function X1Workspace() {
             <div>
               <dt>Authentication</dt>
               <dd>
-                Cloudflare Workers + D1 session authentication with HttpOnly
-                cookies. Research Room invites never expose private portfolios.
+                Session-authenticated accounts with HttpOnly cookies. Private
+                portfolios, drafts, GRAVEYARD scans, and direct messages are
+                never exposed publicly.
               </dd>
             </div>
             <div>
               <dt>Research</dt>
               <dd>
-                Current deterministic filters on eligible daily FX observations.
-                No historical accuracy or probability claims.
+                Deterministic formulas evaluated on eligible historical bars.
+                No fabricated live quotes or unverified probability claims.
               </dd>
             </div>
           </dl>
           <p>
-            Payments, broker execution, public content publishing, and
-            unverified forward probability claims remain disabled.
+            Payments, commercial brokerage execution, automated trade routing,
+            and unverified forward probability claims remain disabled.
           </p>
           <div className="x3-motion-pref">
             <span>Interface motion</span>

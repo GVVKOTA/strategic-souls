@@ -83,6 +83,84 @@
   border-color: var(--x1-title-blue);
 }
 
+/* ---------- X5.5 Full-Width 3-Column Community Tabs & Compact Feed Bar ---------- */
+.x1-segment.x55-comm-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  align-self: stretch;
+}
+
+.x1-segment.x55-comm-tabs > button {
+  justify-content: center;
+  white-space: nowrap;
+  min-height: 40px;
+}
+
+.x55-feed-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.x55-feed-selects {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.x55-feed-select {
+  min-height: 36px;
+  background: var(--x51-surface-card);
+  color: var(--x1-text-primary);
+  border: 1px solid var(--x51-hairline-strong);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 640px) {
+  .x55-feed-selects {
+    width: 100%;
+  }
+  .x55-feed-select {
+    width: 100%;
+    min-height: 40px;
+  }
+}
+
+.x55-feed-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.x55-skel-card {
+  height: 152px;
+  border-radius: 14px;
+  border: 1px solid var(--x51-hairline);
+  background: linear-gradient(
+    90deg,
+    var(--x1-surface-1) 0%,
+    var(--x1-surface-2) 50%,
+    var(--x1-surface-1) 100%
+  );
+  background-size: 200% 100%;
+  animation: x54-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .x55-skel-card {
+    animation: none;
+  }
+}
+
+html[data-motion="minimal"] .x55-skel-card {
+  animation: none;
+}
+
 /* ---------- Legacy Private Opt-In Transition Notice ---------- */
 .x54-legacy-optin {
   display: flex;

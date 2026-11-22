@@ -711,13 +711,16 @@ export function SocialWorkspace({
 
       {loading && !home ? (
         <Panel title="Loading chats…">
-          <p className="x1-caption">Checking authorized conversations.</p>
+          <div className="x55-feed-skeleton" aria-busy="true">
+            <div className="x55-skel-card" style={{ height: 64 }} />
+            <div className="x55-skel-card" style={{ height: 64 }} />
+          </div>
         </Panel>
       ) : !home?.body ? (
-        <Panel title="Create your Body ID first">
-          <Empty title="Body ID required for Direct Messages">
-            Set your unique @BodyID in Account &amp; Preferences to send and receive
-            private messages.
+        <Panel title="Create a Body ID to start chatting">
+          <Empty title="Create a Body ID to message researchers">
+            Your Body ID is your unique public identity. Create Souls, publish
+            research, and connect with other researchers in Account &amp; Preferences.
           </Empty>
         </Panel>
       ) : (
@@ -922,7 +925,7 @@ export function SocialWorkspace({
                   onChange={(e) => setSearch(e.target.value)}
                   maxLength={80}
                   aria-label="Search public profiles, rooms and shared Souls"
-                  placeholder="Search @BodyID or research rooms"
+                  placeholder="Search Body ID or Rooms"
                 />
                 <select
                   aria-label="Directory category"
@@ -1024,7 +1027,7 @@ export function SocialWorkspace({
                     !results.groups.length &&
                     !results.souls.length && (
                       <Empty title="No matching results">
-                        Try another @BodyID or room name.
+                        Try another Body ID or Room name.
                       </Empty>
                     )}
                 </div>

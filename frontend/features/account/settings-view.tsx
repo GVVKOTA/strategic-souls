@@ -129,39 +129,17 @@ export default function SettingsView({
     };
   }, [initialSection]);
 
-  const loadProfile = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const res = await api<{ profile: UserProfileSnapshot }>("/api/profile");
-      setProfile(res.profile);
-      setDisplayName(res.profile.displayName);
-      setHandle(res.profile.handle ?? "");
-      setBio(res.profile.bio);
-      setAge(res.profile.age ? String(res.profile.age) : "");
-      setShowAge(res.profile.showAge === true);
-      setBannerPresetId(res.profile.bannerPresetId ?? "b01");
-      setBannerPosition(res.profile.bannerPosition ?? "center");
-      setBannerOverlay(res.profile.bannerOverlay ?? 0.65);
-      setGenderSymbol(res.profile.genderSymbol ?? "HIDDEN");
-      setInstagramHandle(res.profile.instagramHandle ?? "");
-      setWebsiteUrl(res.profile.websiteUrl ?? "");
-      setInterestsText((res.profile.researchInterests ?? []).join(", "));
-      onProfileSynced(res.profile);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not load account settings.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [onProfileSynced]);
-
-  useEffect(() => {
-    let alive = true;
-    api<{ profile: UserProfileSnapshot }>("/api/profile")
-      .then((res) => {
-        if (!alive) return;
+  const loadProfile = useCallback(
+    async (signal?: AbortSignal) => {
+      setLoading(true);
+      setError("");
+      try {
+        const res = await api<{ profile: UserProfileSnapshot }>(
+          "/api/profile",
+          undefined,
+          { signal },
+        );
+        if (signal?.aborted) return;
         setProfile(res.profile);
         setDisplayName(res.profile.displayName);
         setHandle(res.profile.handle ?? "");
@@ -175,22 +153,30 @@ export default function SettingsView({
         setInstagramHandle(res.profile.instagramHandle ?? "");
         setWebsiteUrl(res.profile.websiteUrl ?? "");
         setInterestsText((res.profile.researchInterests ?? []).join(", "));
-        setError("");
         onProfileSynced(res.profile);
-      })
-      .catch((err) => {
-        if (!alive) return;
+      } catch (err) {
+        if (signal?.aborted) return;
         setError(
-          err instanceof Error ? err.message : "Could not load account settings.",
+          err instanceof Error
+            ? err.message
+            : "Could not load account settings.",
         );
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [onProfileSynced],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    queueMicrotask(() => {
+      if (!controller.signal.aborted) void loadProfile(controller.signal);
+    });
     return () => {
-      alive = false;
+      controller.abort();
     };
-  }, [onProfileSynced]);
+  }, [loadProfile]);
 
   async function saveProfileFields(e: React.FormEvent) {
     e.preventDefault();
@@ -350,7 +336,7 @@ export default function SettingsView({
         <div>
           <h1>Settings &amp; Preferences</h1>
           <p className="x1-caption">
-            Private to your account · Changes save directly to Cloudflare D1
+            Private to your account
           </p>
         </div>
       </header>
@@ -449,7 +435,7 @@ export default function SettingsView({
                       <div className="x54-settings-preview-meta">
                         <h2>{displayName || profile.displayName}</h2>
                         <p className="x1-caption">
-                          {handle ? `@${handle}` : "No @BodyID set yet"} ·{" "}
+                          {handle ? `@${handle}` : "No Body ID set yet"} ·{" "}
                           {currentPreset.name}
                         </p>
                       </div>
@@ -496,7 +482,7 @@ export default function SettingsView({
                       </label>
 
                       <label>
-                        Body ID (@handle)
+                        Body ID
                         <input
                           type="text"
                           value={handle}
@@ -512,8 +498,10 @@ export default function SettingsView({
                           placeholder="e.g. market_explorer"
                         />
                         <span className="x1-caption">
-                          Creates your public researcher profile. Direct messages,
-                          portfolios, drafts, and email always remain private.
+                          Your unique public handle (for example, @market_explorer).
+                          Create Souls, publish research, and connect with other
+                          researchers. Direct messages, portfolios, drafts, and
+                          email always remain private.
                         </span>
                       </label>
 
@@ -705,7 +693,7 @@ export default function SettingsView({
                               {showAge && age ? ` · ${age}y` : ""}
                             </h3>
                             <p className="x1-caption" style={{ color: "var(--x1-title-blue)" }}>
-                              {handle ? `@${handle}` : "@BodyID_not_set"}
+                              {handle ? `@${handle}` : "No Body ID yet"}
                             </p>
                           </div>
                           {bio.trim() && (
@@ -984,8 +972,8 @@ export default function SettingsView({
                       <dt>Sign-in provider</dt>
                       <dd>
                         {profile.authProvider === "google"
-                          ? "Google OAuth 2.0 (PKCE)"
-                          : "Email & password (PBKDF2-SHA256 on Cloudflare D1)"}
+                          ? "Google account"
+                          : "Email & password"}
                       </dd>
                     </div>
                   </dl>
@@ -1021,9 +1009,9 @@ export default function SettingsView({
                           <div>
                             <strong>Public researcher profile (@{profile.handle})</strong>
                             <p className="x1-caption">
-                              Your @BodyID and published Web Souls are discoverable by
-                              design. Direct messages, portfolios, drafts, Graveyard
-                              archive, and email stay strictly private.
+                              Your Body ID and published Souls are discoverable by
+                              design. Direct messages, portfolios, drafts, GRAVEYARD
+                              scans, and email stay strictly private.
                             </p>
                           </div>
                         </div>
@@ -1033,8 +1021,8 @@ export default function SettingsView({
                         <div>
                           <strong>Who can message you</strong>
                           <p className="x1-caption">
-                            Messages are private to participants and server-authorized,
-                            but not end-to-end encrypted.
+                            Messages are private between participants, though not
+                            end-to-end encrypted.
                           </p>
                         </div>
                         <select
@@ -1177,7 +1165,7 @@ export default function SettingsView({
                   <div className="x6-danger-zone">
                     <h3>Delete account &amp; personal data</h3>
                     <p className="x1-caption">
-                      Permanently deletes your login credentials, sessions, watchlists, portfolios, scans, and profile records from Cloudflare D1.
+                      Permanently deletes your account, sessions, watchlists, portfolios, scans, and profile data.
                     </p>
                     {!eraseOpen ? (
                       <button

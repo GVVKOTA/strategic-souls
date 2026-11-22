@@ -326,7 +326,7 @@ export default function GlobeCanvas({
       target: { yaw: number; pitch: number } | null = null;
 
     const activePointers = new Map<number, { x: number; y: number }>();
-    const buffers: WebGLBuffer[] = [],
+    const buffers = new Set<WebGLBuffer>(),
       shaders: WebGLShader[] = [],
       textures: WebGLTexture[] = [];
 
@@ -384,7 +384,7 @@ export default function GlobeCanvas({
     function buffer(vertices: number[]) {
       const b = gl!.createBuffer();
       if (!b) throw new Error("Buffer allocation failed");
-      buffers.push(b);
+      buffers.add(b);
       gl!.bindBuffer(gl!.ARRAY_BUFFER, b);
       gl!.bufferData(
         gl!.ARRAY_BUFFER,
@@ -505,10 +505,20 @@ export default function GlobeCanvas({
       texture: WebGLTexture,
       unit: number,
     ) => {
-      const response = await fetch(path, {
-        signal: controller.signal,
-        cache: "force-cache",
-      });
+      const timeoutCtrl = new AbortController();
+      const timeoutId = window.setTimeout(() => timeoutCtrl.abort(), 15_000);
+      const onParentAbort = () => timeoutCtrl.abort();
+      controller.signal.addEventListener("abort", onParentAbort, { once: true });
+      let response: Response;
+      try {
+        response = await fetch(path, {
+          signal: timeoutCtrl.signal,
+          cache: "force-cache",
+        });
+      } finally {
+        window.clearTimeout(timeoutId);
+        controller.signal.removeEventListener("abort", onParentAbort);
+      }
       if (!response.ok) throw new Error("Satellite asset unavailable");
       const blob = await response.blob();
       if (blob.size > 2_500_000) throw new Error("Texture budget exceeded");
@@ -595,7 +605,7 @@ export default function GlobeCanvas({
         .catch(() => {
           el.dataset.nightLights = "unavailable";
         });
-      if (!connection.connection?.saveData)
+      if (!connection.connection?.saveData && qualityBudget !== "reduced")
         loadTexture("/data/earth-clouds.jpg", cloudTexture, 2)
           .then(() => {
             if (!stopped) {
@@ -610,7 +620,10 @@ export default function GlobeCanvas({
     }
 
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
-    let frames = 0;
+    const isReducedMotion = () =>
+      reduced.matches || document.documentElement.dataset.motion === "minimal";
+    let frames = 0,
+      lastIdleDraw = 0;
     let venueSignature = "",
       selectedBufferId = "",
       quakeSig = "",
@@ -633,7 +646,10 @@ export default function GlobeCanvas({
       pts: readonly { lat: number; lon: number }[],
       radius: number,
     ) {
-      if (current) gl!.deleteBuffer(current.b);
+      if (current) {
+        gl!.deleteBuffer(current.b);
+        buffers.delete(current.b);
+      }
       if (pts.length === 0) return null;
       return buffer(pts.flatMap((c) => xyz(c, radius)));
     }
@@ -689,10 +705,11 @@ export default function GlobeCanvas({
         aimAt(s.selected.lat, s.selected.lon);
       }
 
+      const reducedMotion = isReducedMotion();
       // Smooth zoom interpolation
       const zoomDiff = s.zoom - currentZoom.current;
       if (Math.abs(zoomDiff) > 0.002) {
-        currentZoom.current = reduced.matches
+        currentZoom.current = reducedMotion
           ? s.zoom
           : currentZoom.current + zoomDiff * 0.18;
         dirty = true;
@@ -700,7 +717,7 @@ export default function GlobeCanvas({
         currentZoom.current = s.zoom;
       }
 
-      if (target && reduced.matches) {
+      if (target && reducedMotion) {
         rotation.current = { ...target };
         target = null;
         dirty = true;
@@ -731,13 +748,19 @@ export default function GlobeCanvas({
         dirty = true;
       } else if (
         s.autoRotate &&
-        (!reduced.matches || s.motionOverride) &&
+        (!reducedMotion || s.motionOverride) &&
         !drag &&
         !hovering &&
         currentZoom.current <= 1.15
       ) {
-        rotation.current.yaw += (delta * Math.PI * 2) / 95000;
-        dirty = true;
+        // Throttle idle rotation to ~30fps on constrained/reduced-quality devices to protect battery
+        const throttleIdle = s.earthQuality === "reduced" || constrained;
+        if (!throttleIdle || time - lastIdleDraw >= 32) {
+          const stepMs = throttleIdle && lastIdleDraw ? Math.min(120, time - lastIdleDraw) : delta;
+          rotation.current.yaw += (stepMs * Math.PI * 2) / 95000;
+          lastIdleDraw = time;
+          dirty = true;
+        }
       }
 
       // Sync exchange venue & arc buffers
@@ -752,7 +775,10 @@ export default function GlobeCanvas({
           for (let k = 3; k < curve.length; k += 3)
             arcs.push(...curve.slice(k - 3, k), ...curve.slice(k, k + 3));
         }
-        if (arcBuffer) gl!.deleteBuffer(arcBuffer.b);
+        if (arcBuffer) {
+          gl!.deleteBuffer(arcBuffer.b);
+          buffers.delete(arcBuffer.b);
+        }
         arcBuffer = arcs.length > 0 ? buffer(arcs) : null;
         dirty = true;
       }
@@ -971,7 +997,7 @@ export default function GlobeCanvas({
         el.dataset.frameCount = String(++frames);
         el.dataset.rotation = rotation.current.yaw.toFixed(4);
         el.dataset.motion =
-          reduced.matches && !s.motionOverride
+          reducedMotion && !s.motionOverride
             ? "reduced"
             : s.autoRotate
               ? "rotating"
@@ -985,7 +1011,7 @@ export default function GlobeCanvas({
         Math.abs(velYaw) > 0.00015 ||
         Math.abs(velPitch) > 0.00015 ||
         (s.autoRotate &&
-          (!reduced.matches || s.motionOverride) &&
+          (!reducedMotion || s.motionOverride) &&
           !hovering &&
           currentZoom.current <= 1.15);
       if (animating) frame = requestAnimationFrame(safeDraw);

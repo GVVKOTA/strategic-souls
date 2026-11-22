@@ -90,8 +90,8 @@ export default function ChatInbox({
         {infoOpen && (
           <div className="x54-inbox-info-box" role="note">
             <span>
-              Messages are private to participants and server-authorized, but not
-              end-to-end encrypted. Manage DM permissions in Account &amp; Preferences.
+              Messages are private between participants, though not end-to-end
+              encrypted. Manage chat permissions in Account &amp; Preferences.
             </span>
             <button
               type="button"
@@ -112,7 +112,7 @@ export default function ChatInbox({
                   setNewHandle(e.target.value);
                   if (newChatError) setNewChatError("");
                 }}
-                placeholder="Enter @BodyID…"
+                placeholder="Enter a Body ID (e.g. @market_explorer)"
                 aria-label="Start chat with Body ID"
                 autoFocus
               />
@@ -231,10 +231,7 @@ export default function ChatInbox({
             {items.length === 0 ? (
               <>
                 <strong>No direct messages yet</strong>
-                <p>
-                  Tap any researcher&apos;s @BodyID or use the new chat button above
-                  to send a private message.
-                </p>
+                <p>Start a chat using a Body ID.</p>
               </>
             ) : (
               <>

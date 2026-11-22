@@ -1931,9 +1931,9 @@ export default function Community({
                     />
                   </label>
                   <p className="x1-caption" style={{ margin: 0 }}>
-                    Your @BodyID creates a public researcher profile so others can
-                    find and follow your public Souls. Direct messages, portfolios,
-                    drafts, and email stay strictly private.
+                    Your Body ID is your unique public identity. Create Souls,
+                    publish research, and connect with other researchers. Direct
+                    messages, portfolios, drafts, and email stay strictly private.
                   </p>
                 </>
               ) : modal === "invite" ? (

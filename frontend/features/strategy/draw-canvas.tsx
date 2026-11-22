@@ -253,7 +253,7 @@ export default function PatternDrawCanvas({
       return;
     }
     if ([...trimmedName].length < 3) {
-      const msg = "Soul name requires 3–100 characters";
+      const msg = "Soul names must be 3–100 characters long.";
       if (onRequireName) {
         onRequireName(msg);
       } else {

@@ -154,10 +154,12 @@ export default function EconomicCalendar({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [busyReminder, setBusyReminder] = useState<string | null>(null);
 
   const loadCalendar = useCallback(async () => {
     setLoading(true);
+    setLoadError("");
     try {
       const qs = new URLSearchParams({
         range,
@@ -168,12 +170,12 @@ export default function EconomicCalendar({
       setReminderIds(res.reminderIds ?? []);
       setLastVerified(res.lastVerifiedAtUTC ?? null);
     } catch (err) {
-      notify(
+      const msg =
         err instanceof Error
           ? err.message
-          : "Could not load Economic Calendar.",
-        true,
-      );
+          : "Could not load Economic Calendar.";
+      setLoadError(msg);
+      notify(msg, true);
     } finally {
       setLoading(false);
     }
@@ -312,7 +314,22 @@ export default function EconomicCalendar({
       </div>
 
       {loading ? (
-        <div className="x1-callout">Loading official macro schedule…</div>
+        <div className="x55-feed-skeleton" aria-busy="true" aria-label="Loading economic calendar">
+          <div className="x55-skel-card" style={{ height: 56 }} />
+          <div className="x55-skel-card" style={{ height: 56 }} />
+          <div className="x55-skel-card" style={{ height: 56 }} />
+        </div>
+      ) : loadError ? (
+        <div className="x1-callout" role="alert">
+          <strong>{loadError}</strong>{" "}
+          <button
+            type="button"
+            className="x1-text-button"
+            onClick={() => void loadCalendar()}
+          >
+            Retry
+          </button>
+        </div>
       ) : events.length === 0 ? (
         <div className="x1-callout">
           <CalendarIcon size={16} aria-hidden="true" /> No official scheduled

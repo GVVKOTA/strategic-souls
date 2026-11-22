@@ -213,6 +213,19 @@
   gap: 6px;
 }
 
+.x54-chip-strip.is-tf {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.x54-chip-strip.is-tf .x54-chip {
+  justify-content: center;
+  padding: 5px 6px;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
 .x54-chip {
   display: inline-flex;
   align-items: center;

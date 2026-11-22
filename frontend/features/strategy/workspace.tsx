@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   ArrowRight,
@@ -50,6 +50,7 @@ import {
   Empty,
   Modal,
   SourceLink,
+  WorkspaceSkeleton,
   api,
   copyTextSafe,
   moment,
@@ -65,10 +66,11 @@ import {
   ReplayPanel,
   Comparison,
 } from "./controls";
-import FormulaLab from "./formula-lab";
-import PatternDrawCanvas from "./draw-canvas";
 import { ScanCoverageChart } from "./evidence-charts";
 import "./research.css";
+
+const FormulaLab = lazy(() => import("./formula-lab"));
+const PatternDrawCanvas = lazy(() => import("./draw-canvas"));
 
 type Props = {
   data: MarketSnapshot | null;
@@ -817,7 +819,7 @@ export default function ResearchWorkspace({
   async function parseDiscoverIntent(rawQuery?: string) {
     const q = (rawQuery ?? discoverQuery).trim();
     if (!q) {
-      notify("Enter a natural-language research hypothesis first.", true);
+      notify("Describe the strategy you want to test.", true);
       return;
     }
     if (!authenticated) {
@@ -857,7 +859,7 @@ export default function ResearchWorkspace({
       return false;
     }
     if ([...trimmedName].length < 3 || [...trimmedName].length > 100) {
-      setNameError("Soul name requires 3–100 characters");
+      setNameError("Soul names must be 3–100 characters long.");
       nameInputRef.current?.focus();
       return false;
     }
@@ -930,7 +932,7 @@ export default function ResearchWorkspace({
         setDraft(result);
         setSavedSignature(signature);
         await reload();
-        notify("Draft version saved privately.");
+        notify("Draft saved.");
       }
       if (kind === "run") {
         setPipelineStep(2);
@@ -946,13 +948,13 @@ export default function ResearchWorkspace({
             : {}),
         });
         setPipelineStep(3);
-        setBusy("3/3 Saved to Graveyard · Updating workspace…");
+        setBusy("3/3 Saved to GRAVEYARD · Updating workspace…");
         setSelected(result.id);
         setJustCompletedId(result.id);
         setSavedSignature(signature);
         await reload();
         setPipelineStep(4);
-        notify("Scan completed and archived immutably in Graveyard.");
+        notify("Scan complete. Saved to GRAVEYARD.");
       }
       pending.current = null;
     } catch (e) {
@@ -1045,8 +1047,8 @@ export default function ResearchWorkspace({
       setPostedResultId(res.postId);
       notify(
         res.replayed
-          ? "This Soul is already posted on Community Web."
-          : "Soul published publicly to Community Web.",
+          ? "This Soul is already live in the Soul Feed."
+          : "Soul published! Your Soul is now live in the Soul Feed.",
       );
     } catch (err) {
       notify(
@@ -1317,7 +1319,7 @@ export default function ResearchWorkspace({
                   <div className="x54-field-group">
                     <span className="x54-field-label">Timeframe</span>
                     <div
-                      className="x54-chip-strip"
+                      className="x54-chip-strip is-tf"
                       role="group"
                       aria-label="Timeframe"
                     >
@@ -1539,29 +1541,33 @@ export default function ResearchWorkspace({
                 )}
 
                 {scanMode === "ADVANCED" && advancedTab === "DRAW" && (
-                  <PatternDrawCanvas
-                    authenticated={authenticated}
-                    onRequireAuth={onRequireAuth}
-                    scanName={name}
-                    onRequireName={(msg) => {
-                      setNameError(msg);
-                      nameInputRef.current?.focus();
-                    }}
-                    universe={universe}
-                    interval={interval}
-                    customCsv={
-                      universePreset === "CUSTOM_CSV" ? customCsv : undefined
-                    }
-                    instrumentIds={instruments.split(/[\s,]+/).filter(Boolean)}
-                    busy={!!busy}
-                    onOpenAsset={openAsset}
-                    notify={notify}
-                    onScanComplete={async (res) => {
-                      setSelected(res.id);
-                      setJustCompletedId(res.id);
-                      await reload();
-                    }}
-                  />
+                  <Suspense
+                    fallback={<WorkspaceSkeleton label="Loading Draw Canvas…" kind="panel" />}
+                  >
+                    <PatternDrawCanvas
+                      authenticated={authenticated}
+                      onRequireAuth={onRequireAuth}
+                      scanName={name}
+                      onRequireName={(msg) => {
+                        setNameError(msg);
+                        nameInputRef.current?.focus();
+                      }}
+                      universe={universe}
+                      interval={interval}
+                      customCsv={
+                        universePreset === "CUSTOM_CSV" ? customCsv : undefined
+                      }
+                      instrumentIds={instruments.split(/[\s,]+/).filter(Boolean)}
+                      busy={!!busy}
+                      onOpenAsset={openAsset}
+                      notify={notify}
+                      onScanComplete={async (res) => {
+                        setSelected(res.id);
+                        setJustCompletedId(res.id);
+                        await reload();
+                      }}
+                    />
+                  </Suspense>
                 )}
 
                 {/* Scope & Partial-Data Policy (Collapsible) */}
@@ -1687,8 +1693,8 @@ export default function ResearchWorkspace({
                   <div className="x2-source-preflight">
                     <strong>
                       {coverage.preflight.blocked
-                        ? "COVERAGE BLOCKED"
-                        : "COVERAGE VERIFIED"}
+                        ? "Not enough data to scan"
+                        : "Data coverage ready"}
                     </strong>
                     <p>
                       {coverage.preflight.eligible}/{coverage.preflight.total}{" "}
@@ -1730,8 +1736,8 @@ export default function ResearchWorkspace({
                   ))}
                 </div>
               ) : (
-                <Empty title="No drafts yet">
-                  Saved drafts appear here privately.
+                <Empty title="No saved drafts yet">
+                  Saved drafts stay private to your account.
                 </Empty>
               )}
               <Comparison runs={runs} />
@@ -1769,7 +1775,7 @@ export default function ResearchWorkspace({
                       onClick={() => openPostSoulModal(active)}
                     >
                       <Send size={14} />
-                      <span>Post Soul</span>
+                      <span>Publish Soul</span>
                     </button>
                     <button
                       type="button"
@@ -1943,7 +1949,7 @@ export default function ResearchWorkspace({
             </div>
           )}
 
-          {/* GRAVEYARD: Prominent Signature Immutable Research Archive */}
+          {/* GRAVEYARD: Standalone Signature Heading (Zero subtitle/descriptor) */}
           <section
             className="x53-graveyard-shell"
             aria-labelledby="x53-graveyard-heading"
@@ -1953,14 +1959,9 @@ export default function ResearchWorkspace({
                 <span className="x53-graveyard-icon" aria-hidden="true">
                   <Archive size={18} />
                 </span>
-                <div>
-                  <h2 id="x53-graveyard-heading" className="x53-graveyard-title">
-                    GRAVEYARD
-                  </h2>
-                  <p className="x1-caption" style={{ margin: 0 }}>
-                    Immutable personal scan archive · original formulas, cutoffs &amp; post-mortems preserved
-                  </p>
-                </div>
+                <h2 id="x53-graveyard-heading" className="x53-graveyard-title">
+                  GRAVEYARD
+                </h2>
               </div>
               <div className="x51-chip-row" role="group" aria-label="Graveyard filter">
                 {(["ALL", "CLASSIC", "ADVANCED", "RETIRED"] as const).map(
@@ -1991,11 +1992,11 @@ export default function ResearchWorkspace({
               <input
                 type="search"
                 aria-label="Search Graveyard scans"
-                placeholder="Search saved Souls or formulas…"
+                placeholder="Search scans or formulas…"
                 value={historySearch}
                 onChange={(e) => setHistorySearch(e.target.value)}
               />
-              <span>{filteredGraveyard.length} archived</span>
+              <span>{filteredGraveyard.length} saved</span>
             </div>
 
             {filteredGraveyard.length ? (
@@ -2037,14 +2038,14 @@ export default function ResearchWorkspace({
                           className="x1-text-button"
                           onClick={() => openPostSoulModal(run)}
                         >
-                          Post Soul
+                          Publish Soul
                         </button>
                         <button
                           type="button"
                           className="x1-text-button"
                           onClick={() => setReview(run)}
                         >
-                          {grave.has(run.id) ? "Review" : "Post-mortem"}
+                          {grave.has(run.id) ? "Review" : "Review scan"}
                         </button>
                       </div>
                     </div>
@@ -2052,9 +2053,16 @@ export default function ResearchWorkspace({
                 })}
               </div>
             ) : (
-              <Empty title="No saved Souls in this view">
-                Completed Classic and Advanced scans are archived here
-                immutably; nothing is fabricated.
+              <Empty
+                title={
+                  historySearch.trim() || graveyardFilter !== "ALL"
+                    ? "No matching scans."
+                    : "No scans yet"
+                }
+              >
+                {historySearch.trim() || graveyardFilter !== "ALL"
+                  ? "Try clearing your search or switching filters."
+                  : "Completed Classic and Advanced scans are saved here automatically."}
               </Empty>
             )}
             {nextCursor && (
@@ -2065,7 +2073,7 @@ export default function ResearchWorkspace({
                 disabled={!!busy}
                 onClick={() => void loadOlder()}
               >
-                Load older Graveyard scans
+                Load older scans
               </button>
             )}
           </section>
@@ -2073,7 +2081,13 @@ export default function ResearchWorkspace({
       )}
 
       {/* STANDALONE FORMULA LAB (Never nested inside Classic / Advanced!) */}
-      {panel === "Formula Lab" && <FormulaLab notify={notify} />}
+      {panel === "Formula Lab" && (
+        <Suspense
+          fallback={<WorkspaceSkeleton label="Loading Formula Lab…" kind="workspace" />}
+        >
+          <FormulaLab notify={notify} />
+        </Suspense>
+      )}
 
       {/* [06] Compact Searchable 50-Formula Picker Modal */}
       {formulaPickerOpen && (
@@ -2142,24 +2156,24 @@ export default function ResearchWorkspace({
                 </button>
               ))}
               {filteredClassicPresets.length === 0 && (
-                <p className="x1-caption">No formula matched “{classicFilter}”.</p>
+                <p className="x1-caption">No matching formulas found.</p>
               )}
             </div>
           </div>
         </Modal>
       )}
 
-      {/* One-Click Post Soul Modal with [30] Exact Server-Validated Post Preview */}
+      {/* Publish Soul Modal with Server-Validated Preview */}
       {postTarget && (
         <Modal
-          title="Post Soul to Community"
+          title="Publish to Soul Feed"
           onClose={() => setPostTarget(null)}
         >
           {postedResultId ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div className="x1-callout">
-                <strong>Published cleanly!</strong> Your Soul{" "}
-                <strong>{postTarget.name}</strong> is live on Community Web.
+                <strong>Soul published!</strong> Your Soul{" "}
+                <strong>{postTarget.name}</strong> is now live in the Soul Feed.
               </div>
               <div className="x1-actions">
                 {onOpenCommunityWeb && (
@@ -2171,7 +2185,7 @@ export default function ResearchWorkspace({
                       onOpenCommunityWeb();
                     }}
                   >
-                    View on Community Web
+                    View in Soul Feed
                     <ArrowRight size={15} />
                   </button>
                 )}
@@ -2191,7 +2205,7 @@ export default function ResearchWorkspace({
                 <code>{postTarget.payload.rule.formula}</code>
               </p>
               <p className="x1-caption x54-public-disclosure" style={{ margin: 0 }}>
-                Published publicly to Community Web. Portfolios, drafts, private CSV rows, and messages are never shared.
+                Published publicly to the Soul Feed. Portfolios, drafts, private CSV rows, and messages are never shared.
               </p>
               <label>
                 Research summary
@@ -2281,7 +2295,7 @@ export default function ResearchWorkspace({
                 >
                   <Send size={15} />
                   <span>
-                    {postBusy ? "Publishing…" : "Confirm & Post Soul"}
+                    {postBusy ? "Publishing…" : "Publish Soul"}
                   </span>
                 </button>
               </div>
@@ -2290,10 +2304,10 @@ export default function ResearchWorkspace({
         </Modal>
       )}
 
-      {/* Graveyard Post-Mortem / Review Modal */}
+      {/* Review Scan Modal */}
       {review && (
-        <Modal title="Graveyard Post-Mortem" onClose={() => setReview(null)}>
-          <p>{review.name} · original execution stays immutable.</p>
+        <Modal title="Review Scan" onClose={() => setReview(null)}>
+          <p>{review.name} · original scan record stays preserved.</p>
           <form
             className="x1-form"
             onSubmit={async (e) => {
@@ -2328,7 +2342,7 @@ export default function ResearchWorkspace({
                 await reload();
                 setReview(null);
                 pending.current = null;
-                notify("Post-mortem saved; original scan preserved.");
+                notify("Review saved; original scan preserved.");
               } catch (error) {
                 notify((error as Error).message, true);
               } finally {
@@ -2353,7 +2367,7 @@ export default function ResearchWorkspace({
               <textarea name="note" required maxLength={1000} />
             </label>
             <button className="x1-primary" disabled={!!busy}>
-              {busy || "Save post-mortem"}
+              {busy || "Save review"}
               <Check size={15} />
             </button>
           </form>

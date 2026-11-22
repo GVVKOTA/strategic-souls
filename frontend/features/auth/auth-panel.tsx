@@ -234,7 +234,7 @@ export default function AuthPanel({
           <>
             <p className="x1-caption">
               Use at least 10 characters including one letter and one number.
-              Passwords are salted and hashed server-side with PBKDF2-SHA256.
+              Your password is never stored as plain text.
             </p>
             <label className="x1-checkbox">
               <input
