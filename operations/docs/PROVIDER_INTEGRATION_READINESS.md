@@ -8,9 +8,9 @@
 |---|---|---|---|---|
 | **ECB Eurofxref Daily & 90d XML** | `[04],[13],[14],[27]` Daily FX quotes, Asset Comparison, Correlation Lab | None | Free public attribution | **CONNECTED** |
 | **US Treasury Daily Par Yield XML** | `[04],[13]` 3M / 2Y / 5Y / 10Y / 30Y daily yields | None | US Gov public domain | **CONNECTED** |
-| **USGS Earthquake Hazards GeoJSON (`4.5_week`)** | `[20],[21],[23]` Daily World Briefing & 2D/3D seismic layer | None | US Gov public domain | **CONNECTED** |
-| **NASA EONET v3 Open Natural Events** | `[20],[21],[23]` Cyclones, wildfires, volcanoes, storms | None | NASA public domain | **CONNECTED** |
-| **NASA GIBS Blue Marble & Black Marble** | `[21]` 3D Earth & 2D World Satellite basemap (with bundled `/data/earth-day.jpg` offline fallback) | None | NASA public domain | **CONNECTED** |
+| **USGS Earthquake Hazards GeoJSON (`4.5_week`)** | `[20],[21],[23]` Daily World Briefing & 3D Strategic Globe seismic markers | None | US Gov public domain | **CONNECTED** |
+| **NASA EONET v3 Open Natural Events** | `[20],[21],[23]` Cyclones, wildfires, volcanoes, storms on 3D Strategic Globe | None | NASA public domain | **CONNECTED** |
+| **NASA Blue Marble & Black Marble** | `[21]` Enlarged 1x–5x perspective 3D Earth (bundled `/data/earth-*.jpg` textures) | None | NASA public domain | **CONNECTED** |
 
 ## 2. Ready Adapters Awaiting Founder API Keys / Licenses (Zero Fabrication While Pending)
 

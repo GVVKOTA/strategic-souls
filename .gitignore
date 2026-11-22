@@ -58,7 +58,7 @@ yarn-error.log*
 *.pyc
 
 # Private export and reproducible local-only artifacts
-/operations/docs/archive/pre-x1/evidence/
+/operations/archive/docs/pre-x1/evidence/
 /operations/docs/v3/evidence/
 /private-recovery/
 /private-backup/

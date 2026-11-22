@@ -13,6 +13,7 @@ const eslintConfig = defineConfig([
     "outputs/**",
     "work/**",
     "operations/examples/**",
+    "operations/archive/**",
   ]),
   {
     files: ["frontend/components/ui/**/*.{ts,tsx}", "frontend/hooks/use-mobile.ts"],

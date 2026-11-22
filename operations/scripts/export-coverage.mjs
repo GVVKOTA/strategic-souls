@@ -8,6 +8,6 @@ const intro='# Original instrument coverage — 14 November 2026\n\nAll 28 ident
 const columns='| Original | Asset class | Documented chart candidate / venue | Contract | Currency / unit / timezone | Widget observation | Identity evidence |\n|---|---|---|---|---|---|---|\n';
 const rows=INSTRUMENTS.map(i=>'| '+[i.label,i.assetClass,i.vendorSymbol?i.vendorSymbol+' / '+i.venue:'UNVERIFIED',i.contractType,[i.currency??'not monetary/unknown',i.unit??'unverified',i.timeZone??'unverified'].join(' / '),i.widgetSupport,'[Official source]('+i.sourceUrl+')'].join(' | ')+' |').join('\n');
 const footer='\n\nAll numeric quote statuses: NOT_CONFIGURED; live numeric provider: none; rights: none established. Documented identities: '+INSTRUMENTS.filter(i=>i.vendorSymbol).length+'/28. Live/delayed widget support must be observed separately for each symbol on the target host. See SOURCE_HEALTH.md and the final delivery browser report for actual tested displays and unsupported cases.\n';
-writeFileSync('operations/docs/archive/pre-x1/INSTRUMENT_COVERAGE.md',intro+columns+rows+footer);
-writeFileSync('operations/docs/archive/pre-x1/instrument-registry.json',JSON.stringify(INSTRUMENTS,null,2)+'\n');
+writeFileSync('operations/archive/docs/pre-x1/INSTRUMENT_COVERAGE.md',intro+columns+rows+footer);
+writeFileSync('operations/archive/docs/pre-x1/instrument-registry.json',JSON.stringify(INSTRUMENTS,null,2)+'\n');
 console.log('Exported '+INSTRUMENTS.length+' original instrument identities.');
