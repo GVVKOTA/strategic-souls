@@ -92,13 +92,14 @@ test("cold-entry SSR has immediate skip, inert SVG decoration and explicit nonbl
   );
 });
 
-test("founder-approved GVV image and Strategic Souls X2 identity use the supplied asset", () => {
+test("founder-approved GVV image and clean Strategic Souls identity use the supplied asset without X2 branding", () => {
   const html = render({ ready: false });
   assert.match(html, /class="x2-eclipse-approved-logo" src="\/gvv-approved.jpg"/);
   assert.match(
     html,
-    /<h1 class="x1-eclipse-title">STRATEGIC SOULS <span>X2<\/span><\/h1>/,
+    /<h1 class="x1-eclipse-title">STRATEGIC SOULS<\/h1>/,
   );
+  assert.doesNotMatch(html, /\bX2\b/);
   assert.match(
     css,
     /\.x1-eclipse-existing-mark\s*\{[^}]*width:\s*41px;[^}]*font:\s*44px\/1[^}]*letter-spacing:\s*-6px;/s,
