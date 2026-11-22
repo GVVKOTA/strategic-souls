@@ -5,10 +5,14 @@ import {
   Bell,
   BellOff,
   Calendar as CalendarIcon,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Clock,
   Download,
   LineChart,
+  AlertTriangle,
+  XCircle,
 } from "lucide-react";
 import {
   buildEventIcs,
@@ -44,32 +48,79 @@ type Props = {
 const TIMEZONES = [
   { id: "Asia/Kolkata", label: "IST" },
   { id: "UTC", label: "UTC" },
-  { id: "America/New_York", label: "ET (NY)" },
+  { id: "America/New_York", label: "New York" },
 ] as const;
 
-function formatEventTime(event: EconomicEvent, timeZone: string): string {
+function formatDateChip(
+  event: EconomicEvent,
+  timeZone: string,
+): { dateLabel: string; timeLabel: string } {
   if (!event.scheduledAtUTC || event.announcedDateOnly) {
-    return `${event.scheduledDate} · Date only`;
+    try {
+      const d = new Date(`${event.scheduledDate}T12:00:00.000Z`);
+      const dateLabel = new Intl.DateTimeFormat("en-IN", {
+        day: "numeric",
+        month: "short",
+        timeZone: "UTC",
+      }).format(d);
+      return { dateLabel, timeLabel: "Time not announced" };
+    } catch {
+      return { dateLabel: event.scheduledDate, timeLabel: "Time not announced" };
+    }
   }
   try {
-    return new Intl.DateTimeFormat("en-IN", {
+    const dt = new Date(event.scheduledAtUTC);
+    const dateLabel = new Intl.DateTimeFormat("en-IN", {
       day: "numeric",
       month: "short",
+      timeZone,
+    }).format(dt);
+    const timeLabel = new Intl.DateTimeFormat("en-IN", {
       hour: "2-digit",
       minute: "2-digit",
+      hour12: false,
       timeZone,
-    }).format(new Date(event.scheduledAtUTC));
+    }).format(dt);
+    return { dateLabel, timeLabel };
   } catch {
-    return event.scheduledAtUTC;
+    return { dateLabel: event.scheduledDate, timeLabel: "Time not announced" };
   }
 }
 
-function statusPillClass(status: EconomicEvent["status"]): string {
-  if (status === "RELEASED") return "x51-pill x51-pill-green";
-  if (status === "RESCHEDULED" || status === "TIME_NOT_ANNOUNCED")
-    return "x51-pill x51-pill-amber";
-  if (status === "CANCELLED") return "x51-pill x51-pill-red";
-  return "x51-pill x51-pill-blue";
+function StatusIcon({ status }: { status: EconomicEvent["status"] }) {
+  if (status === "RELEASED") {
+    return (
+      <span title="Released" aria-label="Released" className="x53-cal-icon is-released">
+        <CheckCircle2 size={15} aria-hidden="true" />
+      </span>
+    );
+  }
+  if (status === "RESCHEDULED") {
+    return (
+      <span title="Rescheduled" aria-label="Rescheduled" className="x53-cal-icon is-warn">
+        <AlertTriangle size={15} aria-hidden="true" />
+      </span>
+    );
+  }
+  if (status === "CANCELLED") {
+    return (
+      <span title="Cancelled" aria-label="Cancelled" className="x53-cal-icon is-cancel">
+        <XCircle size={15} aria-hidden="true" />
+      </span>
+    );
+  }
+  if (status === "TIME_NOT_ANNOUNCED") {
+    return (
+      <span title="Time not announced" aria-label="Time not announced" className="x53-cal-icon is-warn">
+        <Clock size={15} aria-hidden="true" />
+      </span>
+    );
+  }
+  return (
+    <span title="Scheduled" aria-label="Scheduled" className="x53-cal-icon">
+      <Clock size={14} aria-hidden="true" />
+    </span>
+  );
 }
 
 function defaultInstrumentForEvent(ev: EconomicEvent): string {
@@ -80,11 +131,11 @@ function defaultInstrumentForEvent(ev: EconomicEvent): string {
 }
 
 /**
- * [04] Official Source-Grounded Economic Calendar — Positioned at the VERY BOTTOM of Global.
- * - ZERO visible Impact select or HIGH/MEDIUM/LOW impact badges anywhere.
- * - Fixes mobile "Zon/e" wrap (.x52-zone-picker) and status overlap (.x52-cal-summary-clean).
- * - Compact default (6 upcoming events) with Show All toggle.
- * - [14] Event -> Chart button opens contextual Asset Terminal with observed non-causal window return.
+ * Strategic Souls X5.3 — Redesigned Economic Calendar (Same Compact Footprint).
+ * - Clean flat timeline rows with date/time chip, subtle dividers, minimal status icons
+ * - Zero editorial impact controls or badges anywhere
+ * - Crisp IST / UTC / New York timezone select (no "Zon/e" wrap, >=16px select)
+ * - Displays ~6 initial events + "Show all" toggle + verified schedule coverage window
  */
 export default function EconomicCalendar({
   authenticated,
@@ -99,6 +150,7 @@ export default function EconomicCalendar({
   const [timeZone, setTimeZone] = useState<string>("Asia/Kolkata");
   const [events, setEvents] = useState<EconomicEvent[]>([]);
   const [reminderIds, setReminderIds] = useState<string[]>([]);
+  const [lastVerified, setLastVerified] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -114,6 +166,7 @@ export default function EconomicCalendar({
       const res = await api<CalendarResponse>(`/api/calendar/events?${qs}`);
       setEvents(res.events);
       setReminderIds(res.reminderIds ?? []);
+      setLastVerified(res.lastVerifiedAtUTC ?? null);
     } catch (err) {
       notify(
         err instanceof Error
@@ -177,30 +230,26 @@ export default function EconomicCalendar({
   }
 
   const visibleEvents = showAll ? events : events.slice(0, 6);
+  const tzShort =
+    TIMEZONES.find((t) => t.id === timeZone)?.label ?? "IST";
 
   return (
-    <section aria-labelledby="x51-calendar-heading">
-      <div className="x51-section-head">
+    <section className="x53-cal-section" aria-labelledby="x53-calendar-heading">
+      <div className="x53-cal-header">
         <div>
-          <h2 id="x51-calendar-heading">Economic Calendar</h2>
+          <h2 id="x53-calendar-heading">Economic Calendar</h2>
           <p className="x51-section-sub">
-            Official statutory release schedules (RBI, MoSPI, FOMC, BLS, BEA, EIA, ECB)
+            Official agency schedules (RBI, MoSPI, FOMC, BLS, BEA, EIA, ECB) ·
+            Verified coverage through Mar 2027
           </p>
         </div>
-        <label className="x52-zone-picker x1-caption">
-          <span>Zone</span>
+        <label className="x53-cal-tz x52-zone-picker">
+          <span className="x1-caption">Timezone</span>
           <select
             aria-label="Calendar timezone"
             value={timeZone}
             onChange={(e) => setTimeZone(e.target.value)}
-            style={{
-              background: "var(--x51-surface-card)",
-              color: "var(--x1-text-primary)",
-              border: "1px solid var(--x51-hairline-strong)",
-              borderRadius: 8,
-              padding: "6px 8px",
-              fontSize: "0.82rem",
-            }}
+            className="x53-cal-tz-select"
           >
             {TIMEZONES.map((tz) => (
               <option key={tz.id} value={tz.id}>
@@ -211,20 +260,20 @@ export default function EconomicCalendar({
         </label>
       </div>
 
-      <div className="x51-cal-toolbar">
-        <div className="x51-chip-row" role="group" aria-label="Time range">
+      <div className="x53-cal-controls">
+        <div className="x53-cal-chips" role="group" aria-label="Time range">
           {(
             [
               ["today", "Today"],
               ["week", "This Week"],
               ["upcoming", "Upcoming"],
-              ["all", "All 2026–27"],
+              ["all", "All"],
             ] as const
           ).map(([id, label]) => (
             <button
               key={id}
               type="button"
-              className={"x51-chip" + (range === id ? " is-active" : "")}
+              className={"x53-cal-chip" + (range === id ? " is-active" : "")}
               aria-pressed={range === id}
               onClick={() => {
                 setRange(id);
@@ -236,7 +285,7 @@ export default function EconomicCalendar({
           ))}
         </div>
 
-        <div className="x51-chip-row" role="group" aria-label="Region filter">
+        <div className="x53-cal-chips" role="group" aria-label="Region filter">
           {(
             [
               ["ALL", "All"],
@@ -249,7 +298,7 @@ export default function EconomicCalendar({
             <button
               key={id}
               type="button"
-              className={"x51-chip" + (country === id ? " is-active" : "")}
+              className={"x53-cal-chip" + (country === id ? " is-active" : "")}
               aria-pressed={country === id}
               onClick={() => {
                 setCountry(id);
@@ -278,76 +327,104 @@ export default function EconomicCalendar({
         </div>
       ) : (
         <>
-          <div className="x51-cal-list" role="list" aria-label="Official economic releases">
+          <div
+            className="x53-cal-timeline"
+            role="list"
+            aria-label="Official economic releases"
+          >
             {visibleEvents.map((ev) => {
               const expanded = expandedId === ev.eventId;
               const reminded = reminderIds.includes(ev.eventId);
+              const { dateLabel, timeLabel } = formatDateChip(ev, timeZone);
+              const hasTime = Boolean(ev.scheduledAtUTC && !ev.announcedDateOnly);
+
               return (
-                <div key={ev.eventId} className="x51-cal-row" role="listitem">
+                <div
+                  key={ev.eventId}
+                  className={"x53-cal-row" + (expanded ? " is-expanded" : "")}
+                  role="listitem"
+                >
                   <button
                     type="button"
-                    className="x52-cal-summary-clean"
+                    className="x53-cal-row-btn"
                     aria-expanded={expanded}
                     onClick={() => setExpandedId(expanded ? null : ev.eventId)}
                   >
-                    <span className="x51-pill" style={{ justifyContent: "center" }}>
-                      {ev.country}
-                    </span>
-                    <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          fontSize: "0.88rem",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          flexWrap: "wrap",
-                        }}
-                      >
+                    <div className="x53-cal-datecol">
+                      <span className="x53-cal-date">{dateLabel}</span>
+                      <span className="x53-cal-time">
+                        {hasTime ? `${timeLabel} ${tzShort}` : "TBA"}
+                      </span>
+                    </div>
+
+                    <div className="x53-cal-maincol">
+                      <div className="x53-cal-title">
                         <span>{ev.title}</span>
                         {reminded && (
-                          <span className="x51-pill x51-pill-green">Saved</span>
+                          <Bell
+                            size={13}
+                            aria-label="Reminder saved"
+                            style={{ color: "var(--x1-title-blue)", flexShrink: 0 }}
+                          />
                         )}
                       </div>
-                      <div className="x1-caption">
-                        {formatEventTime(ev, timeZone)} · {ev.canonicalSourceId}
+                      <div className="x53-cal-meta">
+                        <span>{ev.countryLabel}</span>
+                        <span aria-hidden="true">·</span>
+                        <span>{ev.canonicalSourceId}</span>
+                        {!hasTime && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span>Time not announced</span>
+                          </>
+                        )}
                       </div>
                     </div>
-                    <span className="x52-cal-status-col">
-                      <span className={statusPillClass(ev.status)}>
-                        {ev.status === "TIME_NOT_ANNOUNCED"
-                          ? "Date Only"
-                          : ev.status.charAt(0) + ev.status.slice(1).toLowerCase()}
-                      </span>
-                      {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+
+                    <span className="x53-cal-endcol">
+                      <StatusIcon status={ev.status} />
+                      {expanded ? (
+                        <ChevronUp size={15} aria-hidden="true" />
+                      ) : (
+                        <ChevronDown size={15} aria-hidden="true" />
+                      )}
                     </span>
                   </button>
 
                   {expanded && (
-                    <div className="x51-cal-detail">
-                      <p className="x1-caption" style={{ margin: "8px 0 0" }}>
+                    <div className="x53-cal-detail">
+                      <p className="x1-caption" style={{ margin: 0 }}>
                         {ev.description}
                       </p>
-                      <div className="x51-cal-metrics">
-                        <div className="x51-cal-metric">
-                          <small>Previous</small>
-                          <strong>{ev.previous ?? "— Official archive"}</strong>
-                        </div>
-                        <div className="x51-cal-metric">
-                          <small>Consensus</small>
-                          <strong>{ev.consensus ?? "— Unavailable"}</strong>
-                        </div>
-                        <div className="x51-cal-metric">
-                          <small>Actual</small>
-                          <strong>{ev.actual ?? "— Check official source"}</strong>
-                        </div>
+                      <div className="x53-cal-detail-meta x1-caption">
+                        <span>
+                          Agency: <strong>{ev.sourceAgency}</strong>
+                        </span>
+                        <span>
+                          Schedule:{" "}
+                          <strong>
+                            {hasTime
+                              ? `${ev.scheduledDate} · ${timeLabel} ${tzShort}`
+                              : `${ev.scheduledDate} · Time not announced`}
+                          </strong>
+                        </span>
+                        {ev.actual && (
+                          <span>
+                            Actual: <strong>{ev.actual}</strong>
+                          </span>
+                        )}
+                        {ev.previous && (
+                          <span>
+                            Previous: <strong>{ev.previous}</strong>
+                          </span>
+                        )}
                       </div>
                       <div className="x1-actions" style={{ flexWrap: "wrap", gap: 8 }}>
                         {onOpenEventChart && (
                           <button
                             type="button"
                             className="x51-accent-btn"
-                            style={{ minHeight: 36, fontSize: "0.82rem", padding: "0 11px" }}
+                            style={{ minHeight: 38, fontSize: "0.84rem", padding: "0 12px" }}
                             onClick={() =>
                               onOpenEventChart({
                                 instrumentId: defaultInstrumentForEvent(ev),
@@ -367,15 +444,15 @@ export default function EconomicCalendar({
                           href={ev.primarySourceUrl}
                           target="_blank"
                           rel="noreferrer"
-                          style={{ minHeight: 36, fontSize: "0.82rem" }}
+                          style={{ minHeight: 38, fontSize: "0.84rem" }}
                         >
-                          <span>{ev.canonicalSourceId} Source</span>
+                          <span>{ev.canonicalSourceId} Release</span>
                           <ArrowUpRight size={14} />
                         </a>
                         <button
                           type="button"
                           className="x1-secondary"
-                          style={{ minHeight: 36, fontSize: "0.82rem" }}
+                          style={{ minHeight: 38, fontSize: "0.84rem" }}
                           onClick={() => downloadIcs(ev)}
                         >
                           <Download size={14} />
@@ -384,7 +461,7 @@ export default function EconomicCalendar({
                         <button
                           type="button"
                           className="x1-secondary"
-                          style={{ minHeight: 36, fontSize: "0.82rem" }}
+                          style={{ minHeight: 38, fontSize: "0.84rem" }}
                           disabled={busyReminder === ev.eventId}
                           onClick={() => void toggleReminder(ev.eventId)}
                         >
@@ -399,18 +476,23 @@ export default function EconomicCalendar({
             })}
           </div>
 
-          {events.length > 6 && (
-            <div style={{ display: "flex", justifyContent: "center", marginTop: 10 }}>
+          <div className="x53-cal-footer">
+            {events.length > 6 && (
               <button
                 type="button"
                 className="x1-secondary"
-                style={{ minHeight: 36, fontSize: "0.82rem" }}
+                style={{ minHeight: 38, fontSize: "0.84rem" }}
                 onClick={() => setShowAll((v) => !v)}
               >
                 {showAll ? "Show fewer events" : `Show all ${events.length} events`}
               </button>
-            </div>
-          )}
+            )}
+            {lastVerified && (
+              <span className="x1-caption">
+                Schedules verified {lastVerified.slice(0, 10)} · Never fabricates consensus or actuals
+              </span>
+            )}
+          </div>
         </>
       )}
     </section>

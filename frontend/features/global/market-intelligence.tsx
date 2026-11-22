@@ -48,7 +48,11 @@ function formatPublished(iso: string): string {
  * Full usable width, centered blue heading, clean source-linked headlines,
  * zero HIGH/MEDIUM/LOW impact badges, zero fabricated articles.
  */
-export default function MarketIntelligenceNews({ news, loading }: Props) {
+export default function MarketIntelligenceNews({
+  news,
+  loading,
+  onOpenAsset,
+}: Props) {
   const [category, setCategory] = useState<string>("ALL");
 
   const filteredArticles = useMemo(() => {
@@ -98,31 +102,56 @@ export default function MarketIntelligenceNews({ news, loading }: Props) {
       ) : news && news.status === "CONNECTED" && filteredArticles.length > 0 ? (
         <div className="x52-news-grid" role="list" aria-label="Verified financial headlines">
           {filteredArticles.slice(0, 9).map((art) => (
-            <a
-              key={art.id}
-              role="listitem"
-              href={art.sourceUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="x52-news-card"
-            >
+            <article key={art.id} role="listitem" className="x52-news-card">
               <div>
                 <div className="x52-news-meta" style={{ marginBottom: 5 }}>
                   <span className="x51-pill">{art.category}</span>
                   <span>{formatPublished(art.publishedAtUTC)}</span>
                 </div>
-                <h3>{art.headline}</h3>
+                <h3>
+                  <a
+                    href={art.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "inherit", textDecoration: "none" }}
+                  >
+                    {art.headline}
+                  </a>
+                </h3>
                 {art.summary && (
                   <p className="x1-caption" style={{ margin: "6px 0 0" }}>
                     {art.summary}
                   </p>
                 )}
+                {art.relatedAssets.length > 0 && onOpenAsset && (
+                  <div className="x51-chip-row" style={{ marginTop: 8 }}>
+                    {art.relatedAssets.map((sym) => (
+                      <button
+                        key={sym}
+                        type="button"
+                        className="x51-chip"
+                        style={{ minHeight: 28, fontSize: "0.74rem", padding: "2px 8px" }}
+                        onClick={() => onOpenAsset(sym)}
+                      >
+                        {sym}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="x52-news-meta">
                 <strong>{art.sourceName}</strong>
-                <ArrowUpRight size={14} aria-hidden="true" />
+                <a
+                  href={art.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--x1-title-blue)", display: "inline-flex", alignItems: "center", gap: 3, textDecoration: "none" }}
+                >
+                  <span>Source</span>
+                  <ArrowUpRight size={13} aria-hidden="true" />
+                </a>
               </div>
-            </a>
+            </article>
           ))}
         </div>
       ) : (
@@ -134,19 +163,20 @@ export default function MarketIntelligenceNews({ news, loading }: Props) {
               justifyContent: "center",
               gap: 8,
               flexWrap: "wrap",
-              padding: "8px 12px",
+              padding: "9px 12px",
               borderRadius: 10,
               background: "var(--x51-surface-elevated)",
               border: "1px solid var(--x51-hairline)",
-              fontSize: "0.82rem",
+              fontSize: "0.84rem",
               color: "var(--x1-text-secondary)",
               textAlign: "center",
             }}
           >
             <Newspaper size={15} aria-hidden="true" />
             <span>
-              Third-party newswire feed pending licensed API key — direct
-              official regulatory and central-bank press releases are live below.
+              Licensed newswire feed not connected — official central-bank and
+              regulatory press portals (not live newswire articles) are linked
+              below.
             </span>
           </div>
 

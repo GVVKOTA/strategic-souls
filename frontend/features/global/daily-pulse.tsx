@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Check } from "lucide-react";
+import { Check, Clock } from "lucide-react";
 import type {
   MarketPulsePollSnapshot,
   PollChoice,
@@ -19,24 +19,28 @@ type Props = {
   notify: Notice;
 };
 
-function formatCutoff(iso: string, underlying: "NIFTY50" | "GOLD"): string {
+function formatWindowTime(iso: string, underlying: "NIFTY50" | "GOLD"): string {
   try {
-    return new Intl.DateTimeFormat("en-IN", {
-      day: "numeric",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone: underlying === "NIFTY50" ? "Asia/Kolkata" : "UTC",
-    }).format(new Date(iso)) + (underlying === "NIFTY50" ? " IST" : " UTC");
+    return (
+      new Intl.DateTimeFormat("en-IN", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: underlying === "NIFTY50" ? "Asia/Kolkata" : "UTC",
+      }).format(new Date(iso)) + (underlying === "NIFTY50" ? " IST" : " UTC")
+    );
   } catch {
     return iso;
   }
 }
 
 /**
- * [19] NIFTY 50 & Gold Daily Market Pulse — Compact Server-Time-Gated Polls.
- * Exact 4 choices with transparent percentage cutoffs, 1 vote per signed-in account,
- * public aggregate percentages (0 votes -> 0%, never NaN), zero personal win rates or leaderboards.
+ * Strategic Souls X5.3 — MARKET VOX (NIFTY & Gold community vote).
+ * Relocated under Market Intelligence / Economic Calendar -> Market Vox.
+ * Strict server-enforced post-close open window & pre-open cutoff, 4 transparent choices,
+ * 1 vote per authenticated account, public aggregate counts/shares (0 votes -> 0%, never NaN),
+ * zero personal win-rate scorecards or leaderboards.
  */
 export default function DailyMarketPulse({
   authenticated,
@@ -86,7 +90,7 @@ export default function DailyMarketPulse({
       setPolls((prev) =>
         prev.map((p) => (p.pollId === pollId ? res.poll : p)),
       );
-      notify("Daily Market Pulse vote recorded.");
+      notify("Market Vox vote recorded.");
     } catch (err) {
       notify(
         err instanceof Error ? err.message : "Could not submit vote.",
@@ -98,92 +102,120 @@ export default function DailyMarketPulse({
   }
 
   return (
-    <section aria-labelledby="x52-pulse-heading">
+    <section aria-labelledby="x53-vox-heading">
       <div className="x52-section-center">
-        <h2 id="x52-pulse-heading">NIFTY &amp; Gold Daily Market Pulse</h2>
-        <p>
-          Session sentiment polls with transparent percentage cutoffs · 1 vote
-          per account · Server-time gated
-        </p>
+        <h2 id="x53-vox-heading">MARKET VOX</h2>
+        <p>NIFTY &amp; Gold community vote</p>
       </div>
 
       {loading && polls.length === 0 ? (
         <p className="x1-caption" style={{ textAlign: "center" }}>
-          Loading daily session polls…
+          Loading active Market Vox sessions…
         </p>
       ) : (
         <div className="x52-pulse-grid">
-          {polls.map((poll) => (
-            <article key={poll.pollId} className="x52-poll-card">
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 8,
-                  flexWrap: "wrap",
-                }}
-              >
-                <div>
-                  <strong style={{ fontSize: "0.96rem" }}>{poll.title}</strong>
-                  <div className="x1-caption">
-                    Session {poll.sessionDate} · Closes{" "}
-                    {formatCutoff(poll.closesAtUtc, poll.underlying)}
-                  </div>
-                </div>
-                <span
-                  className={
-                    poll.status === "OPEN"
-                      ? "x51-pill x51-pill-green"
-                      : "x51-pill"
-                  }
+          {polls.map((poll) => {
+            const isUpcoming = poll.windowState === "UPCOMING";
+            const isOpen = poll.status === "OPEN";
+            return (
+              <article key={poll.pollId} className="x52-poll-card">
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    flexWrap: "wrap",
+                  }}
                 >
-                  {poll.status === "OPEN" ? "Open" : "Closed"} ·{" "}
-                  {poll.totalVotes}{" "}
-                  {poll.totalVotes === 1 ? "vote" : "votes"}
-                </span>
-              </div>
+                  <div>
+                    <strong style={{ fontSize: "0.96rem" }}>{poll.title}</strong>
+                    <div className="x1-caption">
+                      Target session {poll.sessionDate} ·{" "}
+                      {isUpcoming
+                        ? `Opens ${formatWindowTime(poll.opensAtUtc, poll.underlying)}`
+                        : `Closes ${formatWindowTime(poll.closesAtUtc, poll.underlying)}`}
+                    </div>
+                  </div>
+                  <span
+                    className={
+                      isOpen
+                        ? "x51-pill x51-pill-green"
+                        : isUpcoming
+                          ? "x51-pill x51-pill-amber"
+                          : "x51-pill"
+                    }
+                  >
+                    {isOpen ? "Open" : isUpcoming ? "Opens after close" : "Closed"}{" "}
+                    · {poll.totalVotes}{" "}
+                    {poll.totalVotes === 1 ? "vote" : "votes"}
+                  </span>
+                </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {poll.tallies.map((t) => {
-                  const picked = poll.myVote === t.choice;
-                  return (
-                    <button
-                      key={t.choice}
-                      type="button"
-                      className={"x52-poll-option" + (picked ? " is-picked" : "")}
-                      disabled={poll.status !== "OPEN" || busyPollId === poll.pollId}
-                      aria-pressed={picked}
-                      onClick={() => void vote(poll.pollId, t.choice)}
-                    >
-                      <span
-                        className="x52-poll-fill"
-                        style={{ width: `${Math.min(100, Math.max(0, t.pct))}%` }}
-                        aria-hidden="true"
-                      />
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        {picked && <Check size={14} />}
-                        <strong>{t.label}</strong>
-                        <small className="x1-caption">({t.cutoff})</small>
-                      </span>
-                      <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>
-                        {t.pct.toFixed(1)}%
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+                {isUpcoming && (
+                  <div className="x1-caption" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    <Clock size={13} aria-hidden="true" />
+                    <span>
+                      Voting opens strictly after reference market close (
+                      {formatWindowTime(poll.opensAtUtc, poll.underlying)}).
+                    </span>
+                  </div>
+                )}
 
-              <p className="x1-caption" style={{ margin: 0 }}>
-                {poll.cutoffNote}
-              </p>
-            </article>
-          ))}
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {poll.tallies.map((t) => {
+                    const picked = poll.myVote === t.choice;
+                    return (
+                      <button
+                        key={t.choice}
+                        type="button"
+                        className={"x52-poll-option" + (picked ? " is-picked" : "")}
+                        disabled={!isOpen || busyPollId === poll.pollId}
+                        aria-pressed={picked}
+                        onClick={() => void vote(poll.pollId, t.choice)}
+                      >
+                        <span
+                          className="x52-poll-fill"
+                          style={{
+                            width: `${poll.totalVotes > 0 ? Math.min(100, Math.max(0, t.pct)) : 0}%`,
+                          }}
+                          aria-hidden="true"
+                        />
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                          }}
+                        >
+                          {picked && <Check size={14} />}
+                          <strong>{t.label}</strong>
+                          <small className="x1-caption">({t.cutoff})</small>
+                        </span>
+                        <span
+                          style={{
+                            fontVariantNumeric: "tabular-nums",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {poll.totalVotes === 0 ? "0 votes" : `${t.pct.toFixed(1)}%`}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <p className="x1-caption" style={{ margin: 0 }}>
+                  {poll.cutoffNote}
+                </p>
+              </article>
+            );
+          })}
         </div>
       )}
 
       {disclosure && (
-        <p className="x1-caption" style={{ textAlign: "center", marginTop: 8 }}>
+        <p className="x1-caption" style={{ textAlign: "center", marginTop: 10 }}>
           {disclosure}
         </p>
       )}

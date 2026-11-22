@@ -1,10 +1,17 @@
 /**
- * Strategic Souls Post-X5.1 — [19] NIFTY 50 & Gold Daily Market Pulse Polls.
+ * Strategic Souls X5.3 — MARKET VOX (NIFTY 50 & Gold Community Vote).
  *
- * Non-negotiable integrity rules:
+ * Non-negotiable integrity & timing rules:
  * - Server-time-gated only (never trusts client clock).
- * - NIFTY 50 uses verified 2026 NSE equity session dates & 15:30 IST close cutoff.
- * - Gold uses clearly disclosed daily reference session (21:00 UTC close cutoff).
+ * - Strict BOTH-bound window enforcement on GET and POST:
+ *     opensAtUtc <= authoritative_server_now < closesAtUtc
+ * - NIFTY 50 (NSE Cash Equity — verified 2026 NSE Holiday Calendar):
+ *     Opens at 15:30 IST (10:00 UTC) on the prior NSE trading day AFTER market close.
+ *     Closes at 09:15 IST (03:45 UTC) BEFORE the target NSE trading session opens (never at session close!).
+ *     During regular NSE market hours (09:15–15:30 IST), voting is CLOSED (upcoming next-session poll opens at 15:30 IST).
+ * - Gold (GLOBAL:XAUUSD International OTC Spot Benchmark — explicitly NOT MCX Gold futures):
+ *     Opens at 21:00 UTC on the prior weekday (after NY OTC daily close).
+ *     Closes at 07:00 UTC on the target weekday (before London active session).
  * - Exact 4 choices with transparent percentage cutoffs:
  *     STRONG_RISE  (> +1.0%)
  *     SLIGHT_RISE  (0.0% to +1.0%)
@@ -39,7 +46,7 @@ export const POLL_CHOICES: readonly {
 const VALID_CHOICES = new Set<string>(POLL_CHOICES.map((c) => c.id));
 
 // Official 2026 NSE Cash Equity Holidays (source: NSE circular)
-const NSE_HOLIDAYS_2026 = new Set([
+export const NSE_HOLIDAYS_2026 = new Set([
   "2026-01-26",
   "2026-03-03",
   "2026-03-26",
@@ -80,7 +87,7 @@ function istDateParts(ms: number): {
   };
 }
 
-function isNseTradingDay(ymd: string): boolean {
+export function isNseTradingDay(ymd: string): boolean {
   const dt = new Date(`${ymd}T06:00:00.000Z`);
   const day = dt.getUTCDay();
   if (day === 0 || day === 6) return false;
@@ -88,16 +95,75 @@ function isNseTradingDay(ymd: string): boolean {
   return true;
 }
 
+function isWeekdayYmd(ymd: string): boolean {
+  const d = new Date(`${ymd}T12:00:00.000Z`).getUTCDay();
+  return d !== 0 && d !== 6;
+}
+
 function addDaysYmd(ymd: string, delta: number): string {
   const ms = Date.parse(`${ymd}T00:00:00.000Z`) + delta * 86_400_000;
   return new Date(ms).toISOString().slice(0, 10);
 }
 
+function nextTradingDay(ymd: string, check: (d: string) => boolean): string {
+  let probe = addDaysYmd(ymd, 1);
+  for (let i = 0; i < 14; i++) {
+    if (check(probe)) return probe;
+    probe = addDaysYmd(probe, 1);
+  }
+  return probe;
+}
+
+function prevTradingDay(ymd: string, check: (d: string) => boolean): string {
+  let probe = addDaysYmd(ymd, -1);
+  for (let i = 0; i < 14; i++) {
+    if (check(probe)) return probe;
+    probe = addDaysYmd(probe, -1);
+  }
+  return probe;
+}
+
+export type PollWindowState = "UPCOMING" | "OPEN" | "CLOSED";
+
+export function evaluatePollWindow(
+  opensAtUtc: string,
+  closesAtUtc: string,
+  nowMs: number,
+  storedStatus?: string,
+): { isOpen: boolean; windowState: PollWindowState } {
+  const openMs = Date.parse(opensAtUtc);
+  const closeMs = Date.parse(closesAtUtc);
+  if (
+    !Number.isFinite(openMs) ||
+    !Number.isFinite(closeMs) ||
+    storedStatus === "CLOSED"
+  ) {
+    return { isOpen: false, windowState: "CLOSED" };
+  }
+  if (nowMs < openMs) {
+    return { isOpen: false, windowState: "UPCOMING" };
+  }
+  if (nowMs >= closeMs) {
+    return { isOpen: false, windowState: "CLOSED" };
+  }
+  return { isOpen: true, windowState: "OPEN" };
+}
+
 /**
- * Resolves the active trading session poll window for NIFTY 50 or Gold at server timestamp `nowMs`.
- * - NIFTY 50: closes 15:30 IST (10:00:00.000Z) on the active/next NSE trading day.
- *   After 15:30 IST, opens the poll for the NEXT NSE trading day automatically!
- * - GOLD: closes 21:00 UTC on weekdays (Mon–Fri); rolls to next weekday after 21:00 UTC.
+ * Resolves the active Market Vox poll spec for NIFTY 50 or Gold at server timestamp `nowMs`.
+ *
+ * NIFTY 50 (NSE Cash Equity, UTC+05:30, no DST):
+ * - Regular session: 09:15 IST (03:45 UTC) to 15:30 IST (10:00 UTC).
+ * - Next-session poll for trading day T opens AFTER prior trading day T_prev closes (15:30 IST)
+ *   and closes BEFORE session T opens (09:15 IST).
+ * - During live market hours on T (09:15 IST <= now < 15:30 IST), returns the upcoming poll for T_next
+ *   with opensAtUtc = T 15:30 IST (so status is strictly CLOSED/UPCOMING until 15:30 IST!).
+ *
+ * Gold (GLOBAL:XAUUSD OTC Spot Benchmark — explicitly NOT MCX Gold futures):
+ * - Post-close vote window: prior weekday 21:00 UTC (NY OTC close) to target weekday 07:00 UTC
+ *   (before London active session).
+ * - During 07:00 UTC <= now < 21:00 UTC on a weekday, returns upcoming T_next poll with
+ *   opensAtUtc = T 21:00 UTC (status strictly CLOSED/UPCOMING until 21:00 UTC).
  */
 export function resolveActivePollSpec(
   underlying: PollUnderlying,
@@ -113,62 +179,62 @@ export function resolveActivePollSpec(
 } {
   if (underlying === "NIFTY50") {
     const ist = istDateParts(nowMs);
-    let targetDay = ist.ymd;
-    // If today is a trading day and past 15:30 IST (930 min), advance to next NSE trading day
-    if (!isNseTradingDay(targetDay) || ist.minutesSinceMidnight >= 15 * 60 + 30) {
-      let probe = addDaysYmd(targetDay, 1);
-      for (let i = 0; i < 14; i++) {
-        if (isNseTradingDay(probe)) {
-          targetDay = probe;
-          break;
-        }
-        probe = addDaysYmd(probe, 1);
-      }
+    const todayTrading = isNseTradingDay(ist.ymd);
+    const OPEN_MINS = 9 * 60 + 15; // 09:15 IST (03:45 UTC)
+
+    let targetDay: string;
+    if (todayTrading && ist.minutesSinceMidnight < OPEN_MINS) {
+      // Pre-market on a trading day: today's poll is still open until 09:15 IST
+      targetDay = ist.ymd;
+    } else {
+      // Either live market hours (09:15..15:30 IST -> upcoming next-session poll, closed until 15:30 IST),
+      // post-close (>= 15:30 IST -> open for next session), or weekend/holiday (-> open since prior close)
+      targetDay = nextTradingDay(ist.ymd, isNseTradingDay);
     }
-    // 15:30 IST == 10:00 UTC (India has no DST, always UTC+05:30)
-    const closesAtUtc = `${targetDay}T10:00:00.000Z`;
-    const opensAtUtc = `${addDaysYmd(targetDay, -1)}T10:00:00.000Z`;
+
+    const priorSession = prevTradingDay(targetDay, isNseTradingDay);
+    // 15:30 IST == 10:00 UTC; 09:15 IST == 03:45 UTC (IST has no DST)
+    const opensAtUtc = `${priorSession}T10:00:00.000Z`;
+    const closesAtUtc = `${targetDay}T03:45:00.000Z`;
+
     return {
       pollId: `poll:NIFTY50:${targetDay}`,
       underlying: "NIFTY50",
       sessionDate: targetDay,
       opensAtUtc,
       closesAtUtc,
-      referenceLabel: "NIFTY 50 (NSE Cash Close · 15:30 IST)",
+      referenceLabel: "NIFTY 50 (NSE Cash · Post-Close 15:30 IST to Pre-Open 09:15 IST)",
       cutoffNote:
-        "Votes close strictly at 15:30 IST (NSE close). Strong Rise > +1.0%, Slight Rise 0% to +1.0%, Slight Fall -1.0% to 0%, Strong Fall < -1.0%.",
+        "Opens after prior NSE close (15:30 IST) and closes strictly at 09:15 IST before the next session opens (uses 2026 NSE holiday calendar). Community vote only — not a market probability.",
     };
   }
 
-  // GOLD (GLOBAL:XAUUSD OTC daily reference session, closes 21:00 UTC weekdays)
+  // GOLD: International OTC XAU/USD daily reference benchmark (NOT MCX Gold futures)
   const utc = new Date(nowMs);
-  let targetDay = utc.toISOString().slice(0, 10);
+  const utcYmd = utc.toISOString().slice(0, 10);
   const utcMins = utc.getUTCHours() * 60 + utc.getUTCMinutes();
-  const isWeekday = (ymd: string) => {
-    const d = new Date(`${ymd}T12:00:00.000Z`).getUTCDay();
-    return d !== 0 && d !== 6;
-  };
-  if (!isWeekday(targetDay) || utcMins >= 21 * 60) {
-    let probe = addDaysYmd(targetDay, 1);
-    for (let i = 0; i < 7; i++) {
-      if (isWeekday(probe)) {
-        targetDay = probe;
-        break;
-      }
-      probe = addDaysYmd(probe, 1);
-    }
+  const GOLD_CUTOFF_MINS = 7 * 60; // 07:00 UTC (before London active session)
+
+  let targetDay: string;
+  if (isWeekdayYmd(utcYmd) && utcMins < GOLD_CUTOFF_MINS) {
+    targetDay = utcYmd;
+  } else {
+    targetDay = nextTradingDay(utcYmd, isWeekdayYmd);
   }
-  const closesAtUtc = `${targetDay}T21:00:00.000Z`;
-  const opensAtUtc = `${addDaysYmd(targetDay, -1)}T21:00:00.000Z`;
+
+  const priorWeekday = prevTradingDay(targetDay, isWeekdayYmd);
+  const opensAtUtc = `${priorWeekday}T21:00:00.000Z`;
+  const closesAtUtc = `${targetDay}T07:00:00.000Z`;
+
   return {
     pollId: `poll:GOLD:${targetDay}`,
     underlying: "GOLD",
     sessionDate: targetDay,
     opensAtUtc,
     closesAtUtc,
-    referenceLabel: "Gold Spot Reference (21:00 UTC Daily Close)",
+    referenceLabel: "Gold Spot GLOBAL:XAUUSD OTC (21:00 UTC Close · Not MCX Futures)",
     cutoffNote:
-      "Votes close strictly at 21:00 UTC (02:30 IST next day). Cutoffs: Strong > ±1.0%, Slight within ±1.0%. Community sentiment only — not a forecast.",
+      "Benchmark: international OTC XAU/USD (not MCX Gold futures). Opens at 21:00 UTC after NY close and closes at 07:00 UTC before London session. Community vote only — not a forecast.",
   };
 }
 
@@ -180,6 +246,7 @@ export type MarketPulsePollSnapshot = {
   opensAtUtc: string;
   closesAtUtc: string;
   status: "OPEN" | "CLOSED";
+  windowState: PollWindowState;
   referenceLabel: string;
   cutoffNote: string;
   totalVotes: number;
@@ -197,11 +264,17 @@ async function ensurePollRow(
   spec: ReturnType<typeof resolveActivePollSpec>,
   nowIso: string,
 ): Promise<void> {
+  // Upsert schedule metadata so any legacy X5.2 row inherits exact X5.3 open/close bounds without losing votes
   await database()
     .prepare(
-      `INSERT OR IGNORE INTO x52_market_polls
+      `INSERT INTO x52_market_polls
          (poll_id, underlying, session_date, opens_at_utc, closes_at_utc, status, reference_label, cutoff_note, created_at)
-       VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)
+       ON CONFLICT(poll_id) DO UPDATE SET
+         opens_at_utc = excluded.opens_at_utc,
+         closes_at_utc = excluded.closes_at_utc,
+         reference_label = excluded.reference_label,
+         cutoff_note = excluded.cutoff_note`,
     )
     .bind(
       spec.pollId,
@@ -260,7 +333,7 @@ export async function getDailyPulsePolls(
         totalVotes += n;
       }
 
-      const isClosed = nowMs >= Date.parse(spec.closesAtUtc);
+      const win = evaluatePollWindow(spec.opensAtUtc, spec.closesAtUtc, nowMs);
       const tallies = POLL_CHOICES.map((c) => {
         const count = counts.get(c.id) ?? 0;
         const pct =
@@ -279,12 +352,13 @@ export async function getDailyPulsePolls(
         underlying: spec.underlying,
         title:
           spec.underlying === "NIFTY50"
-            ? "NIFTY 50 Daily Pulse"
-            : "Gold Daily Pulse",
+            ? "NIFTY 50 · Next Session Vote"
+            : "Gold (XAU/USD OTC) · Next Session Vote",
         sessionDate: spec.sessionDate,
         opensAtUtc: spec.opensAtUtc,
         closesAtUtc: spec.closesAtUtc,
-        status: isClosed ? "CLOSED" : "OPEN",
+        status: win.isOpen ? "OPEN" : "CLOSED",
+        windowState: win.windowState,
         referenceLabel: spec.referenceLabel,
         cutoffNote: spec.cutoffNote,
         totalVotes,
@@ -301,7 +375,7 @@ export async function getDailyPulsePolls(
     asOfUTC: nowIso,
     polls,
     disclosure:
-      "Aggregate community sentiment snapshot only (1 vote per signed-in account per session; zero individual win-rate scorecards or leaderboards). Not investment advice.",
+      "Market Vox displays aggregate community votes only (1 vote per signed-in account per session; zero individual win rates or leaderboards). Vote shares are NOT market probabilities or investment advice.",
   };
 }
 
@@ -313,9 +387,10 @@ export async function castDailyPulseVote(
   await rate(subject + ":x52-pulse-vote", 30, 60_000);
 
   const pollId = typeof input.pollId === "string" ? input.pollId.trim() : "";
-  const choice = typeof input.choice === "string" ? input.choice.trim().toUpperCase() : "";
+  const choice =
+    typeof input.choice === "string" ? input.choice.trim().toUpperCase() : "";
   if (!/^poll:(NIFTY50|GOLD):\d{4}-\d{2}-\d{2}$/.test(pollId)) {
-    throw new HttpError(400, "Invalid market pulse poll identifier.");
+    throw new HttpError(400, "Invalid Market Vox poll identifier.");
   }
   if (!VALID_CHOICES.has(choice)) {
     throw new HttpError(
@@ -332,7 +407,7 @@ export async function castDailyPulseVote(
   if (!acc) {
     throw new HttpError(
       403,
-      "Complete account onboarding before participating in Daily Market Pulse.",
+      "Complete account onboarding before voting in Market Vox.",
     );
   }
 
@@ -358,12 +433,23 @@ export async function castDailyPulseVote(
     }>();
 
   if (!pollRow) {
-    throw new HttpError(404, "Market pulse poll not found.");
+    throw new HttpError(404, "Market Vox poll not found.");
   }
 
-  // Strict server-time cutoff enforcement
-  const closeMs = Date.parse(pollRow.closes_at_utc);
-  if (!Number.isFinite(closeMs) || nowMs >= closeMs || pollRow.status === "CLOSED") {
+  // Strict server-time BOTH-bound enforcement: opensAtUtc <= nowMs < closesAtUtc
+  const win = evaluatePollWindow(
+    pollRow.opens_at_utc,
+    pollRow.closes_at_utc,
+    nowMs,
+    pollRow.status,
+  );
+  if (win.windowState === "UPCOMING") {
+    throw new HttpError(
+      409,
+      `Voting for ${pollRow.reference_label} (${pollRow.session_date}) has not opened yet. Opens at ${pollRow.opens_at_utc}.`,
+    );
+  }
+  if (!win.isOpen) {
     throw new HttpError(
       409,
       `Voting for ${pollRow.reference_label} (${pollRow.session_date}) closed at ${pollRow.closes_at_utc}.`,
@@ -385,7 +471,10 @@ export async function castDailyPulseVote(
   const fresh = await getDailyPulsePolls(subject, nowMs);
   const matched = fresh.polls.find((p) => p.pollId === pollId);
   if (!matched) {
-    throw new HttpError(409, "Poll session rolled over; refresh to vote on the active session.");
+    throw new HttpError(
+      409,
+      "Poll session rolled over; refresh to vote on the active session.",
+    );
   }
   return matched;
 }

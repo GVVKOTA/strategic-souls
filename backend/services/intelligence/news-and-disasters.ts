@@ -8,6 +8,54 @@
  */
 
 import { getEconomicCalendarEvents } from "../market-data/economic-calendar";
+import { X2_INSTRUMENTS } from "../market-data/instrument-registry";
+
+const CANONICAL_SYMBOL_MAP: Map<string, string> = (() => {
+  const map = new Map<string, string>();
+  const setIfMissing = (key: string, id: string) => {
+    if (!map.has(key)) map.set(key, id);
+  };
+  for (const inst of X2_INSTRUMENTS) {
+    map.set(inst.id.toUpperCase(), inst.id);
+    const tail = inst.id.split(":")[1];
+    if (tail) setIfMissing(tail.toUpperCase(), inst.id);
+    setIfMissing(inst.label.toUpperCase(), inst.id);
+    for (const alias of inst.aliases ?? []) {
+      if (alias.length >= 3 && alias.length <= 14) {
+        setIfMissing(alias.toUpperCase(), inst.id);
+      }
+    }
+  }
+  return map;
+})();
+
+/**
+ * Maps documented Marketaux entity symbols to verified canonical instrument IDs
+ * without fabricating unmentioned companies, honoring .NS (NSE) / .BO (BSE) suffixes.
+ */
+export function extractRelatedAssetsFromEntities(rawEntities: unknown): string[] {
+  if (!Array.isArray(rawEntities)) return [];
+  const matched = new Set<string>();
+  for (const ent of rawEntities.slice(0, 12)) {
+    if (!ent || typeof ent !== "object") continue;
+    const rawSym = String((ent as { symbol?: unknown }).symbol ?? "")
+      .trim()
+      .toUpperCase();
+    if (!rawSym) continue;
+    let canonical: string | undefined;
+    if (rawSym.endsWith(".NS")) {
+      canonical = CANONICAL_SYMBOL_MAP.get(`NSE:${rawSym.slice(0, -3)}`);
+    } else if (rawSym.endsWith(".BO")) {
+      canonical = CANONICAL_SYMBOL_MAP.get(`BSE:${rawSym.slice(0, -3)}`);
+    }
+    if (!canonical) {
+      const stripped = rawSym.replace(/\.NS$|\.BO$|\.L$/, "");
+      canonical = CANONICAL_SYMBOL_MAP.get(stripped);
+    }
+    if (canonical) matched.add(canonical);
+  }
+  return [...matched].slice(0, 5);
+}
 
 export type NaturalHazardEvent = {
   id: string;
@@ -676,7 +724,7 @@ export async function fetchMarketIntelligenceNews(
           : fetchedAtUTC,
       sourceName: String(r.source ?? "Verified Publisher").slice(0, 60),
       sourceUrl,
-      relatedAssets: [],
+      relatedAssets: extractRelatedAssetsFromEntities(r.entities),
     });
   }
 

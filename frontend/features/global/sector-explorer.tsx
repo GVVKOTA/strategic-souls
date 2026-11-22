@@ -150,8 +150,9 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
       <div className="x52-section-center">
         <h2 id="x52-sectors-heading">NSE Sector Explorer &amp; Heatmaps</h2>
         <p>
-          Standardized NSE sectoral indices and canonical constituents · Tap any
-          miniature heatmap to expand
+          Curated NSE sector leaders (reference subset, not complete real-time
+          index composition) · Neutral tiles shown until licensed NSE quotes
+          connect
         </p>
         <div className="x52-section-center-actions">
           <button

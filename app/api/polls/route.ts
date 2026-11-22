@@ -32,7 +32,7 @@ export async function GET(request: Request): Promise<Response> {
         error:
           err instanceof HttpError
             ? err.message
-            : "Daily Market Pulse is temporarily unavailable.",
+            : "Market Vox is temporarily unavailable.",
       },
       err instanceof HttpError ? err.status : 503,
     );
@@ -43,7 +43,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const user = await getAuthenticatedUser(request);
     if (!user) {
-      throw new HttpError(401, "Sign in to cast your Daily Market Pulse vote.");
+      throw new HttpError(401, "Sign in to cast your Market Vox vote.");
     }
     protectMutation(request, 4096);
     const input = await body(request, 4096);
