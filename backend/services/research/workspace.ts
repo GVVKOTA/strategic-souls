@@ -842,7 +842,14 @@ export async function mutateWorkspace(
   }
   if (action === "run-draw-scan") {
     const requestId = retryKey(input.requestId);
-    const name = text(input.name, 100);
+    const rawName = typeof input.name === "string" ? input.name.trim() : "";
+    if ([...rawName].length === 0) {
+      throw new HttpError(400, "Enter a Soul name.");
+    }
+    if ([...rawName].length < 3 || [...rawName].length > 100) {
+      throw new HttpError(400, "Scan name requires 3–100 characters.");
+    }
+    const name = rawName;
     const description =
       typeof input.description === "string" && input.description.trim().length >= 10
         ? input.description.trim().slice(0, 2000)

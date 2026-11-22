@@ -606,9 +606,10 @@
 
 .x51-mcard-badge {
   display: inline-block;
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.2;
   border: 1px solid var(--x51-hairline);
   background: var(--x1-surface-2);
   color: var(--x1-text-secondary);
@@ -1149,34 +1150,30 @@
 /* ---------- Mobile 320px–680px Safety & Zero Horizontal Overflow ---------- */
 @media (max-width: 680px) {
   .x51-market-grid {
-    gap: 6px;
+    gap: 8px;
   }
 
   .x51-mcard {
-    padding: 9px 7px;
-    min-height: 106px;
-    border-radius: 10px;
-    gap: 4px;
+    padding: 10px 10px;
+    min-height: 112px;
+    border-radius: 11px;
+    gap: 5px;
   }
 
   .x51-mcard-name {
-    font-size: 0.76rem;
-  }
-
-  .x51-mcard-price {
     font-size: 0.84rem;
   }
 
-  .x51-mcard-delta {
-    font-size: 0.72rem;
+  .x51-mcard-price {
+    font-size: 0.98rem;
   }
 
-  .x51-mcard-venue {
-    display: none;
+  .x51-mcard-delta {
+    font-size: 0.78rem;
   }
 
   .x51-mcard-spark {
-    height: 16px;
+    height: 18px;
   }
 
   .x51-cal-summary {
@@ -1963,7 +1960,83 @@
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px 10px;
+}
+
+.x53-dashboard-meta {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+}
+
+.x53-dashboard-actions {
+  margin-left: auto;
+  gap: 8px;
+}
+
+.x53-toolbar-btn {
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 0.875rem;
+}
+
+.x54-ephemeral-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--x51-green);
+  background: var(--x51-green-soft);
+  border: 1px solid var(--x51-green-border);
+}
+
+@media (max-width: 520px) {
+  .x51-market-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .x51-mcard:nth-child(9) {
+    grid-column: 1 / -1;
+    min-height: 82px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "top price"
+      "foot delta";
+    align-items: center;
+    column-gap: 12px;
+    row-gap: 4px;
+    padding: 11px 12px;
+  }
+
+  .x51-mcard:nth-child(9) .x51-mcard-top {
+    grid-area: top;
+  }
+
+  .x51-mcard:nth-child(9) .x51-mcard-price {
+    grid-area: price;
+    text-align: right;
+  }
+
+  .x51-mcard:nth-child(9) .x51-mcard-delta {
+    grid-area: delta;
+    text-align: right;
+  }
+
+  .x51-mcard:nth-child(9) .x51-mcard-foot {
+    grid-area: foot;
+  }
+
+  .x51-mcard:nth-child(9) .x51-mcard-spark {
+    display: none;
+  }
+
+  .x53-toolbar-btn {
+    min-height: 42px;
+  }
 }
 
 /* ---------- Focused View Header & Sub-Tabs ---------- */

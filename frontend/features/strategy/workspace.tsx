@@ -5,9 +5,12 @@ import {
   ArrowRight,
   ArrowUpRight,
   Check,
+  ChevronRight,
   Compass,
   Copy,
+  Info,
   PenTool,
+  Plus,
   Send,
   Share2,
   SlidersHorizontal,
@@ -402,18 +405,16 @@ export default function ResearchWorkspace({
     useState<DiscoverBlueprint | null>(null);
   const [discoverBusy, setDiscoverBusy] = useState(false);
 
-  // Shared Soul definition state
+  // Shared Soul definition state — name ALWAYS starts blank for every new Soul
   const [formula, setFormula] = useState(
     initialFormula || CLASSIC_50_PRESETS[10].formula,
   );
   const [tree, setTree] = useState<RuleTree>(defaultTree);
-  const [name, setName] = useState(
-    initialFormula ? "Custom Strategy Soul" : CLASSIC_50_PRESETS[10].label,
-  );
-  const [description, setDescription] = useState(
-    CLASSIC_50_PRESETS[10].note +
-      " Evaluated strictly on closed historical bars.",
-  );
+  const [name, setName] = useState("");
+  const [nameError, setNameError] = useState("");
+  const [description, setDescription] = useState("");
+  const [quotaInfoOpen, setQuotaInfoOpen] = useState(false);
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const [universe, setUniverse] = useState<ResearchDefinition["universe"]>(
     initialUniversePreset === "CUSTOM_CSV" ||
       initialUniversePreset === "INDIAN_EQUITIES" ||
@@ -460,12 +461,8 @@ export default function ResearchWorkspace({
   // [06] Compact searchable Classic formula dialog
   const [formulaPickerOpen, setFormulaPickerOpen] = useState(false);
 
-  // One-Click Post Soul + [30] Server-Validated Post Preview state
+  // One-Click Post Soul + [30] Server-Validated Post Preview state (ordinary Web posts default PUBLIC)
   const [postTarget, setPostTarget] = useState<ScanRun | null>(null);
-  const [postAudience, setPostAudience] = useState<
-    "PUBLIC" | "FOLLOWERS" | "GROUP"
-  >("PUBLIC");
-  const [postGroupId, setPostGroupId] = useState("");
   const [postSummary, setPostSummary] = useState("");
   const [postRiskNote, setPostRiskNote] = useState(
     "Educational research hypothesis on historical observations only; not financial advice.",
@@ -567,9 +564,17 @@ export default function ResearchWorkspace({
   function selectClassicPreset(preset: ClassicPreset) {
     setSelectedClassicId(preset.id);
     setFormula(preset.formula);
-    setName(preset.label);
-    setDescription(`${preset.note} (${preset.category} preset #${preset.number}).`);
     setPreflight(null);
+  }
+
+  function resetToNewSoul() {
+    setName("");
+    setNameError("");
+    setDescription("");
+    setDraft(null);
+    setSavedSignature("");
+    setPreflight(null);
+    window.requestAnimationFrame(() => nameInputRef.current?.focus());
   }
 
   function applyUniversePreset(
@@ -645,16 +650,20 @@ export default function ResearchWorkspace({
   const backendMode: ResearchDefinition["mode"] =
     scanMode === "CLASSIC" ? "SIMPLE" : "ADVANCED";
 
+  const trimmedName = name.trim();
+
   const effectiveDescription =
     description.trim().length >= 10
       ? description.trim()
-      : `${name.trim() || "Research Soul"} evaluated strictly on closed historical observations.`;
+      : scanMode === "CLASSIC"
+        ? `${activeClassicPreset.note} (${activeClassicPreset.category} preset #${activeClassicPreset.number}).`
+        : "Research hypothesis evaluated strictly on closed historical observations.";
 
   const definition = useMemo(() => {
     try {
       return {
         value: validateResearch({
-          name: name.trim() || activeClassicPreset.label,
+          name: trimmedName,
           description: effectiveDescription,
           formula: canonical.value?.formula ?? effectiveFormula,
           mode: backendMode,
@@ -670,8 +679,7 @@ export default function ResearchWorkspace({
       return { value: null, error: (error as Error).message };
     }
   }, [
-    name,
-    activeClassicPreset.label,
+    trimmedName,
     effectiveDescription,
     canonical.value,
     effectiveFormula,
@@ -762,20 +770,34 @@ export default function ResearchWorkspace({
     current: { id: string; version: number } | null = null,
   ) {
     setName(value.name);
+    setNameError("");
     setDescription(value.description);
     setFormula(value.formula);
-    const converted = treeFromFormula(value.formula);
-    if (converted) setTree(converted);
-    setScanMode("ADVANCED");
-    setAdvancedTab("BUILD");
-    setBuildMode(converted ? "VISUAL" : "FORMULA");
+    const matchedPreset =
+      value.mode === "SIMPLE"
+        ? CLASSIC_50_PRESETS.find((p) => p.formula === value.formula)
+        : undefined;
+    if (matchedPreset) {
+      setSelectedClassicId(matchedPreset.id);
+      setScanMode("CLASSIC");
+    } else {
+      const converted = treeFromFormula(value.formula);
+      if (converted) setTree(converted);
+      setScanMode("ADVANCED");
+      setAdvancedTab("BUILD");
+      setBuildMode(converted ? "VISUAL" : "FORMULA");
+    }
     setUniverse(value.universe);
+    setUniversePreset(
+      value.universe === "ECB_DAILY" ? "ECB_DAILY" : "INDIAN_EQUITIES",
+    );
     setInterval(value.interval);
     setInstruments(value.instrumentIds.join(", "));
     setPartial(value.partialPolicy);
     setOutcome(value.outcome);
     setDraft(current);
     setSavedSignature(current ? JSON.stringify(value) : "");
+    setPreflight(null);
     setPanel("Soul Scan");
   }
 
@@ -801,8 +823,7 @@ export default function ResearchWorkspace({
       setDiscoverBlueprint(res.blueprint);
       if (res.blueprint.supported && res.blueprint.formula) {
         setFormula(res.blueprint.formula);
-        setName(q.slice(0, 88));
-        setDescription(res.blueprint.humanSummary);
+        setDescription((prev) => prev.trim() || res.blueprint.humanSummary);
         setInterval(res.blueprint.suggestedTimeframe);
         setPreflight(null);
       }
@@ -816,12 +837,32 @@ export default function ResearchWorkspace({
     }
   }
 
+  function validateSoulName(): boolean {
+    if (!trimmedName) {
+      setNameError("Enter a Soul name");
+      nameInputRef.current?.focus();
+      return false;
+    }
+    if ([...trimmedName].length < 3 || [...trimmedName].length > 100) {
+      setNameError("Soul name requires 3–100 characters");
+      nameInputRef.current?.focus();
+      return false;
+    }
+    setNameError("");
+    return true;
+  }
+
   async function perform(kind: "preflight" | "run" | "draft") {
+    if (!validateSoulName()) return;
     if (!authenticated) {
       onRequireAuth?.();
       return;
     }
-    if (lock.current || !definition.value || !canonical.value) return;
+    if (lock.current || !canonical.value) return;
+    if (!definition.value) {
+      notify(definition.error || "Check your Soul inputs before continuing.", true);
+      return;
+    }
     lock.current = true;
     setPipelineStep(kind === "run" ? 1 : 0);
     setBusy(
@@ -937,8 +978,6 @@ export default function ResearchWorkspace({
     }
     const rich = run as RichRun;
     setPostTarget(run);
-    setPostAudience("PUBLIC");
-    setPostGroupId("");
     setPostPreview(null);
     setPostedResultId(null);
     setPostSummary(
@@ -956,8 +995,7 @@ export default function ResearchWorkspace({
       >("/api/community/network", {
         action: "preview-soul",
         scanId: postTarget.id,
-        audience: postAudience,
-        groupId: postAudience === "GROUP" ? postGroupId.trim() : undefined,
+        audience: "PUBLIC",
         summary: postSummary.trim(),
       });
       setPostPreview({
@@ -985,18 +1023,17 @@ export default function ResearchWorkspace({
         {
           action: "publish-soul",
           scanId: postTarget.id,
-          audience: postAudience,
-          groupId: postAudience === "GROUP" ? postGroupId.trim() : undefined,
+          audience: "PUBLIC",
           summary: postSummary.trim(),
           riskNote: postRiskNote.trim(),
-          requestId: `post_${postTarget.id}_${postAudience}`.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80),
+          requestId: `post_${postTarget.id}_PUBLIC`.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80),
         },
       );
       setPostedResultId(res.postId);
       notify(
         res.replayed
-          ? "This Soul is already posted for this audience."
-          : "Soul published to Community Research Network.",
+          ? "This Soul is already posted on Community Web."
+          : "Soul published publicly to Community Web.",
       );
     } catch (err) {
       notify(
@@ -1035,13 +1072,12 @@ export default function ResearchWorkspace({
 
       {panel === "Soul Scan" && (
         <div className="x51-global-stack">
-          {/* Full-Width 50/50 SS Blue Classic | Advanced Switcher + 1-line integrated quota */}
-          <div>
+          {/* Full-Width 50/50 SS Blue Classic | Advanced Switcher + compact quota strip */}
+          <div className="x54-scan-mode-wrap">
             <div
               className="x52-full-tabs-2"
               role="group"
               aria-label="Soul Scan mode"
-              style={{ marginBottom: 4 }}
             >
               <button
                 type="button"
@@ -1068,20 +1104,50 @@ export default function ResearchWorkspace({
               </button>
             </div>
 
-            <div className="x52-quota-inline">
-              <span>
+            <div className="x54-quota-strip">
+              <span
+                className={
+                  "x54-quota-status" +
+                  ((scanMode === "CLASSIC" && quota && quota.classic.remaining === 0) ||
+                  (scanMode === "ADVANCED" && quota && quota.advanced.remaining === 0)
+                    ? " is-exhausted"
+                    : "")
+                }
+              >
                 {scanMode === "CLASSIC"
                   ? quota
-                    ? `${quota.classic.remaining}/${quota.classic.limit} Classic scans left today (IST) · resets ${localTimeShort(quota.classic.resetsAtUTC)}`
-                    : "8 Classic scans / IST day · 50 verified rules"
+                    ? quota.classic.remaining > 0
+                      ? `${quota.classic.remaining} scans left`
+                      : `0 scans left · resets ${localTimeShort(quota.classic.resetsAtUTC)}`
+                    : "8 scans left"
                   : quota
                     ? quota.advanced.remaining > 0
-                      ? "1/1 Advanced scan ready (rolling 60 min)"
-                      : `Advanced cooldown · next eligible ${localTimeShort(quota.advanced.nextEligibleAtUTC)}`
-                    : "1 Advanced scan / rolling 60 min"}
+                      ? "1 scan ready"
+                      : `Cooldown · next ${localTimeShort(quota.advanced.nextEligibleAtUTC)}`
+                    : "1 scan ready"}
               </span>
-              <span>Failed scans never deduct quota</span>
+              <button
+                type="button"
+                className="x54-quota-info-btn"
+                aria-expanded={quotaInfoOpen}
+                aria-label="Scan allowance and reset policy"
+                onClick={() => setQuotaInfoOpen((v) => !v)}
+              >
+                <Info size={14} aria-hidden="true" />
+                <span>Policy</span>
+              </button>
             </div>
+
+            {quotaInfoOpen && (
+              <div className="x54-quota-popover" role="note">
+                Classic: {quota?.classic.limit ?? 8} completed scans per IST day
+                {quota?.classic.resetsAtUTC
+                  ? ` (resets ${localTimeShort(quota.classic.resetsAtUTC)})`
+                  : ""}
+                . Advanced: 1 completed scan per rolling 60 min. Failed or
+                blocked scans never deduct quota.
+              </div>
+            )}
           </div>
 
           <div className="x1-scan-grid">
@@ -1091,130 +1157,82 @@ export default function ResearchWorkspace({
                   ? "Classic Soul Scan"
                   : "Advanced Soul Scan"
               }
+              action={
+                draft || trimmedName ? (
+                  <button
+                    type="button"
+                    className="x54-new-soul-btn"
+                    onClick={resetToNewSoul}
+                  >
+                    <Plus size={14} aria-hidden="true" />
+                    <span>New Soul</span>
+                  </button>
+                ) : undefined
+              }
             >
-              {/* Compact Market Selector */}
-              <div className="x1-label">
-                <span>Market</span>
-                <div className="x51-chip-row" role="group" aria-label="Scan market">
-                  {(
-                    [
-                      ["ECB_DAILY", "ECB Daily FX"],
-                      ["CUSTOM_CSV", "Private CSV"],
-                      ["MY_WATCHLIST", "My Watchlist"],
-                      ["INDIAN_EQUITIES", "NSE / BSE"],
-                      ["MCX_FUTURES", "MCX Futures"],
-                    ] as const
-                  ).map(([id, label]) => (
-                    <button
-                      key={id}
-                      type="button"
-                      className={
-                        "x51-chip" + (universePreset === id ? " is-active" : "")
-                      }
-                      aria-pressed={universePreset === id}
-                      onClick={() => applyUniversePreset(id)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {universePreset === "CUSTOM_CSV" && (
-                <div className="x1-label">
-                  <span>
-                    Private CSV OHLCV (<code>symbol,date,open,high,low,close,volume</code> · user-supplied only)
-                  </span>
-                  <textarea
-                    className="x1-code-editor"
-                    rows={4}
-                    value={customCsv}
-                    aria-label="Private CSV OHLCV dataset"
+              <div className="x54-scan-form">
+                {/* Shared Soul Name — ALWAYS blank on New Soul, never overwritten by presets/tabs */}
+                <div className="x54-field-group">
+                  <label htmlFor="x54-soul-name" className="x54-field-label">
+                    <span>Soul name</span>
+                    {draft && (
+                      <span className="x54-draft-tag">Draft v{draft.version}</span>
+                    )}
+                  </label>
+                  <input
+                    id="x54-soul-name"
+                    ref={nameInputRef}
+                    className={"x54-name-input" + (nameError ? " has-error" : "")}
+                    value={name}
+                    maxLength={100}
+                    autoComplete="off"
+                    placeholder="Name your Soul"
+                    aria-invalid={nameError ? "true" : undefined}
+                    aria-describedby={nameError ? "x54-soul-name-error" : undefined}
                     onChange={(e) => {
-                      setCustomCsv(e.target.value);
-                      setPreflight(null);
+                      setName(e.target.value);
+                      if (nameError) setNameError("");
                     }}
                   />
-                  <div className="x1-actions">
-                    <button
-                      type="button"
-                      className="x1-secondary"
-                      style={{ minHeight: 34, fontSize: "0.8rem" }}
-                      onClick={() => {
-                        setCustomCsv(buildSampleTestCsv());
-                        setDescription("Simulated 5-stock Indian equity test CSV fixture (non-publishable TEST DATA).");
-                        setPreflight(null);
-                      }}
+                  {nameError && (
+                    <p
+                      id="x54-soul-name-error"
+                      role="alert"
+                      className="x1-form-error x54-inline-error"
                     >
-                      Load 5-stock test CSV (non-publishable fixture)
-                    </button>
-                  </div>
+                      {nameError}
+                    </p>
+                  )}
                 </div>
-              )}
 
-              {/* CLASSIC MODE [06]: Clean Compact Searchable Formula Selector */}
-              {scanMode === "CLASSIC" ? (
-                <>
-                  <label className="x1-label">
-                    Soul name
-                    <input
-                      value={name}
-                      maxLength={100}
-                      placeholder="Name your Classic Soul"
-                      onChange={(e) => setName(e.target.value)}
-                    />
-                  </label>
-
-                  <div className="x1-label">
-                    <span>Formula (50 verified rules)</span>
+                {/* CLASSIC MODE: Single clean clickable formula card */}
+                {scanMode === "CLASSIC" ? (
+                  <div className="x54-field-group">
+                    <span className="x54-field-label">Rule</span>
                     <button
                       type="button"
-                      className="x52-formula-trigger"
+                      className="x54-formula-card"
                       aria-haspopup="dialog"
+                      aria-label={`Selected rule #${activeClassicPreset.number} ${activeClassicPreset.label}. Tap to change formula.`}
                       onClick={() => setFormulaPickerOpen(true)}
                     >
-                      <div style={{ minWidth: 0 }}>
-                        <strong style={{ display: "block", fontSize: "0.92rem" }}>
-                          #{String(activeClassicPreset.number).padStart(2, "0")} · {activeClassicPreset.label}
+                      <div className="x54-formula-card-main">
+                        <strong className="x54-formula-card-title">
+                          #{String(activeClassicPreset.number).padStart(2, "0")} ·{" "}
+                          {activeClassicPreset.label}
                         </strong>
-                        <span className="x1-caption">
-                          {activeClassicPreset.category} · <code>{activeClassicPreset.formula}</code>
-                        </span>
+                        <code className="x54-formula-card-code">
+                          {activeClassicPreset.formula}
+                        </code>
                       </div>
-                      <span className="x51-pill x51-pill-blue">Select formula</span>
+                      <span className="x54-formula-card-cue" aria-hidden="true">
+                        <span>50 rules</span>
+                        <ChevronRight size={15} />
+                      </span>
                     </button>
                   </div>
-
-                  <div className="x1-label">
-                    <span>Timeframe</span>
-                    <div className="x51-chip-row" role="group" aria-label="Timeframe">
-                      {TIMEFRAMES.map((tf) => (
-                        <button
-                          key={tf.id}
-                          type="button"
-                          className={
-                            "x51-chip" + (interval === tf.id ? " is-active" : "")
-                          }
-                          aria-pressed={interval === tf.id}
-                          onClick={() => {
-                            setInterval(tf.id);
-                            setPreflight(null);
-                          }}
-                        >
-                          {tf.label}
-                        </button>
-                      ))}
-                    </div>
-                    {(interval === "30m" || interval === "1h") && (
-                      <span className="x1-caption">
-                        Intraday 30m/1h requires intraday bars in Private CSV or a connected intraday feed.
-                      </span>
-                    )}
-                  </div>
-                </>
-              ) : (
-                /* ADVANCED MODE: Full-Width 33.3% / 33.3% / 33.3% SS Blue Tabs */
-                <>
+                ) : (
+                  /* ADVANCED MODE: Discover | Build | Draw */
                   <div
                     className="x52-full-tabs-3"
                     role="tablist"
@@ -1248,16 +1266,54 @@ export default function ResearchWorkspace({
                       <PenTool size={14} /> Draw
                     </button>
                   </div>
+                )}
 
-                  <div className="x1-label">
-                    <span>Timeframe</span>
-                    <div className="x51-chip-row" role="group" aria-label="Advanced timeframe">
+                {/* Compact Market & Timeframe rows */}
+                <div className="x54-compact-selectors">
+                  <div className="x54-field-group">
+                    <span className="x54-field-label">Market</span>
+                    <div
+                      className="x54-chip-strip"
+                      role="group"
+                      aria-label="Scan market"
+                    >
+                      {(
+                        [
+                          ["ECB_DAILY", "ECB FX"],
+                          ["CUSTOM_CSV", "Private CSV"],
+                          ["MY_WATCHLIST", "Watchlist"],
+                          ["INDIAN_EQUITIES", "NSE / BSE"],
+                          ["MCX_FUTURES", "MCX"],
+                        ] as const
+                      ).map(([id, label]) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className={
+                            "x54-chip" + (universePreset === id ? " is-active" : "")
+                          }
+                          aria-pressed={universePreset === id}
+                          onClick={() => applyUniversePreset(id)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="x54-field-group">
+                    <span className="x54-field-label">Timeframe</span>
+                    <div
+                      className="x54-chip-strip"
+                      role="group"
+                      aria-label="Timeframe"
+                    >
                       {TIMEFRAMES.map((tf) => (
                         <button
                           key={tf.id}
                           type="button"
                           className={
-                            "x51-chip" + (interval === tf.id ? " is-active" : "")
+                            "x54-chip" + (interval === tf.id ? " is-active" : "")
                           }
                           aria-pressed={interval === tf.id}
                           onClick={() => {
@@ -1269,344 +1325,370 @@ export default function ResearchWorkspace({
                         </button>
                       ))}
                     </div>
+                    {(interval === "30m" || interval === "1h") && (
+                      <span className="x1-caption">
+                        Intraday 30m/1h requires intraday bars in Private CSV or a connected feed.
+                      </span>
+                    )}
                   </div>
+                </div>
 
-                  {advancedTab === "DISCOVER" && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      <label className="x1-label">
-                        Natural-language research question (deterministic AST
-                        parser · quota-free preview)
-                        <textarea
-                          rows={3}
-                          value={discoverQuery}
-                          onChange={(e) => setDiscoverQuery(e.target.value)}
-                          placeholder="Example: Find stocks trading sideways for 15 closed candles, breaking resistance on more than 1.5x volume while the daily trend is rising"
-                        />
-                      </label>
-                      <div className="x51-chip-row" aria-label="Example prompts">
-                        {DISCOVER_EXAMPLES.map((ex) => (
-                          <button
-                            key={ex.title}
-                            type="button"
-                            className="x51-chip"
-                            onClick={() => {
-                              setDiscoverQuery(ex.query);
-                              void parseDiscoverIntent(ex.query);
-                            }}
-                          >
-                            <Sparkles size={12} /> {ex.title}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="x1-actions">
-                        <button
-                          type="button"
-                          className="x51-accent-btn"
-                          disabled={discoverBusy || !discoverQuery.trim()}
-                          onClick={() => void parseDiscoverIntent()}
-                        >
-                          {discoverBusy
-                            ? "Parsing Blueprint…"
-                            : "Translate to Research Blueprint"}
-                        </button>
-                      </div>
-
-                      {discoverBlueprint && (
-                        <div className="x51-genome-card">
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              alignItems: "center",
-                              gap: 8,
-                            }}
-                          >
-                            <h4>Reviewable Research Blueprint</h4>
-                            <span
-                              className={
-                                discoverBlueprint.supported
-                                  ? "x51-pill x51-pill-green"
-                                  : "x51-pill x51-pill-red"
-                              }
-                            >
-                              {discoverBlueprint.interpretationConfidence}
-                            </span>
-                          </div>
-                          <p className="x1-caption" style={{ margin: 0 }}>
-                            {discoverBlueprint.humanSummary}
-                          </p>
-                          {discoverBlueprint.formula && (
-                            <code className="x51-soul-formula">
-                              {discoverBlueprint.formula}
-                            </code>
-                          )}
-                          {discoverBlueprint.clauses.length > 0 && (
-                            <ul style={{ margin: 0, paddingLeft: 18, fontSize: "0.82rem" }}>
-                              {discoverBlueprint.clauses.map((c, idx) => (
-                                <li key={idx}>
-                                  <strong>{c.explanation}</strong> →{" "}
-                                  <code>{c.formula}</code>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                          {discoverBlueprint.assumptions.length > 0 && (
-                            <p className="x1-caption" style={{ margin: 0 }}>
-                              Assumptions:{" "}
-                              {discoverBlueprint.assumptions.join(" · ")}
-                            </p>
-                          )}
-                          {discoverBlueprint.unsupportedPhrases.length > 0 && (
-                            <p role="alert" className="x1-form-error" style={{ margin: 0 }}>
-                              Unsupported concepts rejected:{" "}
-                              {discoverBlueprint.unsupportedPhrases.join("; ")}
-                            </p>
-                          )}
-                          {discoverBlueprint.supported &&
-                            discoverBlueprint.formula && (
-                              <div className="x1-actions">
-                                <button
-                                  type="button"
-                                  className="x1-secondary"
-                                  onClick={() => {
-                                    setFormula(discoverBlueprint.formula!);
-                                    setAdvancedTab("BUILD");
-                                    setBuildMode("FORMULA");
-                                  }}
-                                >
-                                  Edit in Build
-                                </button>
-                              </div>
-                            )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {advancedTab === "BUILD" && (
-                    <>
-                      <label className="x1-label">
-                        Soul name
-                        <input
-                          value={name}
-                          maxLength={100}
-                          placeholder="Name your Advanced Soul"
-                          onChange={(e) => setName(e.target.value)}
-                        />
-                      </label>
-                      <label className="x1-label">
-                        Hypothesis note
-                        <textarea
-                          className="x2-scan-description"
-                          value={description}
-                          minLength={10}
-                          maxLength={2000}
-                          placeholder="Document what edge or structure you are testing and why."
-                          onChange={(e) => setDescription(e.target.value)}
-                        />
-                      </label>
-                      <div className="x1-segment" style={{ marginBottom: 10 }}>
-                        <button
-                          type="button"
-                          aria-pressed={buildMode === "VISUAL"}
-                          onClick={() => {
-                            const converted = treeFromFormula(formula);
-                            if (converted) setTree(converted);
-                            setBuildMode("VISUAL");
-                          }}
-                        >
-                          Visual Rule Blocks
-                        </button>
-                        <button
-                          type="button"
-                          aria-pressed={buildMode === "FORMULA"}
-                          onClick={() => {
-                            if (canonical.value) setFormula(canonical.value.formula);
-                            setBuildMode("FORMULA");
-                          }}
-                        >
-                          Canonical Formula AST
-                        </button>
-                      </div>
-                      {buildMode === "VISUAL" ? (
-                        <RuleEditor tree={tree} onChange={setTree} />
-                      ) : (
-                        <label className="x1-label">
-                          Canonical formula
-                          <textarea
-                            className="x1-code-editor"
-                            value={formula}
-                            maxLength={4000}
-                            spellCheck={false}
-                            onChange={(e) => setFormula(e.target.value)}
-                          />
-                        </label>
-                      )}
-                      <OutcomeControls value={outcome} onChange={setOutcome} />
-                    </>
-                  )}
-
-                  {advancedTab === "DRAW" && (
-                    <PatternDrawCanvas
-                      authenticated={authenticated}
-                      onRequireAuth={onRequireAuth}
-                      universe={universe}
-                      interval={interval}
-                      customCsv={
-                        universePreset === "CUSTOM_CSV" ? customCsv : undefined
-                      }
-                      instrumentIds={instruments.split(/[\s,]+/).filter(Boolean)}
-                      busy={!!busy}
-                      onOpenAsset={openAsset}
-                      notify={notify}
-                      onScanComplete={async (res) => {
-                        setSelected(res.id);
-                        setJustCompletedId(res.id);
-                        await reload();
+                {universePreset === "CUSTOM_CSV" && (
+                  <div className="x54-field-group">
+                    <span className="x54-field-label">
+                      Private CSV OHLCV (<code>symbol,date,open,high,low,close,volume</code>)
+                    </span>
+                    <textarea
+                      className="x1-code-editor"
+                      rows={4}
+                      value={customCsv}
+                      aria-label="Private CSV OHLCV dataset"
+                      onChange={(e) => {
+                        setCustomCsv(e.target.value);
+                        setPreflight(null);
                       }}
                     />
-                  )}
-                </>
-              )}
-
-              {/* Scope & Partial-Data Policy (Collapsible) */}
-              <details className="x1-small-details">
-                <summary>Instrument filter &amp; missing-data policy</summary>
-                <label className="x1-label">
-                  Find &amp; add instruments (HDFC, SBIN, NIFTY, GOLD…)
-                  <input
-                    value={pickerQuery}
-                    onChange={(e) => setPickerQuery(e.target.value)}
-                    placeholder="Type HDFC, SBIN, RELIANCE, NIFTY…"
-                  />
-                </label>
-                {pickerMatches.length > 0 && (
-                  <div className="x1-chip-row">
-                    {pickerMatches.map((m) => (
+                    <div className="x1-actions">
                       <button
-                        key={m.id}
                         type="button"
+                        className="x1-secondary"
+                        style={{ minHeight: 36, fontSize: "0.8rem" }}
                         onClick={() => {
-                          const existing = instruments
-                            .split(/[\s,]+/)
-                            .filter(Boolean);
-                          if (!existing.includes(m.id)) {
-                            setInstruments([...existing, m.id].join(", "));
-                            if (!m.id.startsWith("ECB:")) {
-                              setUniverse("CONNECTED_MARKETS");
-                              if (universePreset === "ECB_DAILY") {
-                                setUniversePreset("INDIAN_EQUITIES");
-                              }
-                            }
-                            setPreflight(null);
-                          }
-                          setPickerQuery("");
+                          setCustomCsv(buildSampleTestCsv());
+                          setDescription("Simulated 5-stock Indian equity test CSV fixture (non-publishable TEST DATA).");
+                          setPreflight(null);
                         }}
                       >
-                        + {m.name} ({m.id})
+                        Load 5-stock test CSV (non-publishable)
                       </button>
-                    ))}
+                    </div>
                   </div>
                 )}
-                <label className="x1-label">
-                  Exact instruments (optional)
-                  <input
-                    value={instruments}
-                    onChange={(e) => setInstruments(e.target.value)}
-                    placeholder="Comma-separated canonical IDs"
-                  />
-                </label>
-                <label className="x1-label">
-                  Missing inputs
-                  <select
-                    value={partialPolicy}
-                    onChange={(e) =>
-                      setPartial(
-                        e.target.value as ResearchDefinition["partialPolicy"],
-                      )
-                    }
-                  >
-                    <option value="ALLOW_UNKNOWN">
-                      Explicit UNKNOWN rows permitted
-                    </option>
-                    <option value="STRICT">Require complete inputs only</option>
-                  </select>
-                </label>
-              </details>
 
-              {/* Run Controls (hidden only in DRAW tab because DrawCanvas has its own Run Draw Scan button) */}
-              {!(scanMode === "ADVANCED" && advancedTab === "DRAW") && (
-                <>
-                  {canonical.error && (
-                    <p role="alert" className="x1-form-error">
-                      {canonical.error}
-                    </p>
-                  )}
-                  <div className="x2-scan-toolbar">
-                    <button
-                      type="button"
-                      className="x1-secondary"
-                      disabled={!!busy || !definition.value || !canonical.value}
-                      onClick={() => void perform("draft")}
-                    >
-                      Save draft
-                    </button>
-                    <button
-                      type="button"
-                      className="x1-secondary"
-                      disabled={!!busy || !definition.value || !canonical.value}
-                      onClick={() => void perform("preflight")}
-                    >
-                      Check coverage
-                    </button>
-                    <button
-                      type="button"
-                      className="x1-primary x1-motion-button"
-                      disabled={
-                        !!busy ||
-                        !definition.value ||
-                        !canonical.value ||
-                        (scanMode === "ADVANCED" &&
-                          advancedTab === "DISCOVER" &&
-                          !discoverBlueprint?.supported)
-                      }
-                      onClick={() => void perform("run")}
-                    >
-                      RUN SCAN
-                      <ArrowRight size={16} />
-                    </button>
+                {scanMode === "ADVANCED" && advancedTab === "DISCOVER" && (
+                  <div className="x54-advanced-pane">
+                    <label className="x1-label">
+                      Describe setup in plain English (quota-free AST preview)
+                      <textarea
+                        rows={3}
+                        value={discoverQuery}
+                        onChange={(e) => setDiscoverQuery(e.target.value)}
+                        placeholder="e.g. Stocks breaking 20-bar high on 1.5x volume with rising trend"
+                      />
+                    </label>
+                    <div className="x54-chip-strip" aria-label="Example prompts">
+                      {DISCOVER_EXAMPLES.map((ex) => (
+                        <button
+                          key={ex.title}
+                          type="button"
+                          className="x54-chip"
+                          onClick={() => {
+                            setDiscoverQuery(ex.query);
+                            void parseDiscoverIntent(ex.query);
+                          }}
+                        >
+                          <Sparkles size={12} /> {ex.title}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="x1-actions">
+                      <button
+                        type="button"
+                        className="x51-accent-btn"
+                        disabled={discoverBusy || !discoverQuery.trim()}
+                        onClick={() => void parseDiscoverIntent()}
+                      >
+                        {discoverBusy ? "Parsing…" : "Build Blueprint"}
+                      </button>
+                    </div>
+
+                    {discoverBlueprint && (
+                      <div className="x51-genome-card">
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 8,
+                          }}
+                        >
+                          <h4>Research Blueprint</h4>
+                          <span
+                            className={
+                              discoverBlueprint.supported
+                                ? "x51-pill x51-pill-green"
+                                : "x51-pill x51-pill-red"
+                            }
+                          >
+                            {discoverBlueprint.interpretationConfidence}
+                          </span>
+                        </div>
+                        <p className="x1-caption" style={{ margin: 0 }}>
+                          {discoverBlueprint.humanSummary}
+                        </p>
+                        {discoverBlueprint.formula && (
+                          <code className="x51-soul-formula">
+                            {discoverBlueprint.formula}
+                          </code>
+                        )}
+                        {discoverBlueprint.clauses.length > 0 && (
+                          <ul style={{ margin: 0, paddingLeft: 18, fontSize: "0.82rem" }}>
+                            {discoverBlueprint.clauses.map((c, idx) => (
+                              <li key={idx}>
+                                <strong>{c.explanation}</strong> →{" "}
+                                <code>{c.formula}</code>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {discoverBlueprint.assumptions.length > 0 && (
+                          <p className="x1-caption" style={{ margin: 0 }}>
+                            Assumptions: {discoverBlueprint.assumptions.join(" · ")}
+                          </p>
+                        )}
+                        {discoverBlueprint.unsupportedPhrases.length > 0 && (
+                          <p role="alert" className="x1-form-error" style={{ margin: 0 }}>
+                            Unsupported: {discoverBlueprint.unsupportedPhrases.join("; ")}
+                          </p>
+                        )}
+                        {discoverBlueprint.supported && discoverBlueprint.formula && (
+                          <div className="x1-actions">
+                            <button
+                              type="button"
+                              className="x1-secondary"
+                              onClick={() => {
+                                setFormula(discoverBlueprint.formula!);
+                                setAdvancedTab("BUILD");
+                                setBuildMode("FORMULA");
+                              }}
+                            >
+                              Edit in Build
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </>
-              )}
+                )}
 
-              {busy && (
-                <div className="x51-pipeline-steps" role="status" aria-live="polite">
-                  <span className="x51-accent-dot" />
-                  <strong>{busy}</strong>
-                  <span>
-                    Stage {Math.max(1, pipelineStep)} / 3
-                  </span>
-                </div>
-              )}
+                {scanMode === "ADVANCED" && advancedTab === "BUILD" && (
+                  <div className="x54-advanced-pane">
+                    <label className="x1-label">
+                      Hypothesis note (optional)
+                      <textarea
+                        className="x2-scan-description"
+                        rows={2}
+                        value={description}
+                        maxLength={2000}
+                        placeholder="Document what edge or structure you are testing."
+                        onChange={(e) => setDescription(e.target.value)}
+                      />
+                    </label>
+                    <div className="x1-segment">
+                      <button
+                        type="button"
+                        aria-pressed={buildMode === "VISUAL"}
+                        onClick={() => {
+                          const converted = treeFromFormula(formula);
+                          if (converted) setTree(converted);
+                          setBuildMode("VISUAL");
+                        }}
+                      >
+                        Visual Blocks
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={buildMode === "FORMULA"}
+                        onClick={() => {
+                          if (canonical.value) setFormula(canonical.value.formula);
+                          setBuildMode("FORMULA");
+                        }}
+                      >
+                        Formula AST
+                      </button>
+                    </div>
+                    {buildMode === "VISUAL" ? (
+                      <RuleEditor tree={tree} onChange={setTree} />
+                    ) : (
+                      <label className="x1-label">
+                        Canonical formula
+                        <textarea
+                          className="x1-code-editor"
+                          value={formula}
+                          maxLength={4000}
+                          spellCheck={false}
+                          onChange={(e) => setFormula(e.target.value)}
+                        />
+                      </label>
+                    )}
+                    <OutcomeControls value={outcome} onChange={setOutcome} />
+                  </div>
+                )}
 
-              {coverage && (
-                <div className="x2-source-preflight">
-                  <strong>
-                    {coverage.preflight.blocked
-                      ? "COVERAGE BLOCKED"
-                      : "COVERAGE VERIFIED"}
-                  </strong>
-                  <p>
-                    {coverage.preflight.eligible}/{coverage.preflight.total}{" "}
-                    eligible · {coverage.preflight.unknown} UNKNOWN ·{" "}
-                    {coverage.source}
-                  </p>
-                  <p>{coverage.preflight.reason}</p>
-                </div>
-              )}
+                {scanMode === "ADVANCED" && advancedTab === "DRAW" && (
+                  <PatternDrawCanvas
+                    authenticated={authenticated}
+                    onRequireAuth={onRequireAuth}
+                    scanName={name}
+                    onRequireName={(msg) => {
+                      setNameError(msg);
+                      nameInputRef.current?.focus();
+                    }}
+                    universe={universe}
+                    interval={interval}
+                    customCsv={
+                      universePreset === "CUSTOM_CSV" ? customCsv : undefined
+                    }
+                    instrumentIds={instruments.split(/[\s,]+/).filter(Boolean)}
+                    busy={!!busy}
+                    onOpenAsset={openAsset}
+                    notify={notify}
+                    onScanComplete={async (res) => {
+                      setSelected(res.id);
+                      setJustCompletedId(res.id);
+                      await reload();
+                    }}
+                  />
+                )}
+
+                {/* Scope & Partial-Data Policy (Collapsible) */}
+                <details className="x1-small-details x54-compact-details">
+                  <summary>Instrument filter &amp; missing-data policy</summary>
+                  <label className="x1-label">
+                    Add instruments
+                    <input
+                      value={pickerQuery}
+                      onChange={(e) => setPickerQuery(e.target.value)}
+                      placeholder="HDFC, SBIN, RELIANCE, NIFTY…"
+                    />
+                  </label>
+                  {pickerMatches.length > 0 && (
+                    <div className="x1-chip-row">
+                      {pickerMatches.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            const existing = instruments
+                              .split(/[\s,]+/)
+                              .filter(Boolean);
+                            if (!existing.includes(m.id)) {
+                              setInstruments([...existing, m.id].join(", "));
+                              if (!m.id.startsWith("ECB:")) {
+                                setUniverse("CONNECTED_MARKETS");
+                                if (universePreset === "ECB_DAILY") {
+                                  setUniversePreset("INDIAN_EQUITIES");
+                                }
+                              }
+                              setPreflight(null);
+                            }
+                            setPickerQuery("");
+                          }}
+                        >
+                          + {m.name} ({m.id})
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <label className="x1-label">
+                    Exact instrument IDs (optional)
+                    <input
+                      value={instruments}
+                      onChange={(e) => setInstruments(e.target.value)}
+                      placeholder="Comma-separated canonical IDs"
+                    />
+                  </label>
+                  <label className="x1-label">
+                    Missing inputs
+                    <select
+                      value={partialPolicy}
+                      onChange={(e) =>
+                        setPartial(
+                          e.target.value as ResearchDefinition["partialPolicy"],
+                        )
+                      }
+                    >
+                      <option value="ALLOW_UNKNOWN">
+                        Allow explicit UNKNOWN rows
+                      </option>
+                      <option value="STRICT">Require complete inputs</option>
+                    </select>
+                  </label>
+                </details>
+
+                {/* Primary / Secondary / Tertiary Action Hierarchy */}
+                {!(scanMode === "ADVANCED" && advancedTab === "DRAW") && (
+                  <>
+                    {canonical.error && (
+                      <p role="alert" className="x1-form-error">
+                        {canonical.error}
+                      </p>
+                    )}
+                    <div className="x54-scan-actions">
+                      <button
+                        type="button"
+                        className="x1-primary x1-motion-button x54-scan-primary"
+                        disabled={
+                          !!busy ||
+                          !canonical.value ||
+                          (scanMode === "ADVANCED" &&
+                            advancedTab === "DISCOVER" &&
+                            !discoverBlueprint?.supported)
+                        }
+                        onClick={() => void perform("run")}
+                      >
+                        <span>Run scan</span>
+                        <ArrowRight size={16} aria-hidden="true" />
+                      </button>
+                      <div className="x54-scan-subactions">
+                        <button
+                          type="button"
+                          className="x1-secondary x54-scan-secondary"
+                          disabled={!!busy || !canonical.value}
+                          onClick={() => void perform("preflight")}
+                        >
+                          Check coverage
+                        </button>
+                        <button
+                          type="button"
+                          className="x54-scan-tertiary"
+                          disabled={!!busy || !canonical.value}
+                          onClick={() => void perform("draft")}
+                        >
+                          Save draft
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {busy && (
+                  <div className="x51-pipeline-steps" role="status" aria-live="polite">
+                    <span className="x51-accent-dot" />
+                    <strong>{busy}</strong>
+                    <span>Stage {Math.max(1, pipelineStep)}/3</span>
+                  </div>
+                )}
+
+                {coverage && (
+                  <div className="x2-source-preflight">
+                    <strong>
+                      {coverage.preflight.blocked
+                        ? "COVERAGE BLOCKED"
+                        : "COVERAGE VERIFIED"}
+                    </strong>
+                    <p>
+                      {coverage.preflight.eligible}/{coverage.preflight.total}{" "}
+                      eligible · {coverage.preflight.unknown} UNKNOWN ·{" "}
+                      {coverage.source}
+                    </p>
+                    <p>{coverage.preflight.reason}</p>
+                  </div>
+                )}
+              </div>
             </Panel>
 
-            <Panel title="Drafts & Glossary" kicker="Private memory">
+            <Panel title="Drafts & Glossary" kicker="Private">
               {drafts.length ? (
                 <div className="x2-research-drafts">
                   {drafts.map((row) => (
@@ -1625,7 +1707,7 @@ export default function ResearchWorkspace({
                             })
                           }
                         >
-                          Open in Build
+                          Open draft
                         </button>
                       </div>
                       <p className="x1-caption">
@@ -1635,13 +1717,13 @@ export default function ResearchWorkspace({
                   ))}
                 </div>
               ) : (
-                <Empty title="Working drafts">
-                  Saved drafts and copied Community Souls appear here cleanly.
+                <Empty title="No drafts yet">
+                  Saved drafts appear here privately.
                 </Empty>
               )}
               <Comparison runs={runs} />
               <details className="x1-small-details">
-                <summary>Research glossary (RSI, ATR, MACD, BB, ADX, PIT)</summary>
+                <summary>Glossary (RSI, ATR, MACD, BB, ADX, PIT)</summary>
                 <div className="x3-glossary-grid">
                   {RESEARCH_GLOSSARY.map((item) => (
                     <div className="x3-glossary-item" key={item.term}>
@@ -2089,36 +2171,9 @@ export default function ResearchWorkspace({
                 Soul: <strong>{postTarget.name}</strong> · Formula:{" "}
                 <code>{postTarget.payload.rule.formula}</code>
               </p>
-              <label>
-                Audience
-                <select
-                  value={postAudience}
-                  onChange={(e) => {
-                    setPostAudience(
-                      e.target.value as "PUBLIC" | "FOLLOWERS" | "GROUP",
-                    );
-                    setPostPreview(null);
-                  }}
-                >
-                  <option value="PUBLIC">Public (Community Web)</option>
-                  <option value="FOLLOWERS">Followers Only</option>
-                  <option value="GROUP">Specific Research Group</option>
-                </select>
-              </label>
-              {postAudience === "GROUP" && (
-                <label>
-                  Research Group ID
-                  <input
-                    value={postGroupId}
-                    required
-                    onChange={(e) => {
-                      setPostGroupId(e.target.value);
-                      setPostPreview(null);
-                    }}
-                    placeholder="Enter group ID from Community → Groups"
-                  />
-                </label>
-              )}
+              <p className="x1-caption x54-public-disclosure" style={{ margin: 0 }}>
+                Published publicly to Community Web. Portfolios, drafts, private CSV rows, and messages are never shared.
+              </p>
               <label>
                 Research summary
                 <textarea

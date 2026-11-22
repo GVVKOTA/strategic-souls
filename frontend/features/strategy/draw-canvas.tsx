@@ -13,6 +13,8 @@ import { api, type Notice } from "../../components/workspace/shared";
 type Props = {
   authenticated: boolean;
   onRequireAuth?: () => void;
+  scanName?: string;
+  onRequireName?: (message: string) => void;
   universe: "ECB_DAILY" | "CONNECTED_MARKETS";
   interval: "30m" | "1h" | "1d" | "1wk" | "1mo";
   customCsv?: string;
@@ -77,6 +79,8 @@ function NormalizedOverlaySvg({ match }: { match: DrawMatchResult }) {
 export default function PatternDrawCanvas({
   authenticated,
   onRequireAuth,
+  scanName: controlledName,
+  onRequireName,
   universe,
   interval,
   customCsv,
@@ -87,6 +91,7 @@ export default function PatternDrawCanvas({
   notify,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const localNameRef = useRef<HTMLInputElement>(null);
   const [strokes, setStrokes] = useState<DrawPoint[][]>([
     [...PATTERN_TEMPLATES[0].points],
   ]);
@@ -95,12 +100,15 @@ export default function PatternDrawCanvas({
   );
   const [drawing, setDrawing] = useState(false);
   const [eraseMode, setEraseMode] = useState(false);
-  const [scanName, setScanName] = useState("Double Bottom Shape Search");
+  const [localName, setLocalName] = useState("");
+  const [localNameError, setLocalNameError] = useState("");
   const [windowBars, setWindowBars] = useState(20);
   const [minPatternFit, setMinPatternFit] = useState(60);
   const [submitting, setSubmitting] = useState(false);
   const [lastReport, setLastReport] = useState<DrawScanReport | null>(null);
 
+  const isControlledName = controlledName !== undefined;
+  const effectiveName = isControlledName ? controlledName : localName;
   const flatPoints = strokes.flat();
 
   const renderCanvas = useCallback(() => {
@@ -231,10 +239,29 @@ export default function PatternDrawCanvas({
     setActiveTemplate(tpl.id);
     setEraseMode(false);
     setStrokes([[...tpl.points]]);
-    setScanName(`${tpl.label} Pattern Search`);
   }
 
   async function runDrawScan() {
+    const trimmedName = effectiveName.trim();
+    if (!trimmedName) {
+      if (onRequireName) {
+        onRequireName("Enter a Soul name");
+      } else {
+        setLocalNameError("Enter a Soul name");
+        localNameRef.current?.focus();
+      }
+      return;
+    }
+    if ([...trimmedName].length < 3) {
+      const msg = "Soul name requires 3–100 characters";
+      if (onRequireName) {
+        onRequireName(msg);
+      } else {
+        setLocalNameError(msg);
+        localNameRef.current?.focus();
+      }
+      return;
+    }
     if (!authenticated) {
       onRequireAuth?.();
       return;
@@ -253,7 +280,7 @@ export default function PatternDrawCanvas({
       }>("/api/strategy/scan", {
         action: "run-draw-scan",
         requestId: crypto.randomUUID(),
-        name: scanName.trim() || "Interactive Draw Pattern Search",
+        name: trimmedName,
         description: `Drawn pattern similarity search (${windowBars}-bar lookback, min fit ${minPatternFit}).`,
         strokePoints: flatPoints.slice(0, 360),
         windowBars,
@@ -372,17 +399,29 @@ export default function PatternDrawCanvas({
       />
 
       <div className="x1-form-grid">
+        {!isControlledName && (
+          <label>
+            Soul name
+            <input
+              ref={localNameRef}
+              value={localName}
+              maxLength={100}
+              aria-invalid={localNameError ? "true" : undefined}
+              onChange={(e) => {
+                setLocalName(e.target.value);
+                if (localNameError) setLocalNameError("");
+              }}
+              placeholder="Name your Soul"
+            />
+            {localNameError && (
+              <span role="alert" className="x1-form-error">
+                {localNameError}
+              </span>
+            )}
+          </label>
+        )}
         <label>
-          Draw Soul name
-          <input
-            value={scanName}
-            maxLength={100}
-            onChange={(e) => setScanName(e.target.value)}
-            placeholder="Name your drawn pattern search"
-          />
-        </label>
-        <label>
-          Lookback window ({windowBars} closed bars)
+          Lookback ({windowBars} bars)
           <input
             type="range"
             min={10}
@@ -393,7 +432,7 @@ export default function PatternDrawCanvas({
           />
         </label>
         <label>
-          Min Pattern Fit ({minPatternFit} / 100)
+          Min Pattern Fit ({minPatternFit}/100)
           <input
             type="range"
             min={45}
@@ -407,17 +446,16 @@ export default function PatternDrawCanvas({
 
       <div className="x1-actions" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
         <span className="x1-caption">
-          {flatPoints.length} normalized points · Uses 1 Advanced scan slot
-          (rolling 60-min limit; zero quota deducted if blocked)
+          {flatPoints.length} points · Descriptive fit (0–100)
         </span>
         <button
           type="button"
-          className="x51-accent-btn"
+          className="x1-primary x1-motion-button"
           disabled={submitting || busy || flatPoints.length < 2}
           onClick={() => void runDrawScan()}
         >
           <Play size={15} />
-          <span>{submitting ? "Matching shapes…" : "Run Draw Scan"}</span>
+          <span>{submitting ? "Matching shapes…" : "Run draw scan"}</span>
         </button>
       </div>
 

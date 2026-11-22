@@ -1,0 +1,341 @@
+/* ==========================================================================
+   STRATEGIC SOULS X5.4 — Compact Soul Scanner Styles
+   Uses canonical obsidian, silver, SS blue (#76C0FF) & GVV green tokens only.
+   ========================================================================== */
+
+.x54-scan-mode-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.x54-quota-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 2px 0;
+  font-size: 0.8rem;
+  color: var(--x1-text-muted);
+}
+
+.x54-quota-status {
+  font-variant-numeric: tabular-nums;
+  color: var(--x1-text-secondary);
+}
+
+.x54-quota-status.is-exhausted {
+  color: var(--x51-amber);
+  font-weight: 600;
+}
+
+.x54-quota-info-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--x51-hairline);
+  background: transparent;
+  color: var(--x1-text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.x54-quota-info-btn:hover,
+.x54-quota-info-btn:focus-visible {
+  color: var(--x1-text-primary);
+  border-color: var(--x51-hairline-strong);
+}
+
+.x54-quota-popover {
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--x51-hairline);
+  background: var(--x1-surface-2);
+  color: var(--x1-text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.x54-scan-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.x54-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.x54-field-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--x1-text-secondary);
+  letter-spacing: 0.01em;
+}
+
+.x54-draft-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--x51-hairline);
+  background: var(--x1-surface-2);
+  color: var(--x1-text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.x54-new-soul-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--x51-hairline);
+  background: var(--x1-surface-2);
+  color: var(--x1-text-primary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.x54-new-soul-btn:hover {
+  border-color: var(--x51-hairline-strong);
+}
+
+.x54-name-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--x51-hairline-strong);
+  background: var(--x1-bg);
+  color: var(--x1-text-primary);
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.x54-name-input:focus {
+  outline: 2px solid var(--x1-title-blue);
+  outline-offset: 1px;
+  border-color: var(--x1-title-blue);
+}
+
+.x54-name-input.has-error {
+  border-color: var(--x51-red);
+}
+
+.x54-inline-error {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--x51-red);
+}
+
+/* Single unified Classic rule selector card */
+.x54-formula-card {
+  width: 100%;
+  min-height: 54px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  border: 1px solid var(--x51-hairline);
+  background: var(--x1-surface-2);
+  color: var(--x1-text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.x54-formula-card:hover,
+.x54-formula-card:focus-visible {
+  border-color: var(--x1-title-blue);
+  background: var(--x1-surface-3);
+}
+
+.x54-formula-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.x54-formula-card-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--x1-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.x54-formula-card-code {
+  font-size: 0.78rem;
+  color: var(--x1-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.x54-formula-card-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--x1-title-blue);
+}
+
+/* Compact market & timeframe selector chips */
+.x54-compact-selectors {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.x54-chip-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.x54-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--x51-hairline);
+  background: var(--x1-surface-2);
+  color: var(--x1-text-secondary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.x54-chip:hover {
+  border-color: var(--x51-hairline-strong);
+  color: var(--x1-text-primary);
+}
+
+.x54-chip.is-active {
+  border-color: var(--x1-title-blue);
+  background: rgba(118, 192, 255, 0.14);
+  color: var(--x1-text-primary);
+}
+
+.x54-advanced-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.x54-compact-details {
+  margin-top: 2px;
+}
+
+/* Clear CTA hierarchy: Run scan primary, Check coverage secondary, Save draft tertiary */
+.x54-scan-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.x54-scan-primary {
+  width: 100%;
+  min-height: 46px;
+  justify-content: center;
+  font-size: 0.96rem;
+  font-weight: 600;
+  border-radius: 11px;
+}
+
+.x54-scan-subactions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.x54-scan-secondary {
+  flex: 1 1 auto;
+  min-height: 42px;
+  justify-content: center;
+  font-size: 0.875rem;
+}
+
+.x54-scan-tertiary {
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--x1-text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.x54-scan-tertiary:hover,
+.x54-scan-tertiary:focus-visible {
+  color: var(--x1-text-primary);
+  border-color: var(--x51-hairline);
+  background: var(--x1-surface-2);
+}
+
+.x54-scan-tertiary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.x54-public-disclosure {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--x51-hairline);
+  background: var(--x1-surface-2);
+}
+
+@media (min-width: 720px) {
+  .x54-scan-actions {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .x54-scan-primary {
+    width: auto;
+    min-width: 170px;
+    padding: 0 20px;
+  }
+
+  .x54-scan-subactions {
+    margin-left: auto;
+  }
+
+  .x54-scan-secondary {
+    flex: 0 0 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .x54-quota-info-btn,
+  .x54-formula-card,
+  .x54-chip {
+    transition: none;
+  }
+}

@@ -172,6 +172,8 @@ export function validateResearch(
   const name = typeof input.name === "string" ? input.name.trim() : "",
     description =
       typeof input.description === "string" ? input.description.trim() : "";
+  if ([...name].length === 0)
+    throw new Error("Enter a Soul name.");
   if ([...name].length < 3 || [...name].length > 100)
     throw new Error("Scan name requires 3–100 characters.");
   if ([...description].length < 10 || [...description].length > 2000)

@@ -98,7 +98,7 @@ function MiniSpark({ values, positive }: { values: number[]; positive: boolean }
 }
 
 /**
- * Exactly 9 cards arranged in a clean 3x3 matrix across desktop AND mobile (down to 320px).
+ * Nine customizable market overview cards (3x3 on tablet/desktop; 2-col + full-width 9th card on narrow phones).
  * Supports drag-and-drop AND accessible keyboard reordering, canonical catalog swap,
  * D1 optimistic-concurrency persistence (409 conflict recovery), and honest quote-quality badges.
  */
@@ -125,6 +125,12 @@ export default function MarketOverviewGrid({
   const [catalogQuery, setCatalogQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveBadge, setSaveBadge] = useState("");
+
+  useEffect(() => {
+    if (!saveBadge) return;
+    const timer = window.setTimeout(() => setSaveBadge(""), 4000);
+    return () => window.clearTimeout(timer);
+  }, [saveBadge]);
 
   const loadOverview = useCallback(async () => {
     setLoading(true);
@@ -254,6 +260,7 @@ export default function MarketOverviewGrid({
         /* Storage optional */
       }
       setEditOpen(false);
+      setSaveBadge(isReset ? "Reset locally" : "Saved locally");
       notify("Saved locally in this browser. Sign in to sync across devices.");
       await loadOverview();
       return;
@@ -273,9 +280,9 @@ export default function MarketOverviewGrid({
       setLayout(res.layout);
       setCards(res.cards);
       setDraftIds(res.layout.ids);
-      setSaveBadge(`Saved · v${res.layout.version}`);
+      setSaveBadge(isReset ? "Reset to defaults" : "Layout saved");
       setEditOpen(false);
-      notify(`9-card Markets grid saved (v${res.layout.version}).`);
+      notify(isReset ? "Market cards reset to defaults." : "Market layout saved.");
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Could not save market grid.";
@@ -295,36 +302,38 @@ export default function MarketOverviewGrid({
           Strategic Dashboard
         </h1>
         <div className="x53-dashboard-bar">
-          <span className="x1-caption">
-            {saveBadge
-              ? saveBadge
-              : layout.version > 0
-                ? `Synced · v${layout.version}`
-                : "9 customizable instruments"}
-            {asOfUTC
-              ? ` · Checked ${new Date(asOfUTC).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-              : ""}
-          </span>
-          <div className="x1-actions" style={{ gap: 6 }}>
+          <div className="x53-dashboard-meta" aria-live="polite">
+            {saveBadge ? (
+              <span className="x54-ephemeral-pill">{saveBadge}</span>
+            ) : asOfUTC ? (
+              <span className="x1-caption">
+                Checked{" "}
+                {new Date(asOfUTC).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </span>
+            ) : null}
+          </div>
+          <div className="x1-actions x53-dashboard-actions">
             <button
               type="button"
-              className="x1-secondary"
-              style={{ minHeight: 38, padding: "0 11px", fontSize: "0.82rem" }}
+              className="x1-secondary x53-toolbar-btn"
               onClick={() => void loadOverview()}
               disabled={loading}
-              aria-label="Refresh 9 market cards"
+              aria-label="Refresh market cards"
             >
-              <RefreshCw size={14} />
+              <RefreshCw size={14} aria-hidden="true" />
               <span>Refresh</span>
             </button>
             <button
               type="button"
-              className="x51-accent-btn"
-              style={{ minHeight: 38, padding: "0 12px", fontSize: "0.82rem" }}
+              className="x51-accent-btn x53-toolbar-btn"
               onClick={openCustomize}
+              aria-label="Customize 9 market cards"
             >
-              <SlidersHorizontal size={14} />
-              <span>Customize 9</span>
+              <SlidersHorizontal size={14} aria-hidden="true" />
+              <span>Customize</span>
             </button>
           </div>
         </div>
