@@ -1,4 +1,11 @@
 export type GeoPoint = { lat: number; lon: number };
+
+export const GLOBE_ZOOM_MIN = 1.0;
+export const GLOBE_ZOOM_MAX = 5.0;
+export const GLOBE_BASE_FILL = 0.86;
+export const GLOBE_CAMERA_NEAR = 0.25;
+export const GLOBE_CAMERA_FAR = 8.0;
+
 export function xyz(
   { lat, lon }: GeoPoint,
   radius = 1,
@@ -11,6 +18,7 @@ export function xyz(
     Math.cos(a) * Math.cos(b) * radius,
   ];
 }
+
 /** Approximate unit subsolar vector in Earth-fixed xyz coordinates for a UTC timestamp.
  * Used purely for illustrative day/night solar shading; not an astronomical ephemeris.
  */
@@ -31,6 +39,7 @@ export function solarDirection(at: Date | number = Date.now()): [number, number,
   const subsolarLon = (12 - utcHours) * 15;
   return xyz({ lat: declinationDeg, lon: subsolarLon }, 1);
 }
+
 export function rotateToView(
   [x, y, z]: readonly [number, number, number],
   yaw: number,
@@ -44,6 +53,24 @@ export function rotateToView(
   const az = -s * x + c * z;
   return [ax, p * y - q * az, q * y + p * az];
 }
+
+export function inverseRotateFromView(
+  [vx, vy, vz]: readonly [number, number, number],
+  yaw: number,
+  pitch: number,
+): [number, number, number] {
+  const p = Math.cos(pitch),
+    q = Math.sin(pitch),
+    c = Math.cos(yaw),
+    s = Math.sin(yaw);
+  const y = p * vy + q * vz;
+  const az = -q * vy + p * vz;
+  const x = c * vx - s * az;
+  const z = s * vx + c * az;
+  return [x, y, z];
+}
+
+/** Legacy orthographic projection preserved for backward compatibility with X1 tests. */
 export function project(
   point: GeoPoint,
   yaw: number,
@@ -67,6 +94,122 @@ export function project(
     z: d,
   };
 }
+
+export function clampGlobeZoom(zoom: number): number {
+  if (!Number.isFinite(zoom)) return GLOBE_ZOOM_MIN;
+  return Math.min(GLOBE_ZOOM_MAX, Math.max(GLOBE_ZOOM_MIN, zoom));
+}
+
+export function globeCameraParams(
+  zoomInput: number,
+  width: number,
+  height: number,
+) {
+  const zoom = clampGlobeZoom(zoomInput);
+  const safeW = Math.max(1, width);
+  const safeH = Math.max(1, height);
+  const aspect = safeW / safeH;
+  // Camera smoothly dollies closer from 3.20 (at 1x) down to ~1.97 (at 5x) while staying strictly outside R=1.15
+  const d1 = 3.2;
+  const cameraDist = 1.45 + 1.75 / Math.pow(zoom, 0.75);
+  const focalBase =
+    GLOBE_BASE_FILL *
+    zoom *
+    (Math.sqrt(d1 * d1 - 1) / (d1 - 1)) *
+    (cameraDist - 1);
+  // Multiplying by min(1, aspect) guarantees a perfectly circular Earth in both portrait and landscape stages
+  const focalEff = focalBase * Math.min(1, aspect);
+  const horizonZ = 1 / cameraDist;
+  const silhouetteRadiusPx =
+    ((focalEff * safeH) / 2) * (1 / Math.sqrt(cameraDist * cameraDist - 1));
+  return {
+    zoom,
+    cameraDist,
+    focalBase,
+    focalEff,
+    aspect,
+    horizonZ,
+    silhouetteRadiusPx,
+  };
+}
+
+/**
+ * True 3D perspective camera projection matching the X5.3 WebGL vertex shader.
+ * Produces identical pixel scale on X and Y under any aspect ratio (always circular),
+ * accurate horizon occlusion (z > radius / cameraDist), and high-zoom marker picking up to 5.0x.
+ */
+export function projectPerspective(
+  point: GeoPoint,
+  yaw: number,
+  pitch: number,
+  width: number,
+  height: number,
+  zoom = 1,
+  radius = 1,
+) {
+  const cam = globeCameraParams(zoom, width, height);
+  const [vx, vy, vz] = rotateToView(xyz(point, radius), yaw, pitch);
+  const camDepth = Math.max(GLOBE_CAMERA_NEAR, cam.cameraDist - vz);
+  const ndcX = (vx * cam.focalEff) / (camDepth * cam.aspect);
+  const ndcY = (vy * cam.focalEff) / camDepth;
+  const x = (ndcX + 1) * (width / 2);
+  const y = (1 - ndcY) * (height / 2);
+  const visible = vz > radius / cam.cameraDist;
+  const inViewport =
+    x >= -24 && x <= width + 24 && y >= -24 && y <= height + 24;
+  return {
+    x,
+    y,
+    z: vz,
+    camDepth,
+    visible,
+    inViewport,
+  };
+}
+
+/**
+ * Inverse ray-sphere intersection: maps a CSS pixel click/tap on the 3D Globe
+ * back to its geographic latitude/longitude (or null if outside the planet silhouette).
+ */
+export function unprojectScreenToLatLon(
+  screenX: number,
+  screenY: number,
+  yaw: number,
+  pitch: number,
+  width: number,
+  height: number,
+  zoom = 1,
+): GeoPoint | null {
+  if (width <= 0 || height <= 0) return null;
+  const cam = globeCameraParams(zoom, width, height);
+  const ndcX = (screenX / width) * 2 - 1;
+  const ndcY = 1 - (screenY / height) * 2;
+  // Ray origin O = (0, 0, cameraDist), ray direction D = (rx, ry, -1)
+  const rx = (ndcX * cam.aspect) / cam.focalEff;
+  const ry = ndcY / cam.focalEff;
+  const rz = -1;
+  const a = rx * rx + ry * ry + rz * rz;
+  const b = 2 * cam.cameraDist * rz; // -2 * cameraDist
+  const c = cam.cameraDist * cam.cameraDist - 1;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return null;
+  const t = (-b - Math.sqrt(disc)) / (2 * a);
+  if (t <= 0) return null;
+  const hitView: [number, number, number] = [
+    rx * t,
+    ry * t,
+    cam.cameraDist + rz * t,
+  ];
+  const [wx, wy, wz] = inverseRotateFromView(hitView, yaw, pitch);
+  const norm = Math.hypot(wx, wy, wz) || 1;
+  const lat = (Math.asin(Math.max(-1, Math.min(1, wy / norm))) * 180) / Math.PI;
+  const lon = (Math.atan2(wx / norm, wz / norm) * 180) / Math.PI;
+  return {
+    lat: Math.round(lat * 10000) / 10000,
+    lon: Math.round(lon * 10000) / 10000,
+  };
+}
+
 export function clusterVenues<T extends GeoPoint & { id: string }>(
   venues: readonly T[],
 ) {
@@ -80,6 +223,7 @@ export function clusterVenues<T extends GeoPoint & { id: string }>(
   }
   return clusters;
 }
+
 export function greatCircle(a: GeoPoint, b: GeoPoint, steps = 48) {
   const u = xyz(a),
     v = xyz(b),

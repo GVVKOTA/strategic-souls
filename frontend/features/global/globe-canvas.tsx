@@ -1,24 +1,34 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import {
+  GLOBE_CAMERA_FAR,
+  GLOBE_CAMERA_NEAR,
+  GLOBE_ZOOM_MAX,
+  GLOBE_ZOOM_MIN,
+  clampGlobeZoom,
   clusterVenues,
+  globeCameraParams,
   greatCircle,
-  project,
+  projectPerspective,
   rotateToView,
   solarDirection,
+  unprojectScreenToLatLon,
   xyz,
 } from "../../../backend/services/market-data/globe";
 import type { Exchange } from "../../../backend/services/market-data/exchanges";
 
-type ConflictMarker = {
+export type GlobePointMarker = {
   id: string;
   lat: number;
   lon: number;
+  kind: "EARTHQUAKE" | "DISASTER" | "COUNTRY" | "CONFLICT";
+  label?: string;
 };
 
-type FocusCoords = {
+export type FocusCoords = {
   lat: number;
   lon: number;
+  zoom?: number;
   nonce: number;
 };
 
@@ -35,17 +45,24 @@ type Props = {
   resetToken?: number;
   onFallbackChange?: (fallback: boolean) => void;
   focusCoords?: FocusCoords | null;
-  conflictPoints?: ConflictMarker[];
-  selectedConflictId?: string | null;
-  onSelectConflict?: (id: string) => void;
+  hazardPoints?: GlobePointMarker[];
+  countryPoints?: GlobePointMarker[];
+  conflictPoints?: GlobePointMarker[];
+  selectedMarkerId?: string | null;
+  onSelectMarker?: (marker: GlobePointMarker) => void;
+  showExchanges?: boolean;
+  showArcs?: boolean;
   earthQuality?: "auto" | "balanced" | "reduced";
 };
 
 const vertex = `
 attribute vec3 aPosition;
 uniform vec2 uRotation;
-uniform float uScale;
+uniform float uCameraDist;
+uniform float uFocalEff;
 uniform float uAspect;
+uniform float uNear;
+uniform float uFar;
 uniform float uPointSize;
 varying vec3 vPosition;
 varying vec3 vWorld;
@@ -55,7 +72,14 @@ void main() {
   vec3 a = vec3(c * aPosition.x + s * aPosition.z, aPosition.y, -s * aPosition.x + c * aPosition.z);
   vWorld = aPosition;
   vPosition = vec3(a.x, p * a.y - q * a.z, q * a.y + p * a.z);
-  gl_Position = vec4(vPosition.x * uScale / uAspect, vPosition.y * uScale, -vPosition.z * 0.4, 1.0);
+  float camDepth = max(uNear, uCameraDist - vPosition.z);
+  float zClip = ((uFar + uNear) / (uFar - uNear)) * camDepth - (2.0 * uFar * uNear) / (uFar - uNear);
+  gl_Position = vec4(
+    (vPosition.x * uFocalEff) / uAspect,
+    vPosition.y * uFocalEff,
+    zClip,
+    camDepth
+  );
   gl_PointSize = uPointSize;
 }
 `;
@@ -66,6 +90,7 @@ varying vec3 vPosition;
 varying vec3 vWorld;
 uniform vec4 uColor;
 uniform float uMode;
+uniform float uHorizonZ;
 uniform sampler2D uDay;
 uniform sampler2D uNight;
 uniform sampler2D uCloud;
@@ -93,7 +118,6 @@ void main() {
     // Natural full-color NASA Blue Marble in linear light space
     vec3 daySrgb = texture2D(uDay, uv).rgb;
     vec3 dayLin = pow(max(daySrgb, vec3(0.001)), vec3(2.2));
-    // Gentle satellite contrast & true-color fidelity (ocean blues, forest greens, desert ochre, polar ice)
     float luma = dot(dayLin, vec3(0.2126, 0.7152, 0.0722));
     vec3 naturalDay = mix(vec3(luma), dayLin, 1.16);
 
@@ -103,10 +127,9 @@ void main() {
 
     // Restrained Blinn-Phong ocean specular glint aligned with solar direction
     vec3 halfVec = normalize(sunV + vec3(0.0, 0.0, 1.0));
-    float spec = pow(max(0.0, dot(n, halfVec)), 36.0) * oceanMask * smoothstep(0.0, 0.28, sunDot) * 0.30;
+    float spec = pow(max(0.0, dot(n, halfVec)), 36.0) * oceanMask * smoothstep(0.0, 0.28, sunDot) * 0.28;
 
-    // Gentle camera-side fill keeps shadowed continents recognizable without washing out night lights
-    float viewFill = 0.05 + 0.07 * max(0.0, n.z);
+    float viewFill = 0.06 + 0.08 * max(0.0, n.z);
     vec3 dayLit = naturalDay * (viewFill + 1.12 * diffuse)
       + vec3(0.22, 0.32, 0.44) * spec
       + vec3(0.24, 0.10, 0.035) * twilight * (0.35 + 0.65 * naturalDay.r);
@@ -118,9 +141,9 @@ void main() {
     float cityStrength = pow(max(0.0, nightTex - 0.042), 1.12) * nightMask;
     vec3 cityLights = vec3(1.0, 0.78, 0.42) * cityStrength * 1.55;
 
-    // Historical translucent cloud layer (soft white in daylight, dimmed at night)
+    // Historical translucent cloud layer
     float cloudSample = texture2D(uCloud, uv).r * uCloudReady;
-    float cloudAlpha = clamp(pow(cloudSample, 1.48) * 0.60, 0.0, 0.70);
+    float cloudAlpha = clamp(pow(cloudSample, 1.48) * 0.56, 0.0, 0.66);
     vec3 cloudDay = vec3(0.92, 0.95, 1.0) * (0.09 + 0.96 * diffuse)
       + vec3(0.26, 0.12, 0.05) * twilight * 0.55;
     vec3 cloudNight = vec3(0.045, 0.062, 0.10);
@@ -134,7 +157,6 @@ void main() {
     vec3 atmoColor = mix(vec3(0.07, 0.16, 0.34), vec3(0.26, 0.58, 1.0), clamp(sunDot * 0.72 + 0.55, 0.0, 1.0));
     vec3 litEarth = surface + atmoColor * fresnel * 0.46;
 
-    // Deep-ocean placeholder sphere while satellite textures stream in
     vec3 placeholder = vec3(0.025, 0.065, 0.14) * (0.30 + 0.70 * diffuse) + atmoColor * fresnel * 0.36;
     vec3 finalLin = mix(placeholder, litEarth, uTextureReady);
 
@@ -143,20 +165,28 @@ void main() {
     vec3 srgb = pow(clamp(mapped, 0.0, 1.0), vec3(1.0 / 2.2));
     gl_FragColor = vec4(srgb, 1.0);
   } else if (uMode > 1.5) {
-    if (vPosition.z < 0.0) discard;
+    if (vPosition.z < uHorizonZ) discard;
     float d = length(gl_PointCoord - vec2(0.5));
     if (d > 0.5 || (uMode > 2.5 && d < 0.30)) discard;
     float edge = uMode > 2.5
       ? smoothstep(0.30, 0.35, d) * (1.0 - smoothstep(0.43, 0.5, d))
-      : 1.0 - smoothstep(0.38, 0.5, d);
+      : 1.0 - smoothstep(0.36, 0.5, d);
     gl_FragColor = vec4(uColor.rgb, uColor.a * edge);
   } else {
+    if (vPosition.z < uHorizonZ * 0.4) discard;
     gl_FragColor = uColor;
   }
 }
 `;
 
-/** Native WebGL natural-color Earth with locally hosted, historically dated NASA textures. */
+/**
+ * Strategic Souls X5.3 — Enlarged, Multi-Level Perspective 3D Earth Renderer.
+ * - True perspective camera zoom (1.0x to 5.0x) with zero near/far clipping and circular silhouette
+ * - Smooth drag rotation with inertia, two-finger touch pinch zoom, double-tap/click zoom to point,
+ *   keyboard arrows/+/-/0, and smooth fly-to target coordinates
+ * - Renders verified 3D surface markers directly (24 exchanges, USGS earthquakes, NASA EONET, countries, conflicts)
+ * - Lazy-initializes textures in viewport, pauses offscreen/background/reduced-motion, clean WebGL teardown
+ */
 export default function GlobeCanvas({
   venues,
   selected,
@@ -170,9 +200,13 @@ export default function GlobeCanvas({
   resetToken = 0,
   onFallbackChange,
   focusCoords = null,
+  hazardPoints = [],
+  countryPoints = [],
   conflictPoints = [],
-  selectedConflictId = null,
-  onSelectConflict,
+  selectedMarkerId = null,
+  onSelectMarker,
+  showExchanges = true,
+  showArcs = true,
   earthQuality = "auto",
 }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null),
@@ -185,14 +219,19 @@ export default function GlobeCanvas({
       onPause,
       onSelect,
       onZoom,
-      zoom,
+      zoom: clampGlobeZoom(zoom),
       focusCoords,
+      hazardPoints,
+      countryPoints,
       conflictPoints,
-      selectedConflictId,
-      onSelectConflict,
+      selectedMarkerId,
+      onSelectMarker,
+      showExchanges,
+      showArcs,
       earthQuality,
     }),
-    rotation = useRef({ yaw: -0.65, pitch: 0.2 }),
+    rotation = useRef({ yaw: -1.36, pitch: 0.34 }), // Centers comfortably on India / Eurasia / Africa at load
+    currentZoom = useRef(clampGlobeZoom(zoom)),
     [failure, setFailure] = useState(false),
     [satelliteStage, setSatelliteStage] = useState<
       "preparing" | "loading" | "ready" | "failed"
@@ -213,11 +252,15 @@ export default function GlobeCanvas({
       onPause,
       onSelect,
       onZoom,
-      zoom,
+      zoom: clampGlobeZoom(zoom),
       focusCoords,
+      hazardPoints,
+      countryPoints,
       conflictPoints,
-      selectedConflictId,
-      onSelectConflict,
+      selectedMarkerId,
+      onSelectMarker,
+      showExchanges,
+      showArcs,
       earthQuality,
     };
   }, [
@@ -231,9 +274,13 @@ export default function GlobeCanvas({
     onZoom,
     zoom,
     focusCoords,
+    hazardPoints,
+    countryPoints,
     conflictPoints,
-    selectedConflictId,
-    onSelectConflict,
+    selectedMarkerId,
+    onSelectMarker,
+    showExchanges,
+    showArcs,
     earthQuality,
   ]);
 
@@ -262,6 +309,11 @@ export default function GlobeCanvas({
       dirty = true,
       hovering = false,
       resetSeen = -1,
+      velYaw = 0,
+      velPitch = 0,
+      lastTapTime = 0,
+      lastTapX = 0,
+      lastTapY = 0,
       drag: {
         x: number;
         y: number;
@@ -317,9 +369,13 @@ export default function GlobeCanvas({
 
     const position = gl.getAttribLocation(program, "aPosition"),
       uRotation = gl.getUniformLocation(program, "uRotation"),
-      uScale = gl.getUniformLocation(program, "uScale"),
+      uCameraDist = gl.getUniformLocation(program, "uCameraDist"),
+      uFocalEff = gl.getUniformLocation(program, "uFocalEff"),
       uAspect = gl.getUniformLocation(program, "uAspect"),
+      uNear = gl.getUniformLocation(program, "uNear"),
+      uFar = gl.getUniformLocation(program, "uFar"),
       uMode = gl.getUniformLocation(program, "uMode"),
+      uHorizonZ = gl.getUniformLocation(program, "uHorizonZ"),
       uColor = gl.getUniformLocation(program, "uColor"),
       uPointSize = gl.getUniformLocation(program, "uPointSize"),
       uSunDir = gl.getUniformLocation(program, "uSunDir"),
@@ -340,9 +396,19 @@ export default function GlobeCanvas({
       return { b, count: vertices.length / 3 };
     }
 
-    // 40x80 UV-smooth sphere keeps silhouette crisp without taxing low-power mobile GPUs
-    const latSteps = 40,
-      lonSteps = 80,
+    const connection = navigator as Navigator & {
+      connection?: { saveData?: boolean; effectiveType?: string };
+      deviceMemory?: number;
+    };
+    const constrained =
+      window.matchMedia("(max-width:680px)").matches ||
+      !!connection.connection?.saveData ||
+      (connection.deviceMemory ?? 8) <= 2;
+    const qualityBudget = settings.current.earthQuality;
+
+    // 56x112 smooth sphere on desktop/standard, 40x80 on constrained mobile GPUs
+    const latSteps = qualityBudget === "reduced" || constrained ? 40 : 56,
+      lonSteps = qualityBudget === "reduced" || constrained ? 80 : 112,
       sphere: number[] = [];
     for (let a = 0; a < latSteps; a++)
       for (let b = 0; b < lonSteps; b++) {
@@ -425,15 +491,6 @@ export default function GlobeCanvas({
       return;
     }
 
-    const connection = navigator as Navigator & {
-      connection?: { saveData?: boolean; effectiveType?: string };
-      deviceMemory?: number;
-    };
-    const constrained =
-      window.matchMedia("(max-width:680px)").matches ||
-      !!connection.connection?.saveData ||
-      (connection.deviceMemory ?? 8) <= 2;
-    const qualityBudget = settings.current.earthQuality;
     const textureWidth = Math.min(
       gl.getParameter(gl.MAX_TEXTURE_SIZE) as number,
       qualityBudget === "reduced"
@@ -491,6 +548,15 @@ export default function GlobeCanvas({
         gl!.UNSIGNED_BYTE,
         source,
       );
+      // Enable mipmapping for crisp power-of-two textures at all zoom levels
+      if ((textureWidth & (textureWidth - 1)) === 0) {
+        gl!.generateMipmap(gl!.TEXTURE_2D);
+        gl!.texParameteri(
+          gl!.TEXTURE_2D,
+          gl!.TEXTURE_MIN_FILTER,
+          gl!.LINEAR_MIPMAP_LINEAR,
+        );
+      }
       close();
       if (gl!.getError() !== gl!.NO_ERROR)
         throw new Error("Texture allocation failed");
@@ -547,14 +613,42 @@ export default function GlobeCanvas({
     let frames = 0;
     let venueSignature = "",
       selectedBufferId = "",
-      conflictSignature = "",
-      selectedConflictBufId = "",
+      quakeSig = "",
+      disasterSig = "",
+      countrySig = "",
+      conflictSig = "",
+      selectedMarkerSig = "",
       focusNonceSeen = -1,
       pointBuffer: { b: WebGLBuffer; count: number } | null = null,
       selectedPointBuffer: { b: WebGLBuffer; count: number } | null = null,
+      quakePointBuffer: { b: WebGLBuffer; count: number } | null = null,
+      disasterPointBuffer: { b: WebGLBuffer; count: number } | null = null,
+      countryPointBuffer: { b: WebGLBuffer; count: number } | null = null,
       conflictPointBuffer: { b: WebGLBuffer; count: number } | null = null,
-      selectedConflictBuffer: { b: WebGLBuffer; count: number } | null = null,
+      selectedMarkerBuffer: { b: WebGLBuffer; count: number } | null = null,
       arcBuffer: { b: WebGLBuffer; count: number } | null = null;
+
+    function syncPointBuffer(
+      current: { b: WebGLBuffer; count: number } | null,
+      pts: readonly { lat: number; lon: number }[],
+      radius: number,
+    ) {
+      if (current) gl!.deleteBuffer(current.b);
+      if (pts.length === 0) return null;
+      return buffer(pts.flatMap((c) => xyz(c, radius)));
+    }
+
+    function aimAt(lat: number, lon: number) {
+      let yaw = (-lon * Math.PI) / 180;
+      while (yaw - rotation.current.yaw > Math.PI) yaw -= Math.PI * 2;
+      while (yaw - rotation.current.yaw < -Math.PI) yaw += Math.PI * 2;
+      target = {
+        yaw,
+        pitch: Math.max(-1.32, Math.min(1.32, (lat * Math.PI) / 180)),
+      };
+      velYaw = 0;
+      velPitch = 0;
+    }
 
     function drawBuffer(
       b: { b: WebGLBuffer; count: number },
@@ -575,68 +669,83 @@ export default function GlobeCanvas({
     function draw(time: number) {
       frame = 0;
       if (stopped || !visible || document.hidden) return;
-      const delta = last ? Math.min(1000, time - last) : 0;
+      const delta = last ? Math.min(100, time - last) : 0;
       last = time;
       const s = settings.current;
-      if (
-        s.focusCoords &&
-        s.focusCoords.nonce !== focusNonceSeen
-      ) {
+
+      if (s.focusCoords && s.focusCoords.nonce !== focusNonceSeen) {
         focusNonceSeen = s.focusCoords.nonce;
-        let yaw = (-s.focusCoords.lon * Math.PI) / 180;
-        while (yaw - rotation.current.yaw > Math.PI) yaw -= Math.PI * 2;
-        while (yaw - rotation.current.yaw < -Math.PI) yaw += Math.PI * 2;
-        target = {
-          yaw,
-          pitch: Math.max(
-            -1.2,
-            Math.min(1.2, (s.focusCoords.lat * Math.PI) / 180),
-          ),
-        };
-      } else if (
-        s.selected &&
-        (s.selected.id !== selectedId || s.resetToken !== resetSeen)
-      ) {
+        aimAt(s.focusCoords.lat, s.focusCoords.lon);
+      } else if (s.resetToken !== resetSeen) {
         resetSeen = s.resetToken;
+        if (s.selected) {
+          selectedId = s.selected.id;
+          aimAt(s.selected.lat, s.selected.lon);
+        } else {
+          target = { yaw: -1.36, pitch: 0.34 };
+        }
+      } else if (s.selected && s.selected.id !== selectedId) {
         selectedId = s.selected.id;
-        let yaw = (-s.selected.lon * Math.PI) / 180;
-        while (yaw - rotation.current.yaw > Math.PI) yaw -= Math.PI * 2;
-        while (yaw - rotation.current.yaw < -Math.PI) yaw += Math.PI * 2;
-        target = { yaw, pitch: (s.selected.lat * Math.PI) / 180 };
+        aimAt(s.selected.lat, s.selected.lon);
       }
+
+      // Smooth zoom interpolation
+      const zoomDiff = s.zoom - currentZoom.current;
+      if (Math.abs(zoomDiff) > 0.002) {
+        currentZoom.current = reduced.matches
+          ? s.zoom
+          : currentZoom.current + zoomDiff * 0.18;
+        dirty = true;
+      } else {
+        currentZoom.current = s.zoom;
+      }
+
       if (target && reduced.matches) {
         rotation.current = { ...target };
         target = null;
         dirty = true;
       }
       if (target) {
-        rotation.current.yaw += (target.yaw - rotation.current.yaw) * 0.13;
-        rotation.current.pitch +=
-          (target.pitch - rotation.current.pitch) * 0.13;
+        rotation.current.yaw += (target.yaw - rotation.current.yaw) * 0.14;
+        rotation.current.pitch += (target.pitch - rotation.current.pitch) * 0.14;
         if (
           Math.abs(target.yaw - rotation.current.yaw) +
             Math.abs(target.pitch - rotation.current.pitch) <
           0.001
-        )
+        ) {
+          rotation.current = { ...target };
           target = null;
+        }
+        dirty = true;
+      } else if (!drag && (Math.abs(velYaw) > 0.00015 || Math.abs(velPitch) > 0.00015)) {
+        // Gentle inertial coast after drag release
+        rotation.current.yaw += velYaw;
+        rotation.current.pitch = Math.max(
+          -1.32,
+          Math.min(1.32, rotation.current.pitch + velPitch),
+        );
+        velYaw *= 0.88;
+        velPitch *= 0.88;
+        if (Math.abs(velYaw) <= 0.00015) velYaw = 0;
+        if (Math.abs(velPitch) <= 0.00015) velPitch = 0;
         dirty = true;
       } else if (
         s.autoRotate &&
         (!reduced.matches || s.motionOverride) &&
         !drag &&
-        !hovering
+        !hovering &&
+        currentZoom.current <= 1.15
       ) {
-        rotation.current.yaw += (delta * Math.PI * 2) / 80000;
+        rotation.current.yaw += (delta * Math.PI * 2) / 95000;
         dirty = true;
       }
 
+      // Sync exchange venue & arc buffers
       const signature = s.venues.map((v) => v.id).join("|");
       if (signature !== venueSignature) {
         venueSignature = signature;
-        const clusters = clusterVenues(s.venues),
-          points = clusters.flatMap((c) => xyz(c, 1.024));
-        if (pointBuffer) gl!.deleteBuffer(pointBuffer.b);
-        pointBuffer = buffer(points);
+        const clusters = clusterVenues(s.venues);
+        pointBuffer = syncPointBuffer(pointBuffer, clusters, 1.018);
         const arcs: number[] = [];
         for (let i = 1; i < clusters.length; i += 3) {
           const curve = greatCircle(clusters[i - 1], clusters[i]);
@@ -644,53 +753,86 @@ export default function GlobeCanvas({
             arcs.push(...curve.slice(k - 3, k), ...curve.slice(k, k + 3));
         }
         if (arcBuffer) gl!.deleteBuffer(arcBuffer.b);
-        arcBuffer = buffer(arcs);
+        arcBuffer = arcs.length > 0 ? buffer(arcs) : null;
         dirty = true;
       }
 
       const currentSelectedId = s.selected?.id ?? "";
       if (currentSelectedId !== selectedBufferId) {
         selectedBufferId = currentSelectedId;
-        if (selectedPointBuffer) {
-          gl!.deleteBuffer(selectedPointBuffer.b);
-          selectedPointBuffer = null;
-        }
-        if (s.selected) {
-          selectedPointBuffer = buffer(xyz(s.selected, 1.028));
-        }
+        selectedPointBuffer = syncPointBuffer(
+          selectedPointBuffer,
+          s.selected ? [s.selected] : [],
+          1.022,
+        );
+        dirty = true;
+      }
+
+      const quakes = s.hazardPoints
+        .filter((h) => h.kind === "EARTHQUAKE")
+        .slice(0, 60);
+      const nextQuakeSig = quakes.map((q) => q.id).join("|");
+      if (nextQuakeSig !== quakeSig) {
+        quakeSig = nextQuakeSig;
+        quakePointBuffer = syncPointBuffer(quakePointBuffer, quakes, 1.024);
+        dirty = true;
+      }
+
+      const disasters = s.hazardPoints
+        .filter((h) => h.kind === "DISASTER")
+        .slice(0, 40);
+      const nextDisSig = disasters.map((d) => d.id).join("|");
+      if (nextDisSig !== disasterSig) {
+        disasterSig = nextDisSig;
+        disasterPointBuffer = syncPointBuffer(
+          disasterPointBuffer,
+          disasters,
+          1.024,
+        );
+        dirty = true;
+      }
+
+      const nextCountrySig = s.countryPoints.map((c) => c.id).join("|");
+      if (nextCountrySig !== countrySig) {
+        countrySig = nextCountrySig;
+        countryPointBuffer = syncPointBuffer(
+          countryPointBuffer,
+          s.countryPoints,
+          1.02,
+        );
         dirty = true;
       }
 
       const nextConflictSig = s.conflictPoints
-        .slice(0, 240)
-        .map((c) => `${c.id}:${c.lat.toFixed(2)},${c.lon.toFixed(2)}`)
+        .slice(0, 200)
+        .map((c) => c.id)
         .join("|");
-      if (nextConflictSig !== conflictSignature) {
-        conflictSignature = nextConflictSig;
-        if (conflictPointBuffer) {
-          gl!.deleteBuffer(conflictPointBuffer.b);
-          conflictPointBuffer = null;
-        }
-        if (s.conflictPoints.length > 0) {
-          const pts = s.conflictPoints
-            .slice(0, 240)
-            .flatMap((c) => xyz(c, 1.031));
-          conflictPointBuffer = buffer(pts);
-        }
+      if (nextConflictSig !== conflictSig) {
+        conflictSig = nextConflictSig;
+        conflictPointBuffer = syncPointBuffer(
+          conflictPointBuffer,
+          s.conflictPoints.slice(0, 200),
+          1.026,
+        );
         dirty = true;
       }
 
-      const curSelectedConflict = s.selectedConflictId ?? "";
-      if (curSelectedConflict !== selectedConflictBufId) {
-        selectedConflictBufId = curSelectedConflict;
-        if (selectedConflictBuffer) {
-          gl!.deleteBuffer(selectedConflictBuffer.b);
-          selectedConflictBuffer = null;
-        }
-        const matched = s.conflictPoints.find((c) => c.id === curSelectedConflict);
-        if (matched) {
-          selectedConflictBuffer = buffer(xyz(matched, 1.034));
-        }
+      const allDynamicMarkers = [
+        ...s.hazardPoints,
+        ...s.countryPoints,
+        ...s.conflictPoints,
+      ];
+      const matchedMarker = s.selectedMarkerId
+        ? allDynamicMarkers.find((m) => m.id === s.selectedMarkerId) ?? null
+        : null;
+      const nextSelMarkerSig = matchedMarker ? matchedMarker.id : "";
+      if (nextSelMarkerSig !== selectedMarkerSig) {
+        selectedMarkerSig = nextSelMarkerSig;
+        selectedMarkerBuffer = syncPointBuffer(
+          selectedMarkerBuffer,
+          matchedMarker ? [matchedMarker] : [],
+          1.029,
+        );
         dirty = true;
       }
 
@@ -709,6 +851,7 @@ export default function GlobeCanvas({
           el.width = width;
           el.height = height;
         }
+        const cam = globeCameraParams(currentZoom.current, rect.width || 1, rect.height || 1);
         gl!.viewport(0, 0, width, height);
         gl!.clearColor(0, 0, 0, 0);
         gl!.clear(gl!.COLOR_BUFFER_BIT | gl!.DEPTH_BUFFER_BIT);
@@ -721,6 +864,7 @@ export default function GlobeCanvas({
           gl!.ONE,
           gl!.ONE_MINUS_SRC_ALPHA,
         );
+
         const sunW = solarDirection(Date.now());
         const sunV = rotateToView(
           sunW,
@@ -728,8 +872,12 @@ export default function GlobeCanvas({
           rotation.current.pitch,
         );
         gl!.uniform2f(uRotation, rotation.current.yaw, rotation.current.pitch);
-        gl!.uniform1f(uAspect, width / height);
-        gl!.uniform1f(uScale, Math.min(0.84, (0.84 * width) / height) * s.zoom);
+        gl!.uniform1f(uCameraDist, cam.cameraDist);
+        gl!.uniform1f(uFocalEff, cam.focalEff);
+        gl!.uniform1f(uAspect, cam.aspect);
+        gl!.uniform1f(uNear, GLOBE_CAMERA_NEAR);
+        gl!.uniform1f(uFar, GLOBE_CAMERA_FAR);
+        gl!.uniform1f(uHorizonZ, cam.horizonZ);
         gl!.uniform3fv(uSunDir, sunW);
         gl!.uniform3fv(uSunView, sunV);
         gl!.uniform1i(dayUniform, 0);
@@ -737,55 +885,88 @@ export default function GlobeCanvas({
         gl!.uniform1i(cloudUniform, 2);
         gl!.uniform1f(readyUniform, textureReady ? 1 : 0);
         gl!.uniform1f(cloudReadyUniform, cloudReady ? 1 : 0);
+
         drawBuffer(sphereBuffer, 0, [0, 0, 0, 1], gl!.TRIANGLES);
 
-        if (arcBuffer)
-          drawBuffer(arcBuffer, 1, [0.76, 0.85, 0.94, 0.28], gl!.LINES);
-        if (pointBuffer)
+        const zoomPtBoost = 1 + (currentZoom.current - 1) * 0.12;
+        if (s.showArcs && arcBuffer) {
+          drawBuffer(arcBuffer, 1, [0.76, 0.85, 0.94, 0.22], gl!.LINES);
+        }
+        if (s.showExchanges && pointBuffer) {
           drawBuffer(
             pointBuffer,
             2,
-            [0.94, 0.96, 0.99, 0.96],
+            [0.94, 0.97, 1.0, 0.96],
             gl!.POINTS,
-            7 * dpr,
+            7.5 * zoomPtBoost * dpr,
           );
-        if (selectedPointBuffer) {
+        }
+        if (countryPointBuffer) {
           drawBuffer(
-            selectedPointBuffer,
-            3,
-            [0.46, 0.75, 1.0, 0.95],
-            gl!.POINTS,
-            15 * dpr,
-          );
-          drawBuffer(
-            selectedPointBuffer,
+            countryPointBuffer,
             2,
-            [0.95, 0.98, 1.0, 1.0],
+            [0.24, 0.84, 0.62, 0.94],
             gl!.POINTS,
-            8 * dpr,
+            8.5 * zoomPtBoost * dpr,
+          );
+        }
+        if (disasterPointBuffer) {
+          drawBuffer(
+            disasterPointBuffer,
+            2,
+            [0.22, 0.75, 0.98, 0.96],
+            gl!.POINTS,
+            9 * zoomPtBoost * dpr,
+          );
+        }
+        if (quakePointBuffer) {
+          drawBuffer(
+            quakePointBuffer,
+            2,
+            [0.96, 0.64, 0.08, 0.98],
+            gl!.POINTS,
+            9.5 * zoomPtBoost * dpr,
           );
         }
         if (conflictPointBuffer) {
           drawBuffer(
             conflictPointBuffer,
             2,
-            [0.92, 0.24, 0.24, 0.96],
+            [0.94, 0.27, 0.27, 0.96],
             gl!.POINTS,
-            8.5 * dpr,
+            9 * zoomPtBoost * dpr,
           );
         }
-        if (selectedConflictBuffer) {
+        if (s.showExchanges && selectedPointBuffer) {
           drawBuffer(
-            selectedConflictBuffer,
+            selectedPointBuffer,
             3,
-            [0.98, 0.34, 0.34, 0.96],
+            [0.46, 0.75, 1.0, 0.96],
             gl!.POINTS,
-            17 * dpr,
+            17 * zoomPtBoost * dpr,
+          );
+          drawBuffer(
+            selectedPointBuffer,
+            2,
+            [0.96, 0.99, 1.0, 1.0],
+            gl!.POINTS,
+            8.5 * zoomPtBoost * dpr,
+          );
+        }
+        if (selectedMarkerBuffer) {
+          drawBuffer(
+            selectedMarkerBuffer,
+            3,
+            [0.46, 0.75, 1.0, 0.98],
+            gl!.POINTS,
+            19 * zoomPtBoost * dpr,
           );
         }
 
         el.dataset.visibility = "visible";
         el.dataset.renderer = "webgl";
+        el.dataset.projection = "perspective";
+        el.dataset.zoom = currentZoom.current.toFixed(2);
         el.dataset.solarLighting = "approximate-utc";
         el.dataset.frameCount = String(++frames);
         el.dataset.rotation = rotation.current.yaw.toFixed(4);
@@ -797,11 +978,17 @@ export default function GlobeCanvas({
               : "paused";
         dirty = false;
       }
-      if (
-        (s.autoRotate && (!reduced.matches || s.motionOverride) && !hovering) ||
-        target
-      )
-        frame = requestAnimationFrame(safeDraw);
+
+      const animating =
+        Math.abs(s.zoom - currentZoom.current) > 0.002 ||
+        !!target ||
+        Math.abs(velYaw) > 0.00015 ||
+        Math.abs(velPitch) > 0.00015 ||
+        (s.autoRotate &&
+          (!reduced.matches || s.motionOverride) &&
+          !hovering &&
+          currentZoom.current <= 1.15);
+      if (animating) frame = requestAnimationFrame(safeDraw);
     }
 
     function safeDraw(time: number) {
@@ -863,6 +1050,8 @@ export default function GlobeCanvas({
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (activePointers.size === 2) {
         drag = null;
+        velYaw = 0;
+        velPitch = 0;
         pinchDistance = currentPinchDistance();
         settings.current.onPause();
         return;
@@ -876,6 +1065,8 @@ export default function GlobeCanvas({
         id: e.pointerId,
       };
       target = null;
+      velYaw = 0;
+      velPitch = 0;
       settings.current.onPause();
       el.setPointerCapture(e.pointerId);
     };
@@ -886,11 +1077,10 @@ export default function GlobeCanvas({
       }
       if (activePointers.size >= 2) {
         const nextDist = currentPinchDistance();
-        if (nextDist !== null && pinchDistance !== null && pinchDistance > 0) {
-          const delta = (nextDist - pinchDistance) * 0.004;
-          settings.current.onZoom(
-            Math.min(1.35, Math.max(0.8, settings.current.zoom + delta)),
-          );
+        if (nextDist !== null && pinchDistance !== null && pinchDistance > 8) {
+          const ratio = nextDist / pinchDistance;
+          const nextZoom = clampGlobeZoom(settings.current.zoom * ratio);
+          settings.current.onZoom(Math.round(nextZoom * 100) / 100);
           pinchDistance = nextDist;
           start();
         }
@@ -899,13 +1089,110 @@ export default function GlobeCanvas({
       if (!drag || e.pointerId !== drag.id) return;
       const dx = e.clientX - drag.x,
         dy = e.clientY - drag.y;
-      rotation.current.yaw += dx * 0.006;
+      // Adaptive drag sensitivity scales cleanly when zoomed in up to 5x
+      const sens = 0.0056 / Math.pow(currentZoom.current, 0.85);
+      const dYaw = dx * sens;
+      const dPitch = dy * sens * 0.85;
+      rotation.current.yaw += dYaw;
       rotation.current.pitch = Math.max(
-        -1.2,
-        Math.min(1.2, rotation.current.pitch + dy * 0.004),
+        -1.32,
+        Math.min(1.32, rotation.current.pitch + dPitch),
       );
+      if (!reduced.matches) {
+        velYaw = dYaw * 0.6;
+        velPitch = dPitch * 0.6;
+      }
       drag.x = e.clientX;
       drag.y = e.clientY;
+      start();
+    };
+
+    const pickAt = (clientX: number, clientY: number): boolean => {
+      const rect = el.getBoundingClientRect();
+      const s = settings.current;
+      const px = clientX - rect.left;
+      const py = clientY - rect.top;
+      const z = currentZoom.current;
+
+      // 1. Check dynamic event & country markers first (conflicts, earthquakes, disasters, countries)
+      const dynamicMarkers: GlobePointMarker[] = [
+        ...s.conflictPoints.slice(0, 200),
+        ...s.hazardPoints,
+        ...s.countryPoints,
+      ];
+      const markerHit = dynamicMarkers
+        .map((m) => ({
+          m,
+          p: projectPerspective(
+            m,
+            rotation.current.yaw,
+            rotation.current.pitch,
+            rect.width,
+            rect.height,
+            z,
+            1.024,
+          ),
+        }))
+        .filter(({ p }) => p.visible && p.inViewport)
+        .map(({ m, p }) => ({ m, d: Math.hypot(px - p.x, py - p.y) }))
+        .filter((x) => x.d < 22)
+        .sort((a, b) => a.d - b.d)[0];
+
+      if (markerHit && s.onSelectMarker) {
+        s.onSelectMarker(markerHit.m);
+        return true;
+      }
+
+      // 2. Check exchange hubs
+      if (s.showExchanges) {
+        const candidates = s.venues
+          .map((v) => ({
+            v,
+            p: projectPerspective(
+              v,
+              rotation.current.yaw,
+              rotation.current.pitch,
+              rect.width,
+              rect.height,
+              z,
+              1.018,
+            ),
+          }))
+          .filter(({ p }) => p.visible && p.inViewport)
+          .map(({ v, p }) => ({ v, d: Math.hypot(px - p.x, py - p.y) }))
+          .filter((c) => c.d < 24)
+          .sort((a, b) => a.d - b.d);
+
+        if (candidates[0]) {
+          const same = candidates.filter(
+            (c) => Math.abs(c.d - candidates[0].d) < 4,
+          );
+          const index = same.findIndex((c) => c.v.id === s.selected?.id);
+          s.onSelect(same[(index + 1) % same.length].v);
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const zoomTowardClientPoint = (clientX: number, clientY: number) => {
+      const rect = el.getBoundingClientRect();
+      const hit = unprojectScreenToLatLon(
+        clientX - rect.left,
+        clientY - rect.top,
+        rotation.current.yaw,
+        rotation.current.pitch,
+        rect.width,
+        rect.height,
+        currentZoom.current,
+      );
+      if (!hit) return;
+      settings.current.onPause();
+      aimAt(hit.lat, hit.lon);
+      const cur = settings.current.zoom;
+      const next =
+        cur < 1.7 ? 2.1 : cur < 3.1 ? 3.5 : cur < 4.6 ? 5.0 : GLOBE_ZOOM_MIN;
+      settings.current.onZoom(next);
       start();
     };
 
@@ -920,64 +1207,18 @@ export default function GlobeCanvas({
         Math.hypot(e.clientX - active.startX, e.clientY - active.startY) < 8;
       drag = null;
       if (click) {
-        const rect = el.getBoundingClientRect();
-        const conflictHit = settings.current.conflictPoints
-          .slice(0, 240)
-          .map((c) => ({
-            c,
-            p: project(
-              c,
-              rotation.current.yaw,
-              rotation.current.pitch,
-              rect.width,
-              rect.height,
-              settings.current.zoom,
-            ),
-          }))
-          .filter(({ p }) => p.visible)
-          .map(({ c, p }) => ({
-            c,
-            d: Math.hypot(
-              e.clientX - rect.left - p.x,
-              e.clientY - rect.top - p.y,
-            ),
-          }))
-          .filter((x) => x.d < 20)
-          .sort((a, b) => a.d - b.d)[0];
-        if (conflictHit && settings.current.onSelectConflict) {
-          settings.current.onSelectConflict(conflictHit.c.id);
-        } else {
-          const candidates = settings.current.venues
-            .map((v) => ({
-              v,
-              p: project(
-                v,
-                rotation.current.yaw,
-                rotation.current.pitch,
-                rect.width,
-                rect.height,
-                settings.current.zoom,
-              ),
-            }))
-            .filter(({ p }) => p.visible)
-            .map(({ v, p }) => ({
-              v,
-              d: Math.hypot(
-                e.clientX - rect.left - p.x,
-                e.clientY - rect.top - p.y,
-              ),
-            }))
-            .filter((c) => c.d < 22)
-            .sort((a, b) => a.d - b.d);
-          if (candidates[0]) {
-            const same = candidates.filter(
-              (c) => Math.abs(c.d - candidates[0].d) < 3,
-            );
-            const index = same.findIndex(
-              (c) => c.v.id === settings.current.selected?.id,
-            );
-            settings.current.onSelect(same[(index + 1) % same.length].v);
-          }
+        velYaw = 0;
+        velPitch = 0;
+        const now = performance.now();
+        const isDoubleTap =
+          now - lastTapTime < 340 &&
+          Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY) < 28;
+        lastTapTime = now;
+        lastTapX = e.clientX;
+        lastTapY = e.clientY;
+        const hitMarker = pickAt(e.clientX, e.clientY);
+        if (!hitMarker && isDoubleTap) {
+          zoomTowardClientPoint(e.clientX, e.clientY);
         }
       }
       start();
@@ -1004,38 +1245,65 @@ export default function GlobeCanvas({
     };
 
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && document.activeElement !== el) return;
+      // Only intercept scroll wheel when user explicitly focuses the globe, holds Ctrl/pinch trackpad,
+      // or is already zoomed into regional exploration — never hijack casual vertical page scroll!
+      if (
+        !e.ctrlKey &&
+        document.activeElement !== el &&
+        settings.current.zoom <= GLOBE_ZOOM_MIN + 0.05
+      ) {
+        return;
+      }
       e.preventDefault();
       settings.current.onPause();
-      settings.current.onZoom(
-        Math.min(1.35, Math.max(0.8, settings.current.zoom - e.deltaY * 0.001)),
-      );
+      const factor = Math.exp(-e.deltaY * 0.0022);
+      const next = clampGlobeZoom(settings.current.zoom * factor);
+      settings.current.onZoom(Math.round(next * 100) / 100);
       start();
     };
 
     const onKey = (e: KeyboardEvent) => {
       if (
-        !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "+", "-"].includes(
-          e.key,
-        )
+        ![
+          "ArrowLeft",
+          "ArrowRight",
+          "ArrowUp",
+          "ArrowDown",
+          "+",
+          "=",
+          "-",
+          "_",
+          "0",
+          "Home",
+        ].includes(e.key)
       )
         return;
       e.preventDefault();
       settings.current.onPause();
       target = null;
-      if (e.key === "ArrowLeft") rotation.current.yaw -= 0.08;
-      if (e.key === "ArrowRight") rotation.current.yaw += 0.08;
+      velYaw = 0;
+      velPitch = 0;
+      const step = 0.12 / Math.pow(currentZoom.current, 0.7);
+      if (e.key === "ArrowLeft") rotation.current.yaw -= step;
+      if (e.key === "ArrowRight") rotation.current.yaw += step;
       if (e.key === "ArrowUp")
-        rotation.current.pitch = Math.max(-1.2, rotation.current.pitch - 0.08);
+        rotation.current.pitch = Math.max(-1.32, rotation.current.pitch - step);
       if (e.key === "ArrowDown")
-        rotation.current.pitch = Math.min(1.2, rotation.current.pitch + 0.08);
-      if (e.key === "+" || e.key === "-")
+        rotation.current.pitch = Math.min(1.32, rotation.current.pitch + step);
+      if (e.key === "+" || e.key === "=") {
         settings.current.onZoom(
-          Math.min(
-            1.35,
-            Math.max(0.8, settings.current.zoom + (e.key === "+" ? 0.1 : -0.1)),
-          ),
+          Math.round(clampGlobeZoom(settings.current.zoom * 1.32) * 100) / 100,
         );
+      }
+      if (e.key === "-" || e.key === "_") {
+        settings.current.onZoom(
+          Math.round(clampGlobeZoom(settings.current.zoom / 1.32) * 100) / 100,
+        );
+      }
+      if (e.key === "0" || e.key === "Home") {
+        settings.current.onZoom(GLOBE_ZOOM_MIN);
+        target = { yaw: -1.36, pitch: 0.34 };
+      }
       start();
     };
 
@@ -1105,8 +1373,12 @@ export default function GlobeCanvas({
     resetToken,
     zoom,
     focusCoords,
+    hazardPoints,
+    countryPoints,
     conflictPoints,
-    selectedConflictId,
+    selectedMarkerId,
+    showExchanges,
+    showArcs,
     earthQuality,
   ]);
 
@@ -1119,14 +1391,12 @@ export default function GlobeCanvas({
           alt="NASA Blue Marble eastern-hemisphere natural-color historical composite"
         />
         <p>
-          Natural-color static Earth ·{" "}
-          {forceFallback
-            ? "2D compatibility view selected."
-            : "3D renderer or imagery unavailable."}{" "}
-          Use the exchange list for every venue.
+          Natural-color static Earth · WebGL 3D renderer unavailable on this
+          browser. Open Info for keyboard-accessible event and venue records.
         </p>
         {failure && !forceFallback && (
           <button
+            type="button"
             className="x1-secondary"
             onClick={() => {
               setSatelliteStage("preparing");
@@ -1150,13 +1420,13 @@ export default function GlobeCanvas({
         className="x1-globe-canvas"
         role="img"
         tabIndex={0}
-        aria-label="Interactive natural-color satellite Earth with 24 global exchange cities and approximate UTC solar day/night lighting. Drag, pinch, or use arrow keys to rotate and zoom. Use the list to select every exchange."
+        aria-label="Interactive natural-color 3D Earth with 24 global exchange cities, USGS seismic events, NASA EONET natural disasters, and approximate UTC solar day and night lighting. Drag to rotate, pinch or double-tap to zoom up to 5x, or use arrow keys and plus or minus keys."
       />
       {(satelliteStage === "preparing" || satelliteStage === "loading") && (
         <div className="x1-satellite-loading" role="status">
           <span aria-hidden="true" />
           {satelliteStage === "preparing"
-            ? "Preparing Earth renderer…"
+            ? "Preparing 3D Earth…"
             : "Loading NASA Earth imagery…"}
         </div>
       )}

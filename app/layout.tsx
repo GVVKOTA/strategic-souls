@@ -9,7 +9,6 @@ import "../frontend/features/global/data.css";
 import "../frontend/features/strategy/research.css";
 import "../frontend/styles/x2.css";
 import "../frontend/features/account/account.css";
-import "../frontend/features/earth/earth-map.css";
 import "../frontend/styles/x51.css";
 export const metadata: Metadata = {
   title: "Strategic Souls · Market intelligence that remembers",
