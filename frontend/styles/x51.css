@@ -2067,6 +2067,11 @@
   gap: 10px;
 }
 
+.x53-pw-card-head button {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .x53-pw-card-head h2 {
   margin: 0 0 2px;
   font-size: 1.08rem;
@@ -2178,6 +2183,11 @@
   top: 12px;
   right: 12px;
   z-index: 5;
+}
+
+.x53-globe-stage .x1-satellite-loading {
+  top: 14px;
+  right: 58px;
 }
 
 .x53-globe-overlay-bl {
@@ -2379,7 +2389,15 @@
   flex-shrink: 0;
 }
 
+.x53-cal-tz span {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .x53-cal-tz-select {
+  width: auto !important;
+  min-width: 112px;
+  flex-shrink: 0;
   min-height: 40px;
   padding: 6px 10px;
   border-radius: 9px;
@@ -2913,6 +2931,13 @@
 }
 
 @media (max-width: 480px) {
+  .x53-globe-pill {
+    min-height: 36px;
+    padding: 0 9px;
+    font-size: 0.78rem;
+    gap: 4px;
+  }
+
   .x53-subtabs {
     gap: 4px;
   }

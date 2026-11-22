@@ -8,15 +8,15 @@ export function GET(request: Request) {
   return Response.json(
     {
       product: "Strategic Souls",
-      release: "X5.2",
-      releaseName: "Post-X5.1 Precision 24-Feature Release",
-      revisionMarker: "x5.2-precision-24-2026-11-22",
+      release: "X5.3",
+      releaseName: "The Focused Intelligence Terminal",
+      revisionMarker: "x5.3-focused-terminal-2026-11-22",
       dashboards: ["Global", "Strategy", "Community"],
       exchangeVenues: 24,
       classicPresets: 50,
       avatarPresets: 50,
       bannerPresets: 8,
-      earthMapBasemap: "NASA GIBS Blue Marble Next Generation & VIIRS Black Marble (Public Domain)",
+      earthMapBasemap: "NASA Blue Marble Next Generation & VIIRS Black Marble 3D Perspective Earth (Public Domain)",
       auth: "Cloudflare Workers D1 session authentication (email/password; optional Google OAuth)",
       marketData: {
         publicSources:
