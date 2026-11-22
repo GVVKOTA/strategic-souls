@@ -8,9 +8,9 @@ export function GET(request: Request) {
   return Response.json(
     {
       product: "Strategic Souls",
-      release: "X5.3",
-      releaseName: "The Focused Intelligence Terminal",
-      revisionMarker: "x5.3-focused-terminal-2026-11-22",
+      release: "X5.4",
+      releaseName: "Premium Mobile UI, Public Research Profiles, Telegram-like Chats & Cleaner Soul Scanner",
+      revisionMarker: "x5.4-mobile-social-scanner-2026-11-22",
       dashboards: ["Global", "Strategy", "Community"],
       exchangeVenues: 24,
       classicPresets: 50,
