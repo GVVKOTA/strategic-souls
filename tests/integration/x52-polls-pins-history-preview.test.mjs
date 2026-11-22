@@ -20,7 +20,7 @@ import { webcrypto, randomUUID } from "node:crypto";
 import ts from "typescript";
 
 const CONSENT_VERSION = "2026-11-14-v4";
-let nowMs = Date.parse("2026-11-23T06:00:00.000Z"); // Monday 11:30 IST (before 15:30 IST NSE close)
+let nowMs = Date.parse("2026-11-23T03:00:00.000Z"); // Monday 08:30 IST (post Fri close, before Mon 09:15 IST open)
 
 class MockDate extends Date {
   constructor(...args) {
@@ -215,21 +215,38 @@ test("[19] Daily Market Pulse: zero-vote 0% (no NaN), concurrent double-vote rac
   assert.equal(niftyBoth.tallies.find((t) => t.choice === "STRONG_RISE").pct, 50);
   assert.equal(niftyBoth.tallies.find((t) => t.choice === "STRONG_FALL").pct, 50);
 
-  // Strict server-time cutoff gate: 15:31 IST (10:01 UTC) on 2026-11-23 rejects vote for 2026-11-23 poll!
-  const afterCloseMs = Date.parse("2026-11-23T10:01:00.000Z");
+  // Strict server-time cutoff gate: 09:15 IST (03:45 UTC) on 2026-11-23 rejects vote for 2026-11-23 poll!
+  const atSessionOpenMs = Date.parse("2026-11-23T03:45:00.000Z");
   await assert.rejects(
     () =>
       pulseMod.castDailyPulseVote(
         "user-a",
         { pollId: nifty.pollId, choice: "SLIGHT_FALL" },
-        afterCloseMs,
+        atSessionOpenMs,
       ),
     (err) => err.status === 409,
   );
 
-  // Next active poll rolls over past NSE holiday 2026-11-24 to 2026-11-25!
-  const nextSpec = pulseMod.resolveActivePollSpec("NIFTY50", afterCloseMs);
+  // During live NSE trading hours (11:30 IST), next-session poll (2026-11-25, skipping Nov 24 holiday) is UPCOMING/CLOSED until 15:30 IST!
+  const duringMarketMs = Date.parse("2026-11-23T06:00:00.000Z");
+  const nextSpec = pulseMod.resolveActivePollSpec("NIFTY50", duringMarketMs);
   assert.equal(nextSpec.sessionDate, "2026-11-25", "Should skip NSE holiday 2026-11-24");
+  await assert.rejects(
+    () =>
+      pulseMod.castDailyPulseVote(
+        "user-a",
+        { pollId: nextSpec.pollId, choice: "SLIGHT_RISE" },
+        duringMarketMs,
+      ),
+    (err) => err.status === 409,
+  );
+
+  // After 15:30 IST (10:01 UTC) on 2026-11-23, the 2026-11-25 poll opens cleanly!
+  const afterCloseMs = Date.parse("2026-11-23T10:01:00.000Z");
+  const afterCloseSnapshot = await pulseMod.getDailyPulsePolls("user-a", afterCloseMs);
+  const niftyNext = afterCloseSnapshot.polls.find((p) => p.underlying === "NIFTY50");
+  assert.equal(niftyNext.sessionDate, "2026-11-25");
+  assert.equal(niftyNext.status, "OPEN");
 });
 
 // ── [29] Pinned Group Research ────────────────────────────────────────────────

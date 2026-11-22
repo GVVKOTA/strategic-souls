@@ -1,10 +1,12 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Archive,
   ArrowRight,
   ArrowUpRight,
   Check,
   Compass,
+  Copy,
   PenTool,
   Send,
   Share2,
@@ -61,6 +63,7 @@ import {
 } from "./controls";
 import FormulaLab from "./formula-lab";
 import PatternDrawCanvas from "./draw-canvas";
+import { ScanCoverageChart } from "./evidence-charts";
 import "./research.css";
 
 type Props = {
@@ -1651,16 +1654,17 @@ export default function ResearchWorkspace({
             </Panel>
           </div>
 
-          {/* ACTIVE SCAN RESULTS: Matching stocks ONLY + expandable Coverage Inspector + One-Click Post Soul */}
+          {/* ACTIVE SCAN RESULTS: Compact Metrics + Coverage Chart + Collapsed-by-Default Match Accordion */}
           {active && (
             <div
               className={
-                justCompletedId === active.id ? "x51-scan-complete-pulse" : ""
+                "x53-results-shell" +
+                (justCompletedId === active.id ? " x51-scan-complete-pulse" : "")
               }
             >
               <Panel
-                title={`RESULTS · ${active.name}`}
-                kicker={`Immutable execution · ${active.payload.scanTier ?? active.mode} · ${moment(active.created_at)}`}
+                title={`Results · ${active.name}`}
+                kicker={`${active.payload.scanTier ?? active.mode} · ${moment(active.created_at)}`}
                 action={
                   <div className="x1-actions" style={{ gap: 6 }}>
                     <button
@@ -1682,94 +1686,133 @@ export default function ResearchWorkspace({
                       }}
                     >
                       <Share2 size={14} />
-                      <span>Share to Room</span>
+                      <span>Share</span>
                     </button>
                   </div>
                 }
               >
-                <div className="x1-result-summary">
-                  <div>
+                <div className="x53-compact-metrics" aria-label="Scan result counts">
+                  <div className="x53-compact-metric">
                     <strong>{activeMatches.length}</strong>
-                    <span>Matched (PASS)</span>
+                    <span>Matched</span>
                   </div>
-                  <div>
+                  <div className="x53-compact-metric">
                     <strong>{active.payload.results.eligible ?? 0}</strong>
                     <span>Evaluated</span>
                   </div>
-                  <div>
+                  <div className="x53-compact-metric">
                     <strong>{active.payload.results.failed ?? 0}</strong>
-                    <span>Did not match</span>
+                    <span>Failed</span>
                   </div>
-                  <div>
+                  <div className="x53-compact-metric">
                     <strong>{active.payload.results.unknown ?? 0}</strong>
-                    <span>Unknown / Excluded</span>
+                    <span>Unknown</span>
                   </div>
                 </div>
 
-                <code className="x1-inline-code">
-                  {active.payload.rule.formula}
-                </code>
+                <div className="x53-formula-meta-row">
+                  <code className="x53-compact-formula">
+                    {active.payload.rule.formula}
+                  </code>
+                  <details className="x53-meta-info">
+                    <summary>Method &amp; Digest</summary>
+                    <div className="x53-meta-info-body">
+                      <p className="x1-caption" style={{ margin: 0 }}>
+                        {active.payload.knownAtPolicy}
+                      </p>
+                      <div className="x1-actions" style={{ gap: 8, marginTop: 6 }}>
+                        <code className="x1-caption">
+                          SHA-256: {active.digest.slice(0, 20)}…
+                        </code>
+                        <button
+                          type="button"
+                          className="x1-text-button"
+                          onClick={() => {
+                            void navigator.clipboard?.writeText(active.digest);
+                            notify("Copied scan SHA-256 digest.");
+                          }}
+                        >
+                          <Copy size={13} /> Copy digest
+                        </button>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+
+                <ScanCoverageChart
+                  passed={activeMatches.length}
+                  failed={active.payload.results.failed ?? 0}
+                  unknown={active.payload.results.unknown ?? 0}
+                  sourceLabel={active.payload.research?.universe ?? active.payload.interval ?? "1d"}
+                />
 
                 {activeMatches.length > 0 ? (
-                  <div className="x1-scan-results" style={{ marginTop: 12 }}>
+                  <div className="x53-match-accordion" role="list" aria-label="Matching instruments">
                     {activeMatches.map((r) => {
                       const regInfo = registryInstrument(
                         r.instrumentId.replace(/^CSV:/, ""),
                       );
                       return (
-                        <details key={r.instrumentId} open>
-                          <summary>
-                            <strong>
-                              {regInfo
-                                ? `${regInfo.name} · ${r.instrumentId}`
-                                : r.instrumentId}
-                            </strong>
+                        <details
+                          key={r.instrumentId}
+                          className="x53-match-row"
+                          role="listitem"
+                        >
+                          <summary className="x53-match-summary">
+                            <span className="x53-match-title">
+                              <strong>{r.instrumentId.replace(/^CSV:/, "")}</strong>
+                              {regInfo && (
+                                <span className="x1-caption">{regInfo.name}</span>
+                              )}
+                            </span>
                             <span className="x51-pill x51-pill-green">MATCH</span>
                           </summary>
-                          <ul>
-                            {r.reasons.map((reason, i) => (
-                              <li key={i}>{reason}</li>
-                            ))}
-                          </ul>
-                          <p className="x1-caption">
-                            {r.source} · closed bar{" "}
-                            {r.latestEventAt ?? "unavailable"}
-                          </p>
-                          <button
-                            type="button"
-                            className="x1-text-button"
-                            onClick={() =>
-                              openAsset(r.instrumentId.replace(/^CSV:/, ""))
-                            }
-                          >
-                            Open Asset Detail
-                            <ArrowUpRight size={14} />
-                          </button>
+                          <div className="x53-match-body">
+                            <ul>
+                              {r.reasons.map((reason, i) => (
+                                <li key={i}>{reason}</li>
+                              ))}
+                            </ul>
+                            <div className="x53-match-foot">
+                              <span className="x1-caption">
+                                {r.source} · closed bar{" "}
+                                {r.latestEventAt ?? "unavailable"}
+                              </span>
+                              <button
+                                type="button"
+                                className="x1-text-button"
+                                onClick={() =>
+                                  openAsset(r.instrumentId.replace(/^CSV:/, ""))
+                                }
+                              >
+                                Asset Detail
+                                <ArrowUpRight size={14} />
+                              </button>
+                            </div>
+                          </div>
                         </details>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="x1-callout" style={{ marginTop: 12 }}>
-                    Zero instruments matched this rule at{" "}
-                    {moment(active.created_at)}. This valid completed scan is
-                    recorded honestly in your Graveyard.
+                  <div className="x1-callout" style={{ marginTop: 10 }}>
+                    Zero instruments matched at {moment(active.created_at)}.
+                    Recorded honestly in Graveyard.
                   </div>
                 )}
 
-                <details className="x1-small-details" style={{ marginTop: 12 }}>
+                <details className="x1-small-details" style={{ marginTop: 10 }}>
                   <summary>
-                    Coverage &amp; Exclusions Inspector (
-                    {activeNonMatches.length} non-matching / unknown)
+                    Coverage &amp; Exclusions ({activeNonMatches.length})
                   </summary>
                   <div className="x1-scan-results" style={{ marginTop: 8 }}>
                     {activeNonMatches.map((r) => (
                       <div
                         key={r.instrumentId}
                         style={{
-                          padding: "8px 10px",
+                          padding: "7px 10px",
                           borderBottom: "1px solid var(--x51-hairline)",
-                          fontSize: "0.84rem",
+                          fontSize: "0.82rem",
                         }}
                       >
                         <strong>{r.instrumentId}</strong>{" "}
@@ -1780,10 +1823,6 @@ export default function ResearchWorkspace({
                       </div>
                     ))}
                   </div>
-                  <p className="x1-caption" style={{ marginTop: 8 }}>
-                    {active.payload.knownAtPolicy} · SHA-256{" "}
-                    <code>{active.digest.slice(0, 20)}…</code>
-                  </p>
                 </details>
               </Panel>
 
@@ -1803,11 +1842,25 @@ export default function ResearchWorkspace({
             </div>
           )}
 
-          {/* GRAVEYARD: Personal immutable scan history + Post-Mortem + One-Click Post Soul */}
-          <Panel
-            title="GRAVEYARD · Personal Scan Archive"
-            kicker="Every completed Soul scan preserved immutably with original formula & cutoff"
-            action={
+          {/* GRAVEYARD: Prominent Signature Immutable Research Archive */}
+          <section
+            className="x53-graveyard-shell"
+            aria-labelledby="x53-graveyard-heading"
+          >
+            <div className="x53-graveyard-head">
+              <div className="x53-graveyard-title-wrap">
+                <span className="x53-graveyard-icon" aria-hidden="true">
+                  <Archive size={18} />
+                </span>
+                <div>
+                  <h2 id="x53-graveyard-heading" className="x53-graveyard-title">
+                    GRAVEYARD
+                  </h2>
+                  <p className="x1-caption" style={{ margin: 0 }}>
+                    Immutable personal scan archive · original formulas, cutoffs &amp; post-mortems preserved
+                  </p>
+                </div>
+              </div>
               <div className="x51-chip-row" role="group" aria-label="Graveyard filter">
                 {(["ALL", "CLASSIC", "ADVANCED", "RETIRED"] as const).map(
                   (f) => (
@@ -1817,6 +1870,7 @@ export default function ResearchWorkspace({
                       className={
                         "x51-chip" + (graveyardFilter === f ? " is-active" : "")
                       }
+                      aria-pressed={graveyardFilter === f}
                       onClick={() => setGraveyardFilter(f)}
                     >
                       {f === "ALL"
@@ -1830,8 +1884,8 @@ export default function ResearchWorkspace({
                   ),
                 )}
               </div>
-            }
-          >
+            </div>
+
             <div className="x2-history-tools">
               <input
                 type="search"
@@ -1840,50 +1894,62 @@ export default function ResearchWorkspace({
                 value={historySearch}
                 onChange={(e) => setHistorySearch(e.target.value)}
               />
-              <span>{filteredGraveyard.length} saved</span>
+              <span>{filteredGraveyard.length} archived</span>
             </div>
+
             {filteredGraveyard.length ? (
-              filteredGraveyard.map((run) => {
-                const rich = run as RichRun;
-                const tier =
-                  rich.payload.scanTier ??
-                  (run.mode === "SIMPLE" ? "CLASSIC" : "ADVANCED");
-                return (
-                  <div className="x1-history-row" key={run.id}>
-                    <button
-                      type="button"
-                      className="x1-asset-button"
-                      onClick={() => setSelected(run.id)}
+              <div className="x53-graveyard-list">
+                {filteredGraveyard.map((run) => {
+                  const rich = run as RichRun;
+                  const tier =
+                    rich.payload.scanTier ??
+                    (run.mode === "SIMPLE" ? "CLASSIC" : "ADVANCED");
+                  const isSelected = active?.id === run.id;
+                  return (
+                    <div
+                      className={
+                        "x53-graveyard-card" + (isSelected ? " is-selected" : "")
+                      }
+                      key={run.id}
                     >
-                      <strong>
-                        {run.name}{" "}
-                        <span className="x51-pill">{tier}</span>
-                      </strong>
-                      <span>
-                        {moment(run.created_at)} ·{" "}
-                        {run.payload.results.matches ?? "Withheld"} match(es) ·{" "}
-                        <code>{run.payload.rule.formula}</code>
-                      </span>
-                    </button>
-                    <div className="x1-actions" style={{ gap: 6 }}>
                       <button
                         type="button"
-                        className="x1-text-button"
-                        onClick={() => openPostSoulModal(run)}
+                        className="x53-graveyard-main"
+                        onClick={() => setSelected(run.id)}
                       >
-                        Post Soul
+                        <div className="x53-graveyard-card-top">
+                          <strong>{run.name}</strong>
+                          <span className="x51-pill">{tier}</span>
+                          {grave.has(run.id) && (
+                            <span className="x51-pill x51-pill-amber">Retired</span>
+                          )}
+                        </div>
+                        <div className="x1-caption">
+                          {moment(run.created_at)} ·{" "}
+                          {run.payload.results.matches ?? "Withheld"} matched ·{" "}
+                          <code>{run.payload.rule.formula}</code>
+                        </div>
                       </button>
-                      <button
-                        type="button"
-                        className="x1-text-button"
-                        onClick={() => setReview(run)}
-                      >
-                        {grave.has(run.id) ? "Review / restore" : "Post-mortem"}
-                      </button>
+                      <div className="x1-actions" style={{ gap: 8, flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          className="x1-text-button"
+                          onClick={() => openPostSoulModal(run)}
+                        >
+                          Post Soul
+                        </button>
+                        <button
+                          type="button"
+                          className="x1-text-button"
+                          onClick={() => setReview(run)}
+                        >
+                          {grave.has(run.id) ? "Review" : "Post-mortem"}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                );
-              })
+                  );
+                })}
+              </div>
             ) : (
               <Empty title="No saved Souls in this view">
                 Completed Classic and Advanced scans are archived here
@@ -1894,13 +1960,14 @@ export default function ResearchWorkspace({
               <button
                 type="button"
                 className="x1-secondary"
+                style={{ marginTop: 10 }}
                 disabled={!!busy}
                 onClick={() => void loadOlder()}
               >
                 Load older Graveyard scans
               </button>
             )}
-          </Panel>
+          </section>
         </div>
       )}
 

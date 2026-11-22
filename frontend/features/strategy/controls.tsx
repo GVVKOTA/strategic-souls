@@ -10,6 +10,7 @@ import {
 import type { SimpleRule } from "../../../backend/engines/scan";
 import type { backtestResearch } from "../../../backend/engines/backtest";
 import { api, Panel, number, moment, type ScanRun } from "../../components/workspace/shared";
+import { EmpiricalProbabilityChart } from "./evidence-charts";
 
 export function ResearchInfo({
   label,
@@ -477,14 +478,14 @@ export function EvidencePanel({
               {data.score.descriptive.dates} dates
             </span>
           </div>
-          <div className="x1-result-summary">
-            {Object.entries(data.score.descriptive.labels).map(([label, n]) => (
-              <div key={label}>
-                <strong>{n}</strong>
-                <span>{label.toLowerCase()}</span>
-              </div>
-            ))}
-          </div>
+          <EmpiricalProbabilityChart
+            status={data.score.status}
+            probability={data.score.probability}
+            interval={data.score.interval}
+            resolvedN={data.score.descriptive.n}
+            datesCount={data.score.descriptive.dates}
+            labels={data.score.descriptive.labels}
+          />
           <details className="x1-small-details">
             <summary>Why this evidence state?</summary>
             <ul>
