@@ -2,9 +2,32 @@ import handler from "vinext/server/fetch-handler";
 
 const worker = {
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext) {
-    const response = await handler.fetch(request, env, ctx);
-    const secured = new Response(response.body, response);
+    const startedAt = Date.now();
+    const requestId = crypto.randomUUID().slice(0, 12);
     const url = new URL(request.url);
+    const isApi = url.pathname.startsWith("/api/");
+
+    let response: Response;
+    try {
+      response = await handler.fetch(request, env, ctx);
+    } catch (err) {
+      const durationMs = Math.max(0, Date.now() - startedAt);
+      console.error(
+        JSON.stringify({
+          event: "ss_worker_unhandled_error",
+          requestId,
+          method: request.method,
+          path: url.pathname,
+          durationMs,
+          errorName: err instanceof Error ? err.name : "UnknownError",
+        }),
+      );
+      throw err;
+    }
+
+    const durationMs = Math.max(0, Date.now() - startedAt);
+    const secured = new Response(response.body, response);
+    secured.headers.set("X-Request-Id", requestId);
     secured.headers.set("X-Content-Type-Options", "nosniff");
     secured.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
     secured.headers.set(
@@ -18,7 +41,7 @@ const worker = {
         (import.meta.env.DEV ? " 'unsafe-eval'" : "") +
         "; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://gibs.earthdata.nasa.gov; font-src 'self'; connect-src 'self' https://gibs.earthdata.nasa.gov" +
         (import.meta.env.DEV ? " ws: wss:" : "") +
-        "; frame-src https://s.tradingview.com https://www.tradingview.com https://www.tradingview-widget.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'",
+        "; frame-src https://s3.tradingview.com https://www.tradingview.com https://www.tradingview-widget.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'",
     );
     if (url.protocol === "https:") {
       secured.headers.set(
@@ -26,14 +49,36 @@ const worker = {
         "max-age=31536000; includeSubDomains",
       );
     }
-    if (
-      url.pathname.startsWith("/api/") &&
-      !url.pathname.startsWith("/api/markets/public") &&
-      !url.pathname.startsWith("/api/community/public") &&
-      !url.pathname.startsWith("/api/earth/conflicts")
-    ) {
-      secured.headers.set("Cache-Control", "private, no-store");
+    if (isApi) {
+      secured.headers.set("Server-Timing", `app;dur=${durationMs}`);
+      if (
+        !url.pathname.startsWith("/api/markets/public") &&
+        !url.pathname.startsWith("/api/community/public") &&
+        !url.pathname.startsWith("/api/earth/conflicts")
+      ) {
+        secured.headers.set("Cache-Control", "private, no-store");
+      }
     }
+
+    // Low-noise, privacy-safe operational signal ONLY for 5xx, rate-limits, or slow API handlers.
+    // Never logs query strings, Body IDs, cookies, message content, or secrets.
+    if (
+      secured.status >= 500 ||
+      secured.status === 429 ||
+      (isApi && durationMs > 1500)
+    ) {
+      console.warn(
+        JSON.stringify({
+          event: "ss_api_signal",
+          requestId,
+          method: request.method,
+          path: url.pathname,
+          status: secured.status,
+          durationMs,
+        }),
+      );
+    }
+
     return secured;
   },
 };

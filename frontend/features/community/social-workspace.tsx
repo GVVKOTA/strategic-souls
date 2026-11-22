@@ -746,6 +746,7 @@ export function SocialWorkspace({
 
               <ConversationView
                 thread={thread}
+                hasActiveThread={!!threadId}
                 older={older}
                 olderError={olderError}
                 loadingThread={loadingThread}

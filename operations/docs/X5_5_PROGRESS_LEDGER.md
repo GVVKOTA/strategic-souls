@@ -82,5 +82,22 @@
 - `node operations/scripts/check-x2-release.mjs`: `typecheck` PASS (18.0s), `lint` PASS (48.4s), `tests` PASS (6.1s — **326/326 PASS**, including `tests/unit/x55-language-and-ux.test.mjs`, `tests/unit/x1-palette.test.mjs`, and `tests/unit/x53-terminal-globe-evidence.test.mjs`).
 - `node operations/scripts/run-framework.mjs build`: PASS (5/5 Vinext environments).
 
-## Phase 3 — D1 Safety, Security Matrix, Observability, Market-Data Contracts, E2E & Release (IN PROGRESS)
-- Starting Phase 3 execution.
+## Phase 3 — D1 Safety, Security Matrix, Observability, Market-Data Contracts, E2E & Release (DONE)
+
+### Delivered Improvements
+1. **D1 Safety, Indexes & Isolated Backup/Restore Rehearsal (`P3.1`):**
+   - Verified `EXPLAIN QUERY PLAN` across 10 hot paths over migrations `0000`–`0009` (57 existing indexes): 9/10 hot queries use indexes directly (including O(1) PK lookup on single-row `x51_web_souls`, covering indexes on `x2_messages`, `x51_follows`, `x1_scans`). Zero new schema migrations required — preserves zero-drift instant rollback.
+   - Executed isolated SQLite logical backup & restore rehearsal outside git: `PRAGMA integrity_check = ok`, `PRAGMA foreign_key_check = 0 violations`, immutability trigger on `x1_scans` verified enforced (`UPDATE` rejected), exact row-count parity verified.
+2. **Low-Noise Privacy-Safe Observability (`P3.3`):**
+   - Enhanced `backend/middleware/index.ts` with non-identifying `X-Request-Id`, `Server-Timing: app;dur=<ms>` on `/api/*`, and anonymous JSON signal logging (`ss_api_signal`) ONLY for `5xx`, `429`, or slow `/api/*` (`>1500ms`) logging pathname only (never query strings, Body IDs, cookies, message content, or secrets).
+   - Updated `app/api/release/route.ts` to `X5.5` (`x5.5-apex-clarity-stability-2026-11-22`).
+3. **Market-Data-Ready Validation & Entitlement Contracts (`P3.4`, ZERO Keys Connected):**
+   - Extended `backend/services/market-data/providers.ts` with `validateFeedBatchContract` and `evaluateFeedEntitlement` covering canonical symbol/MIC/IANA timezone/currency/unit, futures expiry/lot/tick, OHLCV bounds, null-not-zero missing volume, corporate-action tagging, duplicate & staleness checks, concurrency/quota caps, and fail-closed license rights (HTTP 200 never implies display/redistribution; Angel One SmartAPI strictly denied public redistribution).
+   - Added 3 synthetic-fixture contract tests (`tests/unit/x55-market-data-contracts.test.mjs`).
+4. **Full Security & Permission Matrix Tests (`P3.2`):**
+   - Added `tests/integration/x55-security-and-permissions.test.mjs` covering guest `401` gates, zero email/subject leaks, pre-consent `403`, legacy-private isolation, Room member vs non-member isolation for `GROUP` Souls, cross-user scan isolation, and middleware header/logging guarantees.
+5. **Real-Browser Multi-Viewport & 2-Account Playwright E2E + Mobile Back-Button Fix (`P3.5`):**
+   - Discovered and fixed a real mobile UX bug during delayed-network Playwright testing: while loading or failing a thread on mobile (`<=768px`), `ConversationView` previously rendered without a `Back to chats` button. Added persistent mobile header with `Back to chats` whenever `hasActiveThread` is true.
+   - Verified 0px horizontal overflow across all 8 viewports (`320x720`, `360x800`, `390x844`, `430x932`, `640x360`, `768x1024`, `1024x768`, `1440x900`), `FCP = 320ms` on local production Worker (`390x844`), standalone `GRAVEYARD` heading with zero subtitle, `Soul Feed | Chats | Rooms` vocabulary, 2-account follow/publish/chat E2E, `page.route` 1400ms delayed out-of-order thread guard, failed New Chat input retention, Tab focus trap inside `PublicProfileSheet`, XSS/emoji/RTL safety (`xssFired = false`), reduced-motion media emulation, and visually inspected all 12 AFTER screenshots.
+   - Verified `dist/server/wrangler.json` preserves exact bindings (`strategic-souls`, `DB`, `ss`, `1cda2b05-6b99-4d04-896f-b3542ad2ce7f`, `r2_buckets: []`).
+   - Verified `scan-secrets.mjs` (744 files, 0 findings), `scan-v3-source.mjs` (457 files, 0 findings), `pytest` (29/29 PASS), `pnpm audit --audit-level high` (0 high/critical), and `check-x2-release.mjs` (333/333 PASS).

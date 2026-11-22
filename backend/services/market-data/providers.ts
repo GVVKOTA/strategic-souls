@@ -582,3 +582,348 @@ export async function providerNews(
     }
   });
 }
+
+// ── X5.5 Unified Market-Data-Ready Validation & Entitlement Contract ─────────
+// Extends existing EODHD / TrueData / Angel One adapters without adding keys or
+// duplicating provider clients. Ready for plug-and-play licensed market feeds.
+
+export type FeedGranularity = "30m" | "1h" | "1d" | "1wk" | "1mo";
+
+export type FeedEntitlementAction =
+  | "display"
+  | "derivedDisplay"
+  | "analysis"
+  | "storage"
+  | "publicRedistribution";
+
+export type FeedQuotaEnvelope = {
+  maxConcurrency: number;
+  dailyCallLimit: number;
+  callsUsed: number;
+};
+
+export type NormalizedFeedBatch = {
+  providerId: string;
+  sourceAttribution: string;
+  instrument: Instrument;
+  granularity: FeedGranularity;
+  retrievedAt: string;
+  maxStaleMs: number;
+  rights: Rights;
+  quota?: FeedQuotaEnvelope;
+  candles: Candle[];
+};
+
+export type FeedEntitlementDecision = {
+  allowed: boolean;
+  cacheSeconds: number;
+  reason: string | null;
+};
+
+export type FeedContractValidation = {
+  valid: boolean;
+  stale: boolean;
+  ageMs: number | null;
+  errors: string[];
+  warnings: string[];
+  entitlements: Record<FeedEntitlementAction, FeedEntitlementDecision>;
+  normalizedCount: number;
+};
+
+const VALID_GRANULARITIES = new Set<FeedGranularity>([
+  "30m",
+  "1h",
+  "1d",
+  "1wk",
+  "1mo",
+]);
+const VALID_ADJUSTMENTS = new Set<Candle["adjustment"]>([
+  "RAW_OHLC_ADJUSTED_CLOSE",
+  "RAW",
+  "REFERENCE_ONLY",
+]);
+
+function isValidIanaTimeZone(tz: string): boolean {
+  if (!tz || typeof tz !== "string" || tz.length > 64) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Evaluates license entitlements separately from transport success.
+ * HTTP 200 from an upstream provider NEVER grants display, storage, or redistribution rights.
+ * Retail broker feeds (e.g. Angel One SmartAPI) ALWAYS fail closed for public redistribution.
+ */
+export function evaluateFeedEntitlement(
+  providerId: string,
+  rights: Rights,
+  action: FeedEntitlementAction,
+  now = Date.now(),
+): FeedEntitlementDecision {
+  if (!rights || rights.verified !== true) {
+    return {
+      allowed: false,
+      cacheSeconds: 0,
+      reason: "Provider license entitlement is not verified; fail-closed.",
+    };
+  }
+  const expMs = Date.parse(rights.expiresAt);
+  if (!Number.isFinite(expMs) || expMs <= now) {
+    return {
+      allowed: false,
+      cacheSeconds: 0,
+      reason: "Provider license entitlement has expired or has an invalid expiry.",
+    };
+  }
+  if (
+    action === "publicRedistribution" &&
+    /angel\s*one|angelone|smartapi/i.test(providerId)
+  ) {
+    return {
+      allowed: false,
+      cacheSeconds: 0,
+      reason:
+        "Retail broker feed (Angel One SmartAPI) is strictly owner-only and cannot be redistributed publicly.",
+    };
+  }
+  const cacheSeconds =
+    Number.isFinite(rights.cacheSeconds) && rights.cacheSeconds > 0
+      ? Math.floor(rights.cacheSeconds)
+      : 0;
+  if (action === "display") {
+    return rights.display
+      ? { allowed: true, cacheSeconds, reason: null }
+      : { allowed: false, cacheSeconds: 0, reason: "Display right not granted." };
+  }
+  if (action === "derivedDisplay") {
+    return rights.derivedDisplay === true
+      ? { allowed: true, cacheSeconds, reason: null }
+      : {
+          allowed: false,
+          cacheSeconds: 0,
+          reason: "Derived-display right not explicitly granted.",
+        };
+  }
+  if (action === "analysis") {
+    return rights.analysis
+      ? { allowed: true, cacheSeconds, reason: null }
+      : { allowed: false, cacheSeconds: 0, reason: "Analysis right not granted." };
+  }
+  if (action === "storage") {
+    return rights.storage
+      ? { allowed: true, cacheSeconds, reason: null }
+      : { allowed: false, cacheSeconds: 0, reason: "Storage right not granted." };
+  }
+  return rights.redistribution
+    ? { allowed: true, cacheSeconds, reason: null }
+    : {
+        allowed: false,
+        cacheSeconds: 0,
+        reason: "Public redistribution right not granted.",
+      };
+}
+
+/**
+ * Validates a normalized market-data batch across canonical identity, timezone, currency/unit,
+ * futures metadata, OHLCV bounds, corporate-action tagging, duplicate/staleness checks,
+ * quota/concurrency caps, and fail-closed license entitlements.
+ */
+export function validateFeedBatchContract(
+  batch: NormalizedFeedBatch,
+  now = Date.now(),
+): FeedContractValidation {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (!batch.providerId?.trim()) errors.push("Missing providerId.");
+  if (!batch.sourceAttribution?.trim()) {
+    errors.push("Missing sourceAttribution.");
+  }
+
+  const inst = batch.instrument;
+  if (!inst) {
+    errors.push("Missing canonical instrument descriptor.");
+  } else {
+    if (!/^[A-Z0-9_-]+:[A-Z0-9._-]+$/.test(inst.id)) {
+      errors.push(`Invalid canonical instrument ID: ${String(inst.id)}`);
+    }
+    if (!/^[A-Z]{4}$/.test(inst.mic)) {
+      errors.push(`Invalid ISO-10383 MIC: ${String(inst.mic)}`);
+    }
+    if (!isValidIanaTimeZone(inst.timezone)) {
+      errors.push(`Invalid IANA timezone: ${String(inst.timezone)}`);
+    }
+    if (!/^[A-Z]{3}$/.test(inst.currency)) {
+      errors.push(`Invalid ISO currency code: ${String(inst.currency)}`);
+    }
+    if (!inst.unit?.trim()) {
+      errors.push("Missing instrument price unit.");
+    }
+    if (inst.type === "FUTURE") {
+      if (!inst.expiry || !/^\d{4}-\d{2}-\d{2}$/.test(inst.expiry)) {
+        errors.push("Futures instrument requires YYYY-MM-DD expiry.");
+      } else if (Date.parse(inst.expiry + "T23:59:59Z") < now) {
+        errors.push(`Futures contract expired on ${inst.expiry}.`);
+      }
+      if (
+        typeof inst.lotSize !== "number" ||
+        !finite(inst.lotSize) ||
+        inst.lotSize <= 0
+      ) {
+        errors.push("Futures instrument requires positive lotSize.");
+      }
+      if (
+        typeof inst.tickSize !== "number" ||
+        !finite(inst.tickSize) ||
+        inst.tickSize <= 0
+      ) {
+        errors.push("Futures instrument requires positive tickSize.");
+      }
+    }
+  }
+
+  if (!VALID_GRANULARITIES.has(batch.granularity)) {
+    errors.push(`Unsupported granularity: ${String(batch.granularity)}`);
+  }
+
+  const retrievedMs = Date.parse(batch.retrievedAt);
+  if (!Number.isFinite(retrievedMs)) {
+    errors.push("Invalid retrievedAt ISO timestamp.");
+  } else if (retrievedMs > now + 60_000) {
+    errors.push("retrievedAt cannot be in the future.");
+  }
+
+  if (batch.quota) {
+    if (!Number.isInteger(batch.quota.maxConcurrency) || batch.quota.maxConcurrency < 1) {
+      errors.push("Quota maxConcurrency must be >= 1.");
+    }
+    if (!Number.isInteger(batch.quota.dailyCallLimit) || batch.quota.dailyCallLimit < 1) {
+      errors.push("Quota dailyCallLimit must be >= 1.");
+    }
+    if (
+      !Number.isInteger(batch.quota.callsUsed) ||
+      batch.quota.callsUsed < 0 ||
+      batch.quota.callsUsed > batch.quota.dailyCallLimit
+    ) {
+      errors.push("Quota callsUsed exceeds dailyCallLimit or is invalid.");
+    }
+  }
+
+  const seenDates = new Set<string>();
+  let latestBarMs = -Infinity;
+  let prevDate = "";
+
+  if (!Array.isArray(batch.candles)) {
+    errors.push("candles must be an array.");
+  } else {
+    for (let i = 0; i < batch.candles.length; i++) {
+      const c = batch.candles[i];
+      if (!c) {
+        errors.push(`Candle[${i}] is null/undefined.`);
+        continue;
+      }
+      const barMs = Date.parse(c.date);
+      if (!Number.isFinite(barMs)) {
+        errors.push(`Candle[${i}] has invalid date/timestamp.`);
+      } else {
+        if (barMs > now + 60_000) {
+          errors.push(`Candle[${i}] date ${c.date} is in the future.`);
+        }
+        if (barMs > latestBarMs) latestBarMs = barMs;
+      }
+      if (seenDates.has(c.date)) {
+        errors.push(`Duplicate candle timestamp: ${c.date}`);
+      }
+      seenDates.add(c.date);
+      if (prevDate && c.date < prevDate) {
+        errors.push(`Candles not chronologically sorted at ${c.date}.`);
+      }
+      prevDate = c.date;
+
+      if (
+        !finite(c.open) ||
+        !finite(c.high) ||
+        !finite(c.low) ||
+        !finite(c.close) ||
+        c.open <= 0 ||
+        c.high <= 0 ||
+        c.low <= 0 ||
+        c.close <= 0
+      ) {
+        errors.push(`Candle[${i}] has non-finite or non-positive OHLC.`);
+      } else if (
+        c.high < Math.max(c.open, c.close) ||
+        c.low > Math.min(c.open, c.close) ||
+        c.low > c.high
+      ) {
+        errors.push(`Candle[${i}] violates OHLC high/low envelope.`);
+      }
+      if (c.volume !== null && (!finite(c.volume) || c.volume < 0)) {
+        errors.push(`Candle[${i}] has invalid volume (use null when missing).`);
+      }
+      if (c.openInterest !== null && (!finite(c.openInterest) || c.openInterest < 0)) {
+        errors.push(`Candle[${i}] has invalid openInterest.`);
+      }
+      if (c.adjustedClose !== null && (!finite(c.adjustedClose) || c.adjustedClose <= 0)) {
+        errors.push(`Candle[${i}] has invalid adjustedClose.`);
+      }
+      if (!VALID_ADJUSTMENTS.has(c.adjustment)) {
+        errors.push(`Candle[${i}] has invalid adjustment tag.`);
+      }
+      const knownMs = Date.parse(c.knownAt);
+      if (!Number.isFinite(knownMs) || knownMs > now + 60_000) {
+        errors.push(`Candle[${i}] has invalid or future knownAt timestamp.`);
+      }
+    }
+    if (batch.candles.length === 0) {
+      warnings.push("Feed batch returned zero candles (fail-closed: never fabricate prices).");
+    }
+  }
+
+  const ageMs =
+    Number.isFinite(retrievedMs) && latestBarMs > -Infinity
+      ? Math.max(0, now - Math.max(retrievedMs, latestBarMs))
+      : null;
+  const stale =
+    ageMs !== null &&
+    Number.isFinite(batch.maxStaleMs) &&
+    batch.maxStaleMs > 0 &&
+    ageMs > batch.maxStaleMs;
+  if (stale) {
+    warnings.push(
+      `Feed batch is stale (${Math.round((ageMs ?? 0) / 1000)}s > max ${Math.round(batch.maxStaleMs / 1000)}s).`,
+    );
+  }
+
+  const entitlements: Record<FeedEntitlementAction, FeedEntitlementDecision> = {
+    display: evaluateFeedEntitlement(batch.providerId, batch.rights, "display", now),
+    derivedDisplay: evaluateFeedEntitlement(
+      batch.providerId,
+      batch.rights,
+      "derivedDisplay",
+      now,
+    ),
+    analysis: evaluateFeedEntitlement(batch.providerId, batch.rights, "analysis", now),
+    storage: evaluateFeedEntitlement(batch.providerId, batch.rights, "storage", now),
+    publicRedistribution: evaluateFeedEntitlement(
+      batch.providerId,
+      batch.rights,
+      "publicRedistribution",
+      now,
+    ),
+  };
+
+  return {
+    valid: errors.length === 0,
+    stale,
+    ageMs,
+    errors,
+    warnings,
+    entitlements,
+    normalizedCount: Array.isArray(batch.candles) ? batch.candles.length : 0,
+  };
+}

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, MessageSquare, X } from "lucide-react";
+import { ArrowLeft, Check, MessageSquare, X } from "lucide-react";
 import ChatHeader from "./chat-header";
 import MessageBubble from "./message-bubble";
 import ChatComposer from "./chat-composer";
@@ -14,6 +14,7 @@ import {
 
 type Props = {
   thread: ChatThread | null;
+  hasActiveThread?: boolean;
   older: ChatMessage[];
   olderError?: string;
   loadingThread: boolean;
@@ -45,6 +46,7 @@ type Props = {
 
 export default function ConversationView({
   thread,
+  hasActiveThread = false,
   older,
   olderError = "",
   loadingThread,
@@ -196,6 +198,21 @@ export default function ConversationView({
   if (!thread) {
     return (
       <div className="x54-chat-pane" ref={paneRef}>
+        {hasActiveThread && (
+          <header className="x54-chat-header">
+            <button
+              type="button"
+              className="x54-chat-back-btn"
+              aria-label="Back to chats"
+              onClick={onBack}
+            >
+              <ArrowLeft size={19} aria-hidden="true" />
+            </button>
+            <div className="x54-chat-peer-meta">
+              <strong>{loadingThread ? "Loading chat…" : "Conversation unavailable"}</strong>
+            </div>
+          </header>
+        )}
         <div className="x54-chat-empty-pane">
           <MessageSquare size={28} aria-hidden="true" />
           <strong>

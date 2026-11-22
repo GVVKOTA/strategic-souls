@@ -12,17 +12,17 @@ Strategic Souls is an educational financial-market research workspace built by *
 
 ---
 
-## Current Release Status (`X5.3` — The Focused Intelligence Terminal)
+## Current Release Status (`X5.5` — APEX Stability, Experience & Brand Language Polish)
 
 | Capability | Status | Details & Boundaries |
 | --- | --- | --- |
-| **Strategic Dashboard (4-Block Global Overview)** | **Live** | Centered `Strategic Dashboard` title + 9 customizable market cards (3×3), compact `My Portfolio` & `Watchlist`, enlarged 3D `Strategic Globe`, and redesigned `Economic Calendar`. |
-| **Enlarged Zoomable 3D Earth (`Strategic Globe`)** | **Live** | True perspective WebGL camera (`1.0×`–`5.0×` zoom), drag with inertia, two-finger touch pinch, double-tap zoom, keyboard controls, NASA Blue/Black Marble historical textures, 24 exchange hubs, live USGS M4.5+ earthquakes & NASA EONET natural disasters. **Zero 2D geographical map in Global.** |
+| **Strategic Dashboard (4-Block Global Overview)** | **Live** | Centered `Strategic Dashboard` title + 9 customizable market cards (3×3), compact `My Portfolio` & `Watchlist`, enlarged 3D `Strategic Globe`, and redesigned `Economic Calendar` with inline error/retry and skeleton loading states. |
+| **Enlarged Zoomable 3D Earth (`Strategic Globe`)** | **Live** | True perspective WebGL camera (`1.0×`–`5.0×` zoom), drag with inertia, two-finger touch pinch, double-tap zoom, keyboard controls, NASA Blue/Black Marble historical textures, 24 exchange hubs, live USGS M4.5+ earthquakes & NASA EONET natural disasters. Tracks/releases WebGL buffers via `Set`, honors `prefers-reduced-motion` and in-app minimal motion, throttles idle FPS on constrained/reduced devices, and enforces 15s texture timeout. **Zero 2D geographical map in Global.** |
 | **Economic Calendar & Market Vox** | **Live** | Redesigned timeline calendar (RBI, MoSPI, FOMC, BLS, BEA, EIA, ECB; IST/UTC/New York; verified through Mar 2027; zero impact badges) + `MARKET VOX` (`NIFTY & Gold community vote`) with server-enforced post-close open and pre-open cutoffs under `Market Intelligence / Economic Calendar`. |
-| **Soul Scan, Formula Lab, Evidence & Graveyard** | **Live** | Classic (50 presets) & Advanced (Discover/Build/Draw) compiling to one deterministic AST, Formula Lab (Correlation Lab first, BSM/IV, CAGR, XIRR, Historical), compact results with collapsed-by-default match accordions, prominent `GRAVEYARD` archive, and honest SVG coverage/probability charts. |
-| **Community Research Network** | **Live** | Standalone Cloudflare D1 email/password auth (optional Google OAuth), Body IDs (`@handle`), shared Souls, private/discoverable groups, opt-in DMs, moderation, zero public P&L leaderboards. |
-| **Commercial News (`SS_NEWS_API_KEY`) & Global/NSE Quotes** | **Key-gated** | Adapters built and tested; display honest pending states + primary official agency portals until commercial keys & display licenses are configured in Cloudflare Worker Secrets. |
-| **Owner-Only Angel One SmartAPI** | **Owner-gated** | Read-only owner gateway (`ENABLE_PRIVATE_BROKER_DATA`), requires founder credentials + static-IP egress relay; never redistributed publicly. |
+| **Soul Scan, Formula Lab, Evidence & GRAVEYARD** | **Live** | Classic (50 verified deterministic presets) & Advanced (Discover/Build/Draw) compiling to one deterministic AST, lazy-loaded Formula Lab & Draw Canvas, compact 5-column timeframe selector, standalone `GRAVEYARD` heading (zero subtitle), and honest SVG coverage/probability charts. |
+| **Soul Network (`Soul Feed` · `Chats` · `Rooms`)** | **Live** | Standalone Cloudflare D1 email/password auth (optional Google OAuth), `Body ID` public researcher profiles with keyboard Tab focus trap, lazy-loaded Telegram-like `Chats` with cross-thread abort/sequence guards & monotonic message merging, single-row post authorization, private/discoverable `Rooms`, blocking/reporting, and zero public P&L leaderboards. |
+| **Market-Data Validation & Entitlement Contracts** | **Ready (Key-gated)** | Unified `validateFeedBatchContract` & `evaluateFeedEntitlement` contracts in `backend/services/market-data/providers.ts` enforce canonical symbol/MIC/IANA timezone/OHLCV/futures/staleness/quota checks and fail-closed license rights (HTTP 200 != redistribution). Zero commercial API keys connected. |
+| **Owner-Only Angel One SmartAPI** | **Owner-gated** | Read-only owner gateway (`ENABLE_PRIVATE_BROKER_DATA`), requires founder credentials + static-IP egress relay; strictly denied public redistribution. |
 | **Cloudflare R2 Custom Media Uploads** | **Account-disabled** | Fails closed (`403 code 10042` on Cloudflare account); 50 SVG avatars & 8 Obsidian portfolio backdrops work locally without R2. |
 
 ---
