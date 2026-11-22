@@ -391,3 +391,19 @@ export type WorkspaceState = {
   }[];
 };
 export type Notice = (message: string, error?: boolean) => void;
+
+/**
+ * Truthful clipboard writer — returns true ONLY if the browser actually
+ * wrote to the clipboard, never faking success on denied/unsupported environments.
+ */
+export async function copyTextSafe(text: string): Promise<boolean> {
+  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+    return false;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}

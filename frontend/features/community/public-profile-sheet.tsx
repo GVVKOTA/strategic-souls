@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { resolveBannerPreset } from "../../../backend/services/profile/banners";
 import AvatarBadge from "../account/avatar-badge";
-import { api, moment, type Notice } from "../../components/workspace/shared";
+import { api, copyTextSafe, moment, type Notice } from "../../components/workspace/shared";
 import { buildQrSvgString } from "../../lib/qr-svg";
 
 export type PublicSoulItem = {
@@ -149,30 +149,49 @@ export default function PublicProfileSheet({
   const [connectionsKind, setConnectionsKind] = useState<"followers" | "following" | null>(null);
   const [connections, setConnections] = useState<ConnectionPerson[]>([]);
   const [connectionsBusy, setConnectionsBusy] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
+  const backButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const profileSeqRef = useRef(0);
+  const profileAbortRef = useRef<AbortController | null>(null);
+  const connectionsSeqRef = useRef(0);
+  const connectionsAbortRef = useRef<AbortController | null>(null);
 
   const normalizedHandle = handle.trim().replace(/^@+/, "").toLowerCase();
 
   const loadProfile = useCallback(async () => {
+    profileAbortRef.current?.abort();
+    connectionsAbortRef.current?.abort();
     if (!normalizedHandle) {
       setStatus("not_found");
       return;
     }
+    const controller = new AbortController();
+    profileAbortRef.current = controller;
+    const seq = ++profileSeqRef.current;
+    const requestedHandle = normalizedHandle;
     setStatus("loading");
     setErrorMsg("");
     setMenuOpen(false);
     setConfirmBlock(false);
+    setConfirmDeleteId(null);
     setReportOpen(false);
     setQrOpen(false);
     setConnectionsKind(null);
+    setConnections([]);
     try {
       const res = await api<{ profile: CanonicalPublicProfile }>(
-        `/api/community/network?view=profile&handle=${encodeURIComponent(normalizedHandle)}`,
+        `/api/community/network?view=profile&handle=${encodeURIComponent(requestedHandle)}`,
+        undefined,
+        { signal: controller.signal },
       );
+      if (controller.signal.aborted || seq !== profileSeqRef.current) return;
       setProfile(res.profile);
       setStatus("ready");
       setTab("souls");
     } catch (err) {
+      if (controller.signal.aborted || seq !== profileSeqRef.current) return;
       const msg = err instanceof Error ? err.message : "Could not load profile.";
       if (/not found|private|404/i.test(msg)) {
         setStatus("not_found");
@@ -191,8 +210,34 @@ export default function PublicProfileSheet({
     });
     return () => {
       alive = false;
+      profileAbortRef.current?.abort();
+      connectionsAbortRef.current?.abort();
     };
   }, [loadProfile]);
+
+  // Modal lifecycle: capture & restore opener focus, lock background scroll, and trap Tab focus inside sheet
+  useEffect(() => {
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    queueMicrotask(() => {
+      backButtonRef.current?.focus();
+    });
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      const prev = previousFocusRef.current;
+      if (prev && prev.isConnected) {
+        try {
+          prev.focus();
+        } catch {
+          /* Ignore unfocusable opener */
+        }
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -207,6 +252,31 @@ export default function PublicProfileSheet({
           setMenuOpen(false);
         } else {
           onClose();
+        }
+        return;
+      }
+      if (e.key === "Tab" && sheetRef.current) {
+        const container =
+          (connectionsKind
+            ? sheetRef.current.querySelector<HTMLElement>(".x54-connections-drawer")
+            : null) ?? sheetRef.current;
+        const focusables = Array.from(
+          container.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter((el) => el.offsetParent !== null);
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement;
+        if (e.shiftKey) {
+          if (active === first || !container.contains(active)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else if (active === last || !container.contains(active)) {
+          e.preventDefault();
+          first.focus();
         }
       }
     };
@@ -271,21 +341,32 @@ export default function PublicProfileSheet({
 
   async function openConnections(kind: "followers" | "following") {
     if (!profile) return;
+    connectionsAbortRef.current?.abort();
+    const controller = new AbortController();
+    connectionsAbortRef.current = controller;
+    const seq = ++connectionsSeqRef.current;
+    const targetHandle = profile.handle;
     setConnectionsKind(kind);
     setConnectionsBusy(true);
     setConnections([]);
     try {
       const res = await api<{ profiles: ConnectionPerson[] }>(
-        `/api/community/network?view=${kind}&handle=${encodeURIComponent(profile.handle)}`,
+        `/api/community/network?view=${kind}&handle=${encodeURIComponent(targetHandle)}`,
+        undefined,
+        { signal: controller.signal },
       );
+      if (controller.signal.aborted || seq !== connectionsSeqRef.current) return;
       setConnections(res.profiles ?? []);
     } catch (err) {
+      if (controller.signal.aborted || seq !== connectionsSeqRef.current) return;
       notify(
         err instanceof Error ? err.message : `Could not load ${kind}.`,
         true,
       );
     } finally {
-      setConnectionsBusy(false);
+      if (!controller.signal.aborted && seq === connectionsSeqRef.current) {
+        setConnectionsBusy(false);
+      }
     }
   }
 
@@ -316,13 +397,16 @@ export default function PublicProfileSheet({
       onRequireAuth?.();
       return;
     }
+    const cleanNote = reportNote.trim();
+    const fullReason = cleanNote
+      ? `${reportReason}: ${cleanNote}`
+      : `${reportReason} — reported via profile sheet`;
     try {
       await api("/api/x2/social", {
         action: "report",
-        targetKind: "BODY",
+        kind: "BODY",
         targetId: profile.handle,
-        reason: reportReason,
-        note: reportNote.trim(),
+        reason: fullReason,
       });
       notify(`Report logged for @${profile.handle}.`);
       setReportOpen(false);
@@ -409,8 +493,9 @@ export default function PublicProfileSheet({
         action: "delete-soul",
         postId: post.id,
       });
+      setConfirmDeleteId(null);
       await loadProfile();
-      notify("Removed from Community Web (private Graveyard scan kept).");
+      notify("Removed from Soul Feed (private Graveyard scan kept).");
       onProfileMutated?.();
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not delete post.", true);
@@ -430,9 +515,13 @@ export default function PublicProfileSheet({
     }
   })() : "";
 
-  function copyProfileLink() {
+  async function copyProfileLink() {
     if (!profileUrl) return;
-    void navigator.clipboard?.writeText(profileUrl);
+    const ok = await copyTextSafe(profileUrl);
+    if (!ok) {
+      notify("Unable to copy profile link on this browser.", true);
+      return;
+    }
     setCopiedLink(true);
     notify("Copied profile link.");
     window.setTimeout(() => setCopiedLink(false), 2000);
@@ -458,6 +547,7 @@ export default function PublicProfileSheet({
         {/* Sticky top navigation header */}
         <header className="x54-profile-topbar">
           <button
+            ref={backButtonRef}
             type="button"
             className="x54-icon-circle"
             aria-label="Close profile and go back"
@@ -978,14 +1068,33 @@ export default function PublicProfileSheet({
                                     <Pin size={13} />
                                     <span>{post.pinned ? "Unpin" : "Pin"}</span>
                                   </button>
-                                  <button
-                                    type="button"
-                                    className="x54-tiny-btn is-danger"
-                                    aria-label={`Delete ${post.title}`}
-                                    onClick={() => void deleteSoul(post)}
-                                  >
-                                    <Trash2 size={13} />
-                                  </button>
+                                  {confirmDeleteId === post.id ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="x54-tiny-btn is-danger"
+                                        onClick={() => void deleteSoul(post)}
+                                      >
+                                        Remove
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="x54-tiny-btn"
+                                        onClick={() => setConfirmDeleteId(null)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="x54-tiny-btn is-danger"
+                                      aria-label={`Delete ${post.title}`}
+                                      onClick={() => setConfirmDeleteId(post.id)}
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  )}
                                 </>
                               )}
                             </div>

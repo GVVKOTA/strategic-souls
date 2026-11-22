@@ -899,6 +899,30 @@
   display: none !important;
 }
 
+.x55-new-chat-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.x55-earlier-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.x55-inline-error {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--x1-text-primary);
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(202, 211, 220, 0.28);
+  background: var(--x1-surface-2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .x54-inbox-row,
   .x54-msg-trigger,

@@ -348,6 +348,18 @@ export default function X1Workspace() {
   }, [hydrateForSession, loadMarket]);
 
   useEffect(() => {
+    const onUnreadSynced = (event: Event) => {
+      const nextCount = (event as CustomEvent<number>).detail;
+      if (typeof nextCount !== "number" || !Number.isFinite(nextCount)) return;
+      setAuthUser((prev) =>
+        prev ? { ...prev, unreadNotifications: Math.max(0, nextCount) } : prev,
+      );
+    };
+    window.addEventListener("ss-unread-synced", onUnreadSynced);
+    return () => window.removeEventListener("ss-unread-synced", onUnreadSynced);
+  }, []);
+
+  useEffect(() => {
     if (!message || message.error) return;
     const timer = setTimeout(() => setMessage(null), 6000);
     return () => clearTimeout(timer);
@@ -417,6 +429,7 @@ export default function X1Workspace() {
             handle: profile.handle,
             bio: profile.bio,
             discoverable: profile.social.discoverable,
+            legacyPrivateProfile: profile.legacyPrivateProfile,
             unreadNotifications: profile.unreadNotifications,
             genderSymbol: profile.genderSymbol,
             instagramHandle: profile.instagramHandle,
@@ -523,6 +536,16 @@ export default function X1Workspace() {
       setAccepted(null);
       setIsOwner(false);
       setWorkspace(null);
+      setFollowRequests([]);
+      setInitialProfileHandle(null);
+      setCommunitySearch("");
+      setSharedFormula("");
+      setInitialFormula("");
+      setInitialInstrument("");
+      setAsset("");
+      setAssetEventContext(null);
+      setMobileChatActive(false);
+      setBellOpen(false);
       if (view === "Settings") {
         setView("Global");
         window.history.replaceState(null, "", "/?view=global");

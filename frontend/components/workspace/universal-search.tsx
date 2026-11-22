@@ -101,6 +101,7 @@ export default function UniversalSearch({
   const [registry, setRegistry] = useState<SearchableInstrument[]>([
     ...X2_INSTRUMENTS,
   ]);
+  const [lastSocialKey, setLastSocialKey] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown on outside click
@@ -338,48 +339,103 @@ export default function UniversalSearch({
     return ranked;
   }, [data, q, registry, remoteAssets, scope]);
 
+  const socialScopes = ["all", "bodies", "groups", "souls"];
+  const cleanSocialQ = q.replace(/^@/, "").trim();
+  const shouldFetchSocial =
+    cleanSocialQ.length >= 1 &&
+    socialScopes.includes(scope) &&
+    (authenticated || scope === "all" || scope === "bodies");
+  const currentSocialKey = shouldFetchSocial
+    ? `${scope}:${cleanSocialQ}:${authenticated ? 1 : 0}`
+    : "";
+
   useEffect(() => {
-    const socialScopes = ["all", "bodies", "groups", "souls"];
-    if (!authenticated || q.length < 1 || !socialScopes.includes(scope)) {
+    if (!shouldFetchSocial) {
       return;
     }
-    const cleanSocialQ = q.replace(/^@/, "").trim();
-    if (cleanSocialQ.length < 1) return;
     const controller = new AbortController();
-    const timer = setTimeout(() => {
+    const targetKey = currentSocialKey;
+    const timer = setTimeout(async () => {
       setBusy(true);
       setError("");
       const socialKind = ["bodies", "groups", "souls"].includes(scope)
         ? scope
         : "all";
-      api<SocialResults>(
-        "/api/x2/social?view=search&q=" +
-          encodeURIComponent(cleanSocialQ) +
-          "&kind=" +
-          socialKind,
-        undefined,
-        { signal: controller.signal },
-      )
-        .then(setSocial)
-        .catch(() => {
-          if (!controller.signal.aborted)
-            setError("Community search is temporarily unavailable.");
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setBusy(false);
+      const wantsBodies = socialKind === "all" || socialKind === "bodies";
+      try {
+        const [publicRes, privateRes] = await Promise.all([
+          wantsBodies
+            ? api<{
+                researchers?: {
+                  handle: string;
+                  displayName: string;
+                  bio?: string;
+                }[];
+              }>(
+                "/api/community/network?view=search&q=" +
+                  encodeURIComponent(cleanSocialQ),
+                undefined,
+                { signal: controller.signal },
+              ).catch(() => ({ researchers: [] }))
+            : Promise.resolve({ researchers: [] }),
+          authenticated
+            ? api<SocialResults>(
+                "/api/x2/social?view=search&q=" +
+                  encodeURIComponent(cleanSocialQ) +
+                  "&kind=" +
+                  socialKind,
+                undefined,
+                { signal: controller.signal },
+              ).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+        if (controller.signal.aborted) return;
+        const bodyMap = new Map<string, { handle: string; displayName: string }>();
+        for (const r of publicRes.researchers ?? []) {
+          bodyMap.set(r.handle.toLowerCase(), {
+            handle: r.handle,
+            displayName: r.displayName,
+          });
+        }
+        for (const b of privateRes?.bodies ?? []) {
+          bodyMap.set(b.handle.toLowerCase(), {
+            handle: b.handle,
+            displayName: b.displayName,
+          });
+        }
+        setSocial({
+          bodies: [...bodyMap.values()],
+          groups: privateRes?.groups ?? [],
+          souls: privateRes?.souls ?? [],
+          callerHasBody: privateRes?.callerHasBody,
         });
+        setLastSocialKey(targetKey);
+      } catch {
+        if (!controller.signal.aborted) {
+          setError("Community search is temporarily unavailable.");
+          setLastSocialKey(targetKey);
+        }
+      } finally {
+        if (!controller.signal.aborted) setBusy(false);
+      }
     }, 170);
     return () => {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [authenticated, q, scope]);
+  }, [authenticated, cleanSocialQ, currentSocialKey, scope, shouldFetchSocial]);
+
+  const effectiveSocial =
+    shouldFetchSocial && lastSocialKey === currentSocialKey ? social : null;
+  const socialPending =
+    shouldFetchSocial && (busy || lastSocialKey !== currentSocialKey);
 
   const updateQuery = (value: string) => {
     setQuery(value);
     setActiveIndex(-1);
     if (!value.trim()) {
       setSocial(null);
+      setLastSocialKey("");
       setRemoteAssets([]);
       setBusy(false);
       setError("");
@@ -422,26 +478,26 @@ export default function UniversalSearch({
         run: () => openAssetResult(a.id, a.name),
       });
     }
-    for (const b of social?.bodies ?? []) {
+    for (const b of effectiveSocial?.bodies ?? []) {
       list.push({
         key: `body:${b.handle}`,
         run: () => openCommunityResult("BODY", "@" + b.handle, "@" + b.handle),
       });
     }
-    for (const g of social?.groups ?? []) {
+    for (const g of effectiveSocial?.groups ?? []) {
       list.push({
         key: `group:${g.id}`,
         run: () => openCommunityResult("GROUP", g.name, g.name),
       });
     }
-    for (const s of social?.souls ?? []) {
+    for (const s of effectiveSocial?.souls ?? []) {
       list.push({
         key: `soul:${s.id}`,
         run: () => openCommunityResult("SOUL", s.title, s.title),
       });
     }
     return list;
-  }, [assets, openAssetResult, openCommunityResult, social]);
+  }, [assets, effectiveSocial, openAssetResult, openCommunityResult]);
 
   function availabilityLabel(item: SearchableInstrument): string {
     const id = item.id.toUpperCase();
@@ -456,9 +512,9 @@ export default function UniversalSearch({
 
   const totalCount =
     assets.length +
-    (social?.bodies.length ?? 0) +
-    (social?.groups.length ?? 0) +
-    (social?.souls.length ?? 0);
+    (effectiveSocial?.bodies.length ?? 0) +
+    (effectiveSocial?.groups.length ?? 0) +
+    (effectiveSocial?.souls.length ?? 0);
 
   const favIds = useMemo(
     () => new Set(history.favorites.map((f) => f.id)),
@@ -707,7 +763,7 @@ export default function UniversalSearch({
             );
           })}
 
-          {social?.bodies.map((x, i) => {
+          {effectiveSocial?.bodies.map((x, i) => {
             const idx = assets.length + i;
             return (
               <button
@@ -726,8 +782,8 @@ export default function UniversalSearch({
             );
           })}
 
-          {social?.groups.map((x, i) => {
-            const idx = assets.length + (social?.bodies.length ?? 0) + i;
+          {effectiveSocial?.groups.map((x, i) => {
+            const idx = assets.length + (effectiveSocial?.bodies.length ?? 0) + i;
             return (
               <button
                 key={x.id}
@@ -743,11 +799,11 @@ export default function UniversalSearch({
             );
           })}
 
-          {social?.souls.map((x, i) => {
+          {effectiveSocial?.souls.map((x, i) => {
             const idx =
               assets.length +
-              (social?.bodies.length ?? 0) +
-              (social?.groups.length ?? 0) +
+              (effectiveSocial?.bodies.length ?? 0) +
+              (effectiveSocial?.groups.length ?? 0) +
               i;
             return (
               <button
@@ -765,29 +821,28 @@ export default function UniversalSearch({
           })}
 
           {authenticated &&
-            social?.callerHasBody === false &&
-            (q.startsWith("@") ||
-              ["bodies", "groups", "souls"].includes(scope)) && (
+            effectiveSocial?.callerHasBody === false &&
+            ["groups", "souls"].includes(scope) && (
               <button
                 type="button"
                 onClick={() => openCommunityResult("QUERY", q, q)}
               >
                 <span>
-                  <strong>Set your Body ID in Profile to search researchers</strong>
-                  <small>Requires an @handle in Profile settings.</small>
+                  <strong>Create a Body ID to search private Rooms</strong>
+                  <small>Choose a Body ID in Profile settings.</small>
                 </span>
                 <UserPlus size={14} />
               </button>
             )}
 
-          {busy && <p role="status">Searching…</p>}
+          {socialPending && <p role="status">Searching…</p>}
           {error && <p role="status">{error}</p>}
-          {!busy &&
+          {!socialPending &&
             !assets.length &&
-            !social?.bodies.length &&
-            !social?.groups.length &&
-            !social?.souls.length && (
-              <p>No matching instrument or permitted research found for “{q}”.</p>
+            !effectiveSocial?.bodies.length &&
+            !effectiveSocial?.groups.length &&
+            !effectiveSocial?.souls.length && (
+              <p>No matching markets or public research found for “{q}”.</p>
             )}
         </div>
       )}

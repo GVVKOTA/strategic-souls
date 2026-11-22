@@ -15,6 +15,7 @@ import {
 type Props = {
   thread: ChatThread | null;
   older: ChatMessage[];
+  olderError?: string;
   loadingThread: boolean;
   busy: boolean;
   draft: string;
@@ -37,7 +38,7 @@ type Props = {
   onAcceptRequest: () => void;
   onDeclineRequest: () => void;
   onLoadEarlier: () => Promise<void>;
-  onAutoMarkRead: (threadId: string, lastMessageId: string) => void;
+  onAutoMarkRead: (threadId: string, lastMessageId: string) => Promise<boolean>;
   shareSoul?: { id: string; revision: number; title: string } | null;
   onClearShare?: () => void;
 };
@@ -45,6 +46,7 @@ type Props = {
 export default function ConversationView({
   thread,
   older,
+  olderError = "",
   loadingThread,
   busy,
   draft,
@@ -75,7 +77,7 @@ export default function ConversationView({
   const logRef = useRef<HTMLDivElement>(null);
   const stickBottomRef = useRef(true);
   const prevScrollHeightRef = useRef<number | null>(null);
-  const lastMarkedRef = useRef<string>("");
+  const confirmedReadRef = useRef<string>("");
   const lastThreadIdRef = useRef<string>("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -126,15 +128,48 @@ export default function ConversationView({
     }
   }, [thread, messages.length, lastMessageId]);
 
-  // Auto-mark read when viewing a thread with messages from the peer
+  // Auto-mark read ONLY after server confirms, with visibility recovery and bounded backoff retry
   useEffect(() => {
-    if (!thread || document.visibilityState !== "visible") return;
+    if (!thread) return;
     const lastIncoming = [...messages].reverse().find((m) => !m.isMine);
     if (!lastIncoming) return;
-    const key = `${thread.id}:${lastIncoming.id}`;
-    if (lastMarkedRef.current === key) return;
-    lastMarkedRef.current = key;
-    onAutoMarkRead(thread.id, lastIncoming.id);
+    const activeThreadId = thread.id;
+    const incomingId = lastIncoming.id;
+    const key = `${activeThreadId}:${incomingId}`;
+    if (confirmedReadRef.current === key) return;
+
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const delays = [2000, 6000, 15000];
+    let attempt = 0;
+
+    const tryMark = () => {
+      if (cancelled || confirmedReadRef.current === key) return;
+      if (document.visibilityState !== "visible") return;
+      void onAutoMarkRead(activeThreadId, incomingId).then((ok) => {
+        if (cancelled) return;
+        if (ok) {
+          confirmedReadRef.current = key;
+        } else if (attempt < delays.length) {
+          const delay = delays[attempt++];
+          retryTimer = setTimeout(tryMark, delay);
+        }
+      });
+    };
+
+    tryMark();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        attempt = 0;
+        tryMark();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [messages, onAutoMarkRead, thread]);
 
   function handleScroll() {
@@ -150,6 +185,9 @@ export default function ConversationView({
     prevScrollHeightRef.current = logRef.current.scrollHeight;
     try {
       await onLoadEarlier();
+    } catch {
+      // Preserve current reading scroll position on failure instead of jumping
+      prevScrollHeightRef.current = null;
     } finally {
       setLoadingOlder(false);
     }
@@ -251,14 +289,25 @@ export default function ConversationView({
         }}
       >
         {thread.nextBefore && (
-          <button
-            type="button"
-            className="x54-earlier-btn"
-            disabled={loadingOlder || busy}
-            onClick={() => void handleEarlierClick()}
-          >
-            {loadingOlder ? "Loading…" : "Load earlier messages"}
-          </button>
+          <div className="x55-earlier-wrap">
+            <button
+              type="button"
+              className="x54-earlier-btn"
+              disabled={loadingOlder || busy}
+              onClick={() => void handleEarlierClick()}
+            >
+              {loadingOlder
+                ? "Loading…"
+                : olderError
+                  ? "Retry earlier messages"
+                  : "Load earlier messages"}
+            </button>
+            {olderError && (
+              <p className="x55-inline-error" role="alert">
+                {olderError}
+              </p>
+            )}
+          </div>
         )}
 
         {messages.length === 0 && (

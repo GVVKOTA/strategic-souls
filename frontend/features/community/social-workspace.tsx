@@ -9,16 +9,25 @@ import {
   X,
   ArrowRight,
 } from "lucide-react";
-import { api, Empty, Modal, Panel, moment, type Notice } from "../../components/workspace/shared";
+import {
+  api,
+  copyTextSafe,
+  Empty,
+  Modal,
+  Panel,
+  moment,
+  type Notice,
+} from "../../components/workspace/shared";
 import AvatarBadge from "../account/avatar-badge";
 import ChatInbox from "./messenger/chat-inbox";
 import ConversationView from "./messenger/conversation-view";
-import type {
-  ChatBody,
-  ChatMessage,
-  ChatThread,
-  InboxThread,
-  SharedSoulRef,
+import {
+  mergeUniqueMessages,
+  type ChatBody,
+  type ChatMessage,
+  type ChatThread,
+  type InboxThread,
+  type SharedSoulRef,
 } from "./messenger/types";
 
 export type SocialView =
@@ -157,6 +166,7 @@ export function SocialWorkspace({
   const [threadId, setThreadId] = useState(initialThreadId || "");
   const [thread, setThread] = useState<ChatThread | null>(null);
   const [loadingThread, setLoadingThread] = useState(false);
+  const [olderError, setOlderError] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [threadSearch, setThreadSearch] = useState("");
   const [older, setOlder] = useState<ChatMessage[]>([]);
@@ -169,29 +179,96 @@ export function SocialWorkspace({
   const retry = useRef<{ signature: string; key: string } | null>(null);
   const mounted = useRef(true);
   const pushedMobileHistoryRef = useRef(false);
+  const activeThreadIdRef = useRef(initialThreadId || "");
+  const inboxFetchSeqRef = useRef(0);
+  const threadFetchSeqRef = useRef(0);
+  const olderFetchSeqRef = useRef(0);
+  const threadAbortRef = useRef<AbortController | null>(null);
+  const olderAbortRef = useRef<AbortController | null>(null);
+  const inFlightMarkReadRef = useRef<Set<string>>(new Set());
+
+  const selectThread = useCallback((nextId: string) => {
+    const prevId = activeThreadIdRef.current;
+    activeThreadIdRef.current = nextId;
+    if (nextId !== prevId) {
+      threadAbortRef.current?.abort();
+      olderAbortRef.current?.abort();
+      threadFetchSeqRef.current += 1;
+      olderFetchSeqRef.current += 1;
+      setThread(null);
+      setOlder([]);
+      setOlderError("");
+      setEditing(null);
+      setEditText("");
+      setError("");
+    }
+    setThreadId(nextId);
+  }, []);
 
   const refresh = useCallback(async () => {
+    const seq = ++inboxFetchSeqRef.current;
     const next = await read<Home>({ view: "home" });
-    if (mounted.current) {
-      setHome(next);
-      setError("");
-      setLoading(false);
-    }
+    if (!mounted.current || seq !== inboxFetchSeqRef.current) return;
+    setHome(next);
+    setError("");
+    setLoading(false);
+    const unreadNotifications = next.notifications.filter((n) => !n.readAt).length;
+    window.dispatchEvent(
+      new CustomEvent("ss-unread-synced", { detail: unreadNotifications }),
+    );
   }, []);
 
   const refreshThread = useCallback(async (targetId?: string) => {
-    const activeId = targetId ?? threadId;
+    const activeId = targetId ?? activeThreadIdRef.current;
     if (!activeId) return;
-    const next = await read<ChatThread>({ view: "thread", threadId: activeId });
-    if (!mounted.current) return;
-    setThread(next);
-    // Keep older pagination synchronized when an older message was edited or retracted
-    setOlder((prev) => {
-      if (prev.length === 0) return prev;
-      const latestMap = new Map(next.messages.map((m) => [m.id, m]));
-      return prev.map((m) => latestMap.get(m.id) ?? m);
-    });
-  }, [threadId]);
+    threadAbortRef.current?.abort();
+    const controller = new AbortController();
+    threadAbortRef.current = controller;
+    const seq = ++threadFetchSeqRef.current;
+    try {
+      const next = await read<ChatThread>(
+        { view: "thread", threadId: activeId },
+        controller.signal,
+      );
+      if (
+        !mounted.current ||
+        controller.signal.aborted ||
+        seq !== threadFetchSeqRef.current ||
+        activeThreadIdRef.current !== activeId ||
+        next.id !== activeId
+      ) {
+        return;
+      }
+      setThread((prev) => {
+        if (!prev || prev.id !== next.id) return next;
+        // Preserve deeper nextBefore cursor if earlier pages are already loaded
+        return {
+          ...next,
+          nextBefore: prev.nextBefore === null ? null : next.nextBefore,
+          messages: mergeUniqueMessages(
+            prev.messages.filter((m) => next.messages.some((nm) => nm.id === m.id)),
+            next.messages,
+          ),
+        };
+      });
+      // Synchronize already-loaded older pages with monotonic merge (never downgrading edits/retractions/receipts)
+      setOlder((prev) => {
+        if (prev.length === 0) return prev;
+        const latestIds = new Set(next.messages.map((m) => m.id));
+        const overlappingLatest = next.messages.filter((m) =>
+          prev.some((o) => o.id === m.id),
+        );
+        if (overlappingLatest.length === 0) return prev;
+        const merged = mergeUniqueMessages(prev, overlappingLatest);
+        return merged.filter((m) => prev.some((o) => o.id === m.id) || latestIds.has(m.id));
+      });
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError" || controller.signal.aborted) {
+        return;
+      }
+      throw e;
+    }
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -203,6 +280,8 @@ export function SocialWorkspace({
     });
     return () => {
       mounted.current = false;
+      threadAbortRef.current?.abort();
+      olderAbortRef.current?.abort();
     };
   }, [refresh]);
 
@@ -211,14 +290,13 @@ export function SocialWorkspace({
     let alive = true;
     queueMicrotask(() => {
       if (!alive) return;
-      setThreadId(initialThreadId);
-      setEditing(null);
+      selectThread(initialThreadId);
       onClearInitialThread?.();
     });
     return () => {
       alive = false;
     };
-  }, [initialThreadId, onClearInitialThread]);
+  }, [initialThreadId, onClearInitialThread, selectThread]);
 
   useEffect(() => {
     let alive = true;
@@ -230,14 +308,18 @@ export function SocialWorkspace({
     };
   }, [query]);
 
-  // Load selected thread
+  // Load selected thread with abort + sequence + activeThreadId verification
   useEffect(() => {
+    activeThreadIdRef.current = threadId;
     if (!threadId) {
+      threadAbortRef.current?.abort();
+      olderAbortRef.current?.abort();
       let alive = true;
       queueMicrotask(() => {
         if (!alive) return;
         setThread(null);
         setOlder([]);
+        setOlderError("");
         setEditing(null);
         setLoadingThread(false);
       });
@@ -245,21 +327,52 @@ export function SocialWorkspace({
         alive = false;
       };
     }
+    threadAbortRef.current?.abort();
+    olderAbortRef.current?.abort();
     const controller = new AbortController();
+    threadAbortRef.current = controller;
+    const seq = ++threadFetchSeqRef.current;
+    const requestedId = threadId;
     queueMicrotask(() => {
-      if (!controller.signal.aborted) setLoadingThread(true);
+      if (!controller.signal.aborted && activeThreadIdRef.current === requestedId) {
+        setLoadingThread(true);
+        setOlderError("");
+      }
     });
-    read<ChatThread>({ view: "thread", threadId }, controller.signal)
+    read<ChatThread>({ view: "thread", threadId: requestedId }, controller.signal)
       .then((s) => {
+        if (
+          !mounted.current ||
+          controller.signal.aborted ||
+          seq !== threadFetchSeqRef.current ||
+          activeThreadIdRef.current !== requestedId ||
+          s.id !== requestedId
+        ) {
+          return;
+        }
         setThread(s);
         setError("");
         setOlder([]);
+        setOlderError("");
       })
       .catch((e) => {
-        if (e.name !== "AbortError") setError(e.message);
+        if (
+          controller.signal.aborted ||
+          (e as Error)?.name === "AbortError" ||
+          activeThreadIdRef.current !== requestedId
+        ) {
+          return;
+        }
+        setError((e as Error).message);
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoadingThread(false);
+        if (
+          mounted.current &&
+          !controller.signal.aborted &&
+          seq === threadFetchSeqRef.current
+        ) {
+          setLoadingThread(false);
+        }
       });
     return () => controller.abort();
   }, [threadId]);
@@ -302,24 +415,27 @@ export function SocialWorkspace({
         return;
       }
       pushedMobileHistoryRef.current = false;
-      setThreadId("");
-      setThread(null);
-      setEditing(null);
+      selectThread("");
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [threadId, view]);
+  }, [selectThread, threadId, view]);
 
-  // Background refresh while tab is visible
+  // Background refresh while tab is visible + immediate sync on foreground return
   useEffect(() => {
     if (view !== "Messages" && view !== "Notifications") return;
-    const timer = setInterval(() => {
+    const syncNow = () => {
       if (document.visibilityState !== "visible" || lock.current) return;
       Promise.all([refresh(), refreshThread()]).catch(() => {
         /* Visible refresh remains available; never simulate incoming status. */
       });
-    }, 12000);
-    return () => clearInterval(timer);
+    };
+    const timer = setInterval(syncNow, 12000);
+    document.addEventListener("visibilitychange", syncNow);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", syncNow);
+    };
   }, [view, refresh, refreshThread]);
 
   // Discover search
@@ -347,16 +463,63 @@ export function SocialWorkspace({
     input: Record<string, unknown>,
     success?: string,
     targetThreadId?: string,
-  ) {
+  ): Promise<Record<string, unknown> | null> {
     if (lock.current) return null;
     lock.current = true;
     setBusy(true);
     setError("");
+    const activeTargetId = targetThreadId ?? activeThreadIdRef.current;
     try {
       const result = await api<Record<string, unknown>>(endpoint, input);
-      await refresh();
-      if (targetThreadId || threadId) {
-        await refreshThread(targetThreadId || threadId);
+      // Immediately merge server-confirmed message snapshot so state stays consistent even if follow-up poll fails
+      const confirmedMsg = result.message as
+        | (ChatMessage & { threadId?: string })
+        | undefined;
+      if (
+        confirmedMsg &&
+        typeof confirmedMsg.id === "string" &&
+        activeThreadIdRef.current &&
+        (!confirmedMsg.threadId ||
+          confirmedMsg.threadId === activeThreadIdRef.current)
+      ) {
+        const cleanMsg: ChatMessage = {
+          id: confirmedMsg.id,
+          text: confirmedMsg.text,
+          authorHandle: confirmedMsg.authorHandle,
+          isMine: confirmedMsg.isMine,
+          createdAt: confirmedMsg.createdAt,
+          editedAt: confirmedMsg.editedAt,
+          retractedAt: confirmedMsg.retractedAt,
+          version: confirmedMsg.version,
+          status: confirmedMsg.status,
+          reference: confirmedMsg.reference ?? null,
+        };
+        setThread((prev) =>
+          prev && prev.id === activeThreadIdRef.current
+            ? { ...prev, messages: mergeUniqueMessages(prev.messages, [cleanMsg]) }
+            : prev,
+        );
+        setOlder((prev) =>
+          prev.some((m) => m.id === cleanMsg.id)
+            ? mergeUniqueMessages(prev, [cleanMsg])
+            : prev,
+        );
+      }
+      if (typeof result.unreadNotifications === "number") {
+        window.dispatchEvent(
+          new CustomEvent("ss-unread-synced", {
+            detail: result.unreadNotifications,
+          }),
+        );
+      }
+      // Best-effort follow-up refresh — never roll back or falsely report failure of an already committed mutation
+      try {
+        await refresh();
+        if (activeTargetId && activeThreadIdRef.current === activeTargetId) {
+          await refreshThread(activeTargetId);
+        }
+      } catch {
+        /* Confirmed write stands; next sync or manual retry refreshes full state. */
       }
       if (success) notify(success);
       return result;
@@ -371,49 +534,90 @@ export function SocialWorkspace({
   }
 
   const autoMarkRead = useCallback(
-    (activeThreadId: string, lastMessageId: string) => {
-      void api(endpoint, {
-        action: "mark-read",
-        threadId: activeThreadId,
-        lastMessageId,
-      })
-        .then(() => {
-          setHome((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  inbox: prev.inbox.map((item) =>
-                    item.id === activeThreadId ? { ...item, unread: 0 } : item,
-                  ),
-                }
-              : prev,
-          );
-        })
-        .catch(() => {
-          /* Best-effort read acknowledgement */
+    async (activeThreadId: string, lastMessageId: string): Promise<boolean> => {
+      const key = `${activeThreadId}:${lastMessageId}`;
+      if (inFlightMarkReadRef.current.has(key)) return false;
+      inFlightMarkReadRef.current.add(key);
+      try {
+        const res = await api<{
+          saved?: boolean;
+          unread?: number;
+          unreadNotifications?: number;
+        }>(endpoint, {
+          action: "mark-read",
+          threadId: activeThreadId,
+          lastMessageId,
         });
+        if (!mounted.current) return true;
+        const authoritativeUnread =
+          typeof res.unread === "number" ? Math.max(0, res.unread) : 0;
+        setHome((prev) =>
+          prev
+            ? {
+                ...prev,
+                inbox: prev.inbox.map((item) =>
+                  item.id === activeThreadId
+                    ? { ...item, unread: authoritativeUnread }
+                    : item,
+                ),
+              }
+            : prev,
+        );
+        if (typeof res.unreadNotifications === "number") {
+          window.dispatchEvent(
+            new CustomEvent("ss-unread-synced", {
+              detail: res.unreadNotifications,
+            }),
+          );
+        }
+        return true;
+      } catch {
+        return false;
+      } finally {
+        inFlightMarkReadRef.current.delete(key);
+      }
     },
     [],
   );
 
-  async function startChatByHandle(handle: string) {
+  async function startChatByHandle(
+    handle: string,
+  ): Promise<{ ok: boolean; error?: string }> {
     const clean = handle.trim().replace(/^@+/, "");
-    if (!clean) return;
-    const r = await mutate(
-      { action: "start-thread", handle: clean },
-      undefined,
-    );
-    if (typeof r?.threadId === "string") {
-      setThreadId(r.threadId);
-      onView("Messages");
+    if (!clean) return { ok: false, error: "Enter a Body ID." };
+    if (lock.current) return { ok: false, error: "Please wait for the current action to finish." };
+    lock.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      const r = await api<Record<string, unknown>>(endpoint, {
+        action: "start-thread",
+        handle: clean,
+      });
+      try {
+        await refresh();
+      } catch {
+        /* Inbox refreshes on next poll if transient network hiccup occurs */
+      }
+      if (typeof r?.threadId === "string") {
+        selectThread(r.threadId);
+        onView("Messages");
+        return { ok: true };
+      }
+      return { ok: false, error: "Unable to open chat with that Body ID." };
+    } catch (e) {
+      const message = (e as Error).message;
+      setError(message);
+      notify(message, true);
+      return { ok: false, error: message };
+    } finally {
+      lock.current = false;
+      if (mounted.current) setBusy(false);
     }
   }
 
   function closeThreadToInbox() {
-    setThreadId("");
-    setThread(null);
-    setEditing(null);
-    setOlder([]);
+    selectThread("");
     if (pushedMobileHistoryRef.current) {
       pushedMobileHistoryRef.current = false;
       try {
@@ -425,23 +629,28 @@ export function SocialWorkspace({
   }
 
   async function handleSend() {
-    if (!threadId || lock.current) return;
-    const text = (drafts[threadId] || "").trim();
+    const targetId = activeThreadIdRef.current;
+    if (!targetId || lock.current) return;
+    const text = (drafts[targetId] || "").trim();
     if (!text) return;
-    const signature = threadId + "\n" + text + JSON.stringify(shareSoul);
+    const signature = targetId + "\n" + text + JSON.stringify(shareSoul);
     if (!retry.current || retry.current.signature !== signature) {
       retry.current = { signature, key: newId() };
     }
-    const res = await mutate({
-      action: "send",
-      threadId,
-      text,
-      soulId: shareSoul?.id,
-      revision: shareSoul?.revision,
-      requestId: retry.current.key,
-    });
+    const res = await mutate(
+      {
+        action: "send",
+        threadId: targetId,
+        text,
+        soulId: shareSoul?.id,
+        revision: shareSoul?.revision,
+        requestId: retry.current.key,
+      },
+      undefined,
+      targetId,
+    );
     if (res) {
-      setDrafts((previous) => ({ ...previous, [threadId]: "" }));
+      setDrafts((previous) => ({ ...previous, [targetId]: "" }));
       retry.current = null;
       onClearShare?.();
     }
@@ -525,8 +734,7 @@ export function SocialWorkspace({
                 query={threadSearch}
                 onQueryChange={setThreadSearch}
                 onSelectThread={(idToOpen) => {
-                  setThreadId(idToOpen);
-                  setEditing(null);
+                  selectThread(idToOpen);
                 }}
                 onOpenProfile={openCanonicalProfile}
                 onStartByHandle={startChatByHandle}
@@ -536,6 +744,7 @@ export function SocialWorkspace({
               <ConversationView
                 thread={thread}
                 older={older}
+                olderError={olderError}
                 loadingThread={loadingThread}
                 busy={busy}
                 draft={editing ? editText : drafts[threadId] || ""}
@@ -573,8 +782,14 @@ export function SocialWorkspace({
                   }
                 }}
                 onCopyText={(txt) => {
-                  void navigator.clipboard?.writeText(txt);
-                  notify("Copied message text.");
+                  void copyTextSafe(txt).then((ok) => {
+                    notify(
+                      ok
+                        ? "Copied message text."
+                        : "Unable to copy to clipboard on this browser.",
+                      !ok,
+                    );
+                  });
                 }}
                 onBack={closeThreadToInbox}
                 onOpenProfile={openCanonicalProfile}
@@ -641,21 +856,55 @@ export function SocialWorkspace({
                   }
                 }}
                 onLoadEarlier={async () => {
-                  if (!thread?.nextBefore) return;
+                  const requestedId = activeThreadIdRef.current;
+                  if (!requestedId || !thread || thread.id !== requestedId || !thread.nextBefore) {
+                    return;
+                  }
+                  olderAbortRef.current?.abort();
+                  const controller = new AbortController();
+                  olderAbortRef.current = controller;
+                  const seq = ++olderFetchSeqRef.current;
+                  setOlderError("");
                   const beforeCursor = older.length
                     ? older[0].createdAt + "|" + older[0].id
                     : thread.nextBefore;
-                  const page = await read<ChatThread>({
-                    view: "thread",
-                    threadId,
-                    before: beforeCursor,
-                  });
-                  setOlder((previous) => [...page.messages, ...previous]);
-                  setThread((current) =>
-                    current
-                      ? { ...current, nextBefore: page.nextBefore }
-                      : current,
-                  );
+                  try {
+                    const page = await read<ChatThread>(
+                      {
+                        view: "thread",
+                        threadId: requestedId,
+                        before: beforeCursor,
+                      },
+                      controller.signal,
+                    );
+                    if (
+                      !mounted.current ||
+                      controller.signal.aborted ||
+                      seq !== olderFetchSeqRef.current ||
+                      activeThreadIdRef.current !== requestedId ||
+                      page.id !== requestedId
+                    ) {
+                      return;
+                    }
+                    setOlder((previous) => mergeUniqueMessages(page.messages, previous));
+                    setThread((current) =>
+                      current && current.id === requestedId
+                        ? { ...current, nextBefore: page.nextBefore }
+                        : current,
+                    );
+                  } catch (e) {
+                    if (
+                      controller.signal.aborted ||
+                      (e as Error)?.name === "AbortError" ||
+                      activeThreadIdRef.current !== requestedId
+                    ) {
+                      return;
+                    }
+                    const msg =
+                      (e as Error).message || "Could not load earlier messages.";
+                    setOlderError(msg);
+                    throw e;
+                  }
                 }}
                 onAutoMarkRead={autoMarkRead}
                 shareSoul={shareSoul}
@@ -910,7 +1159,7 @@ export function SocialWorkspace({
                     <button
                       type="button"
                       onClick={() => {
-                        setThreadId(n.targetId);
+                        selectThread(n.targetId);
                         onView("Messages");
                       }}
                     >
@@ -1309,19 +1558,24 @@ export function GroupNetworkPanel({
           <button
             disabled={busy}
             onClick={async () => {
-              const page = await read<GroupNetwork>({
-                view: "group",
-                groupId,
-                before: data.nextBefore!,
-              });
-              setData((old) =>
-                old
-                  ? {
-                      ...page,
-                      discussions: [...page.discussions, ...old.discussions],
-                    }
-                  : page,
-              );
+              const requestedGroupId = groupId;
+              try {
+                const page = await read<GroupNetwork>({
+                  view: "group",
+                  groupId: requestedGroupId,
+                  before: data.nextBefore!,
+                });
+                setData((old) =>
+                  old && old.group.id === requestedGroupId
+                    ? {
+                        ...page,
+                        discussions: [...page.discussions, ...old.discussions],
+                      }
+                    : old,
+                );
+              } catch (e) {
+                setError((e as Error).message || "Unable to load earlier discussion.");
+              }
             }}
           >
             Earlier discussion

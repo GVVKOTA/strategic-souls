@@ -55,15 +55,55 @@ export type ChatThread = {
   nextBefore: string | null;
 };
 
-/** Deduplicate and chronologically sort merged older + current messages by id so retractions/edits NEVER duplicate. */
+const STATUS_RANK: Record<string, number> = {
+  SENT: 1,
+  DELIVERED: 2,
+  READ: 3,
+};
+
+function mergeMessagePair(existing: ChatMessage, incoming: ChatMessage): ChatMessage {
+  const existingRank = STATUS_RANK[existing.status] ?? 0;
+  const incomingRank = STATUS_RANK[incoming.status] ?? 0;
+  const bestStatus =
+    incomingRank >= existingRank ? incoming.status : existing.status;
+
+  // Monotonic retraction: once retracted, stale snapshots must never revive old text
+  if (existing.retractedAt && !incoming.retractedAt) {
+    return { ...existing, status: bestStatus };
+  }
+  if (incoming.retractedAt && !existing.retractedAt) {
+    return { ...incoming, status: bestStatus };
+  }
+  // Prefer higher edit version so out-of-order polls cannot downgrade a confirmed edit
+  if (incoming.version < existing.version) {
+    return { ...existing, status: bestStatus };
+  }
+  if (incoming.version > existing.version) {
+    return { ...incoming, status: bestStatus };
+  }
+  if (
+    existing.editedAt &&
+    (!incoming.editedAt || existing.editedAt > incoming.editedAt)
+  ) {
+    return { ...existing, status: bestStatus };
+  }
+  return { ...incoming, status: bestStatus };
+}
+
+/** Deduplicate and chronologically sort merged older + current messages by id so retractions/edits/receipts NEVER duplicate or downgrade. */
 export function mergeUniqueMessages(
   older: ChatMessage[],
   latest: ChatMessage[],
 ): ChatMessage[] {
   const byId = new Map<string, ChatMessage>();
-  for (const m of older) byId.set(m.id, m);
-  // Latest server state always wins for overlapping IDs (edits, retractions, read receipts)
-  for (const m of latest) byId.set(m.id, m);
+  for (const m of older) {
+    const prev = byId.get(m.id);
+    byId.set(m.id, prev ? mergeMessagePair(prev, m) : m);
+  }
+  for (const m of latest) {
+    const prev = byId.get(m.id);
+    byId.set(m.id, prev ? mergeMessagePair(prev, m) : m);
+  }
   return [...byId.values()].sort(
     (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
   );
@@ -75,19 +115,20 @@ export function shortClockTime(iso: string): string {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-export function inboxTimeLabel(iso: string | null | undefined): string {
+export function inboxTimeLabel(
+  iso: string | null | undefined,
+  referenceNow?: Date,
+): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  if (sameDay) return shortClockTime(iso);
-  const diffDays = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
-  if (diffDays === 1) return "Yesterday";
-  if (diffDays < 7 && diffDays >= 0) {
+  const now = referenceNow ?? new Date();
+  const startOfNow = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfMsg = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const calendarDays = Math.round((startOfNow - startOfMsg) / 86_400_000);
+  if (calendarDays === 0) return shortClockTime(iso);
+  if (calendarDays === 1) return "Yesterday";
+  if (calendarDays > 1 && calendarDays < 7) {
     return d.toLocaleDateString([], { weekday: "short" });
   }
   return d.toLocaleDateString([], { day: "numeric", month: "short" });

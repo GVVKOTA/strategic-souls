@@ -706,6 +706,7 @@ export default function Community({
               query={networkQuery}
               shareSoul={networkShare}
               onClearShare={() => setNetworkShare(null)}
+              onOpenProfile={(h) => void openPublicProfile(h)}
               onOpenGroup={(id) => {
                 setGroupId(id);
                 setCursor("");

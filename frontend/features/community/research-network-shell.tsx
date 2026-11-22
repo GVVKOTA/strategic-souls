@@ -117,6 +117,13 @@ export default function ResearchNetworkShell({
     [],
   );
   const [searchingResearchers, setSearchingResearchers] = useState(false);
+  const [lastSearchedQuery, setLastSearchedQuery] = useState("");
+  const feedSeqRef = useRef(0);
+  const feedAbortRef = useRef<AbortController | null>(null);
+  const searchSeqRef = useRef(0);
+  const searchAbortRef = useRef<AbortController | null>(null);
+  const commentsSeqRef = useRef(0);
+  const commentsAbortRef = useRef<AbortController | null>(null);
 
   // ONE canonical public researcher profile surface
   const [activeProfileHandle, setActiveProfileHandle] = useState<string | null>(
@@ -165,6 +172,10 @@ export default function ResearchNetworkShell({
   }, [loadMyProfile, profileRevision]);
 
   const loadWebFeed = useCallback(async () => {
+    feedAbortRef.current?.abort();
+    const controller = new AbortController();
+    feedAbortRef.current = controller;
+    const seq = ++feedSeqRef.current;
     setLoadingFeed(true);
     try {
       const qs = new URLSearchParams({
@@ -177,17 +188,23 @@ export default function ResearchNetworkShell({
       if (searchQuery.trim()) qs.set("q", searchQuery.trim());
       const res = await api<{ posts: PublishedSoulCard[] }>(
         `/api/community/network?${qs}`,
+        undefined,
+        { signal: controller.signal },
       );
+      if (controller.signal.aborted || seq !== feedSeqRef.current) return;
       setPosts(res.posts ?? []);
     } catch (err) {
+      if (controller.signal.aborted || seq !== feedSeqRef.current) return;
       notify(
         err instanceof Error
           ? err.message
-          : "Could not load Community Web Souls.",
+          : "Could not load Soul Feed.",
         true,
       );
     } finally {
-      setLoadingFeed(false);
+      if (!controller.signal.aborted && seq === feedSeqRef.current) {
+        setLoadingFeed(false);
+      }
     }
   }, [modeFilter, tfFilter, sort, savedOnly, searchQuery, notify]);
 
@@ -199,35 +216,60 @@ export default function ResearchNetworkShell({
     });
     return () => {
       alive = false;
+      feedAbortRef.current?.abort();
     };
   }, [tab, loadWebFeed]);
 
-  // Real debounced public researcher search (replaces giant banner!)
+  // Real debounced public researcher search — never flashes stale results or false empty states during debounce
   const trimmedSearch = searchQuery.trim().replace(/^@+/, "");
   useEffect(() => {
-    if (trimmedSearch.length < 1) return;
-    let alive = true;
+    searchAbortRef.current?.abort();
+    if (trimmedSearch.length < 1) {
+      queueMicrotask(() => {
+        setResearchers([]);
+        setLastSearchedQuery("");
+        setSearchingResearchers(false);
+      });
+      return;
+    }
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+    const seq = ++searchSeqRef.current;
+    const targetQ = trimmedSearch;
     const timer = window.setTimeout(async () => {
-      if (!alive) return;
+      if (controller.signal.aborted || seq !== searchSeqRef.current) return;
       setSearchingResearchers(true);
       try {
         const res = await api<{ researchers: PublicResearcherSearchItem[] }>(
-          `/api/community/network?view=search&q=${encodeURIComponent(trimmedSearch)}`,
+          `/api/community/network?view=search&q=${encodeURIComponent(targetQ)}`,
+          undefined,
+          { signal: controller.signal },
         );
-        if (alive) setResearchers(res.researchers ?? []);
+        if (controller.signal.aborted || seq !== searchSeqRef.current) return;
+        setResearchers(res.researchers ?? []);
+        setLastSearchedQuery(targetQ);
       } catch {
-        if (alive) setResearchers([]);
+        if (controller.signal.aborted || seq !== searchSeqRef.current) return;
+        setResearchers([]);
+        setLastSearchedQuery(targetQ);
       } finally {
-        if (alive) setSearchingResearchers(false);
+        if (!controller.signal.aborted && seq === searchSeqRef.current) {
+          setSearchingResearchers(false);
+        }
       }
     }, 180);
     return () => {
-      alive = false;
       window.clearTimeout(timer);
+      controller.abort();
     };
   }, [trimmedSearch]);
-  const visibleResearchers = trimmedSearch.length >= 1 ? researchers : [];
-  const isSearchingResearchers = trimmedSearch.length >= 1 && searchingResearchers;
+  const isSearchingResearchers =
+    trimmedSearch.length >= 1 &&
+    (searchingResearchers || lastSearchedQuery !== trimmedSearch);
+  const visibleResearchers =
+    trimmedSearch.length >= 1 && lastSearchedQuery === trimmedSearch
+      ? researchers
+      : [];
 
   // Deep-link synchronization & browser Back button support for canonical PublicProfileSheet
   const openResearcherProfile = useCallback((rawHandle: string) => {
@@ -493,21 +535,32 @@ export default function ResearchNetworkShell({
   }
 
   async function openComments(post: PublishedSoulCard) {
+    commentsAbortRef.current?.abort();
+    const controller = new AbortController();
+    commentsAbortRef.current = controller;
+    const seq = ++commentsSeqRef.current;
     setDiscussPost(post);
     setCommentText("");
+    setComments([]);
     setCommentsLoading(true);
     try {
       const res = await api<{ comments: SoulComment[] }>(
         `/api/community/network?view=comments&postId=${encodeURIComponent(post.id)}`,
+        undefined,
+        { signal: controller.signal },
       );
+      if (controller.signal.aborted || seq !== commentsSeqRef.current) return;
       setComments(res.comments ?? []);
     } catch (err) {
+      if (controller.signal.aborted || seq !== commentsSeqRef.current) return;
       notify(
         err instanceof Error ? err.message : "Could not load discussion.",
         true,
       );
     } finally {
-      setCommentsLoading(false);
+      if (!controller.signal.aborted && seq === commentsSeqRef.current) {
+        setCommentsLoading(false);
+      }
     }
   }
 

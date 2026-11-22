@@ -15,7 +15,9 @@ type Props = {
   onQueryChange: (value: string) => void;
   onSelectThread: (threadId: string) => void;
   onOpenProfile: (handle: string) => void;
-  onStartByHandle: (handle: string) => Promise<void> | void;
+  onStartByHandle: (
+    handle: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
   busy: boolean;
 };
 
@@ -32,6 +34,7 @@ export default function ChatInbox({
   const [infoOpen, setInfoOpen] = useState(false);
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [newHandle, setNewHandle] = useState("");
+  const [newChatError, setNewChatError] = useState("");
 
   const q = query.trim().replace(/^@+/, "").toLowerCase();
   const filtered = items.filter(
@@ -46,9 +49,15 @@ export default function ChatInbox({
     e.preventDefault();
     const clean = newHandle.trim().replace(/^@+/, "");
     if (!clean) return;
-    await onStartByHandle(clean);
-    setNewHandle("");
-    setNewChatOpen(false);
+    setNewChatError("");
+    const result = await onStartByHandle(clean);
+    if (result?.ok) {
+      setNewHandle("");
+      setNewChatError("");
+      setNewChatOpen(false);
+    } else {
+      setNewChatError(result?.error || "Unable to start chat. Check the Body ID and try again.");
+    }
   }
 
   return (
@@ -95,22 +104,32 @@ export default function ChatInbox({
         )}
 
         {newChatOpen && (
-          <form className="x54-new-chat-bar" onSubmit={submitNewChat}>
-            <input
-              value={newHandle}
-              onChange={(e) => setNewHandle(e.target.value)}
-              placeholder="Enter @BodyID…"
-              aria-label="Start chat with Body ID"
-              autoFocus
-            />
-            <button
-              type="submit"
-              className="x54-btn-primary"
-              disabled={busy || !newHandle.trim()}
-            >
-              Chat
-            </button>
-          </form>
+          <div className="x55-new-chat-wrap">
+            <form className="x54-new-chat-bar" onSubmit={submitNewChat}>
+              <input
+                value={newHandle}
+                onChange={(e) => {
+                  setNewHandle(e.target.value);
+                  if (newChatError) setNewChatError("");
+                }}
+                placeholder="Enter @BodyID…"
+                aria-label="Start chat with Body ID"
+                autoFocus
+              />
+              <button
+                type="submit"
+                className="x54-btn-primary"
+                disabled={busy || !newHandle.trim()}
+              >
+                Chat
+              </button>
+            </form>
+            {newChatError && (
+              <p className="x55-inline-error" role="alert">
+                {newChatError}
+              </p>
+            )}
+          </div>
         )}
 
         <div className="x54-inbox-search">

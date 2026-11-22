@@ -687,6 +687,20 @@ export async function listWebSouls(
   const db = database();
   const viewer = viewerSubject ?? "__guest__";
 
+  const modeQ = (options.mode ?? "ALL").toUpperCase();
+  const tfQ = (options.timeframe ?? "ALL").toLowerCase();
+  const symQ = (options.symbol ?? "").trim().toUpperCase();
+  const searchQ = (options.search ?? "").trim().toLowerCase();
+  const authorQ = (options.authorHandle ?? "").trim().replace(/^@/, "").toLowerCase();
+
+  const whereAuthor = authorQ ? " AND lower(p.author_handle) = ?" : "";
+  const whereSaved = options.savedOnly
+    ? " AND EXISTS(SELECT 1 FROM x51_web_soul_saves sv WHERE sv.post_id = p.id AND sv.subject = ?)"
+    : "";
+  const bindParams: unknown[] = [viewer, viewer, viewer, viewer, viewer, viewer, viewer];
+  if (authorQ) bindParams.push(authorQ);
+  if (options.savedOnly) bindParams.push(viewer);
+
   // Server-enforced visibility query:
   // PUBLIC visible to all non-blocked viewers;
   // FOLLOWERS visible to author + active followers;
@@ -714,11 +728,11 @@ export async function listWebSouls(
            SELECT 1 FROM x2_blocks z
            WHERE (z.subject = ? AND z.target = p.author_subject)
               OR (z.subject = p.author_subject AND z.target = ?)
-         )
+         )${whereAuthor}${whereSaved}
        ORDER BY p.created_at DESC, p.id DESC
        LIMIT 80`,
     )
-    .bind(viewer, viewer, viewer, viewer, viewer, viewer, viewer)
+    .bind(...bindParams)
     .all<
       Record<string, unknown> & {
         id: string;
@@ -753,11 +767,6 @@ export async function listWebSouls(
     >();
 
   const metaCache = new Map<string, "MALE" | "FEMALE" | "HIDDEN">();
-  const modeQ = (options.mode ?? "ALL").toUpperCase();
-  const tfQ = (options.timeframe ?? "ALL").toLowerCase();
-  const symQ = (options.symbol ?? "").trim().toUpperCase();
-  const searchQ = (options.search ?? "").trim().toLowerCase();
-  const authorQ = (options.authorHandle ?? "").trim().replace(/^@/, "").toLowerCase();
 
   let items: (PublishedSoulCard & { _following: boolean })[] = [];
 
@@ -845,13 +854,82 @@ export async function listWebSouls(
   };
 }
 
+type AuthorizedWebSoulRow = {
+  id: string;
+  authorSubject: string;
+  authorHandle: string;
+  scanId: string;
+  soulVersion: number;
+  mode: "CLASSIC" | "ADVANCED";
+  title: string;
+  formula: string;
+  timeframe: string;
+};
+
+/**
+ * Direct single-row authorized lookup by post ID.
+ * Applies the exact same audience and bidirectional block gates as listWebSouls,
+ * avoiding full-feed scans and supporting posts beyond the 80-item feed window.
+ */
+async function getAuthorizedWebSoulById(
+  viewerSubject: string | null,
+  postId: string,
+): Promise<AuthorizedWebSoulRow | null> {
+  const viewer = viewerSubject ?? "__guest__";
+  const row = await database()
+    .prepare(
+      `SELECT
+         p.id,
+         p.author_subject AS authorSubject,
+         p.author_handle AS authorHandle,
+         p.scan_id AS scanId,
+         p.soul_version AS soulVersion,
+         p.mode,
+         p.title,
+         p.formula,
+         p.timeframe
+       FROM x51_web_souls p
+       WHERE p.id = ?
+         AND p.deleted_at IS NULL
+         AND (
+           p.author_subject = ?
+           OR p.audience = 'PUBLIC'
+           OR (p.audience = 'FOLLOWERS' AND EXISTS(SELECT 1 FROM x51_follows f WHERE f.follower_subject = ? AND f.target_subject = p.author_subject AND f.state = 'ACTIVE'))
+           OR (p.audience = 'GROUP' AND p.group_id IS NOT NULL AND EXISTS(SELECT 1 FROM x1_memberships m WHERE m.group_id = p.group_id AND m.subject = ?))
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM x2_blocks z
+           WHERE (z.subject = ? AND z.target = p.author_subject)
+              OR (z.subject = p.author_subject AND z.target = ?)
+         )
+       LIMIT 1`,
+    )
+    .bind(postId, viewer, viewer, viewer, viewer, viewer)
+    .first<{
+      id: string;
+      authorSubject: string;
+      authorHandle: string;
+      scanId: string;
+      soulVersion: number;
+      mode: string;
+      title: string;
+      formula: string;
+      timeframe: string;
+    }>();
+  if (!row) return null;
+  return {
+    ...row,
+    mode: row.mode === "ADVANCED" ? "ADVANCED" : "CLASSIC",
+  };
+}
+
 export async function getPostComments(
   viewerSubject: string | null,
   postId: string,
 ) {
   const pid = id(postId, "Post");
-  const { posts } = await listWebSouls(viewerSubject);
-  if (!posts.some((p) => p.id === pid)) {
+  const authorized = await getAuthorizedWebSoulById(viewerSubject, pid);
+  if (!authorized) {
     throw new HttpError(404, "Published Soul not found or access restricted.");
   }
   const rows = await database()
@@ -965,7 +1043,11 @@ export async function getPublicResearcherProfile(
       isMe,
       followState,
       canMessage: !isMe && (prefs?.messages ?? "REQUESTS") !== "NONE",
-      counts,
+      counts: {
+        ...counts,
+        // Never leak hidden GROUP or FOLLOWERS post totals to non-owner viewers
+        publishedSouls: isMe ? counts.publishedSouls : feed.posts.length,
+      },
       pinnedSouls: feed.posts.filter((p) => p.pinned).slice(0, 3),
       posts: feed.posts,
       // Explicitly never exposes portfolioValue, email, or private Graveyard
@@ -1229,8 +1311,8 @@ export async function mutateResearchNetwork(
   if (action === "save-soul") {
     const postId = id(input.postId, "Post");
     const active = Boolean(input.active ?? true);
-    const { posts } = await listWebSouls(subject);
-    if (!posts.some((p) => p.id === postId)) {
+    const post = await getAuthorizedWebSoulById(subject, postId);
+    if (!post) {
       throw new HttpError(404, "Published Soul not found.");
     }
     if (active) {
@@ -1295,14 +1377,8 @@ export async function mutateResearchNetwork(
     const postId = id(input.postId, "Post");
     const text = field(input.text, "Comment", 1000, 1);
     const key = requestKey(input.requestId);
-    const { posts } = await listWebSouls(subject);
-    const post = posts.find((p) => p.id === postId);
+    const post = await getAuthorizedWebSoulById(subject, postId);
     if (!post) throw new HttpError(404, "Published Soul not found.");
-
-    const authorRow = await db
-      .prepare("SELECT author_subject FROM x51_web_souls WHERE id=?")
-      .bind(postId)
-      .first<{ author_subject: string }>();
 
     const commentId = crypto.randomUUID();
     await db
@@ -1314,9 +1390,9 @@ export async function mutateResearchNetwork(
       .bind(commentId, postId, subject, bodyRow.handle, text, key, now)
       .run();
 
-    if (authorRow && authorRow.author_subject !== subject) {
+    if (post.authorSubject !== subject) {
       await pushNotification(
-        authorRow.author_subject,
+        post.authorSubject,
         "SOUL_COMMENT",
         postId,
         `soul-comment:${commentId}`,
@@ -1327,8 +1403,7 @@ export async function mutateResearchNetwork(
 
   if (action === "copy-soul") {
     const postId = id(input.postId, "Post");
-    const { posts } = await listWebSouls(subject);
-    const post = posts.find((p) => p.id === postId);
+    const post = await getAuthorizedWebSoulById(subject, postId);
     if (!post) throw new HttpError(404, "Published Soul not found or restricted.");
 
     const draftId = crypto.randomUUID();
@@ -1363,7 +1438,7 @@ export async function mutateResearchNetwork(
       copiedFrom: definition.copiedFrom,
       versions: [{ version: 1, savedAt: now, definition }],
     });
-    await db
+    const inserted = await db
       .prepare(
         `INSERT INTO x1_records (id, subject, kind, name, payload, version, archived, last_write, created_at, updated_at)
          SELECT ?, ?, 'scan-draft', ?, ?, 1, 0, ?, ?, ?
@@ -1380,6 +1455,12 @@ export async function mutateResearchNetwork(
         subject,
       )
       .run();
+    if (!inserted.meta.changes) {
+      throw new HttpError(
+        400,
+        "You have reached the 100 active workspace record limit. Archive an older draft before copying.",
+      );
+    }
     return {
       draftId,
       definition,

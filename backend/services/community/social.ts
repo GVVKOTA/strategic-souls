@@ -485,7 +485,7 @@ export async function getSocial(
     subject,
   );
   const blocks = await query(
-    "SELECT b.handle,b.display_name AS displayName FROM x2_blocks z JOIN x1_bodies b ON b.subject=z.target WHERE z.subject=? ORDER BY b.handle LIMIT 100",
+    "SELECT b.handle,b.display_name AS displayName,b.avatar,b.bio FROM x2_blocks z JOIN x1_bodies b ON b.subject=z.target WHERE z.subject=? ORDER BY b.handle LIMIT 100",
     subject,
   );
   const marks = await query<{
@@ -785,7 +785,22 @@ export async function mutateSocial(
       if (!muted?.muted)
         await notification(other, "MESSAGE", c.id, "message:" + saved.id);
     }
-    return { messageId: saved.id, status: "SENT_TO_SERVER" };
+    return {
+      messageId: saved.id,
+      status: "SENT_TO_SERVER",
+      message: {
+        id: saved.id,
+        text: saved.content,
+        authorHandle: p.handle,
+        isMine: true,
+        createdAt: saved.created_at,
+        editedAt: saved.edited_at,
+        retractedAt: saved.retracted_at,
+        version: saved.version,
+        status: "SENT_TO_SERVER",
+        reference: null,
+      },
+    };
   }
   if (input.action === "edit-message" || input.action === "retract-message") {
     const mid = id(input.messageId, "Message"),
@@ -828,7 +843,21 @@ export async function mutateSocial(
       .run();
     if (!result.meta.changes)
       throw new HttpError(409, "The message changed. Refresh before editing.");
-    return { saved: true };
+    return {
+      saved: true,
+      message: {
+        id: message.id,
+        text: content,
+        authorHandle: p.handle,
+        isMine: true,
+        createdAt: message.created_at,
+        editedAt: time,
+        retractedAt: retract ? time : null,
+        version: message.version + 1,
+        status: retract ? "RETRACTED" : "SENT_TO_SERVER",
+        reference: null,
+      },
+    };
   }
   if (input.action === "thread-view") {
     const c = await thread(subject, input.threadId),
@@ -863,16 +892,48 @@ export async function mutateSocial(
       .prepare(
         "UPDATE x2_notifications SET read_at=? WHERE subject=? AND kind='MESSAGE' AND target_id=? AND created_at<=? AND read_at IS NULL",
       )
-      .bind(time, subject, c.id, time)
+      .bind(time, subject, c.id, seen.created_at)
       .run();
-    return { saved: true };
+    const [remainingThread, remainingNotifs] = await Promise.all([
+      db
+        .prepare(
+          "SELECT count(*) AS n FROM x2_messages x WHERE x.conversation_id=? AND x.sender<>? AND x.created_at>COALESCE((SELECT v.read_at FROM x2_conversation_views v WHERE v.conversation_id=? AND v.subject=?),'')",
+        )
+        .bind(c.id, subject, c.id, subject)
+        .first<{ n: number }>(),
+      db
+        .prepare(
+          "SELECT count(*) AS n FROM x2_notifications WHERE subject=? AND read_at IS NULL",
+        )
+        .bind(subject)
+        .first<{ n: number }>(),
+    ]);
+    return {
+      saved: true,
+      threadId: c.id,
+      unread: Number(remainingThread?.n ?? 0),
+      unreadNotifications: Number(remainingNotifs?.n ?? 0),
+    };
+  }
+  if (input.action === "read-notifications") {
+    await db
+      .prepare("UPDATE x2_notifications SET read_at=? WHERE subject=? AND read_at IS NULL")
+      .bind(time, subject)
+      .run();
+    return { saved: true, unreadNotifications: 0 };
   }
   if (input.action === "read-notification") {
     await db
       .prepare("UPDATE x2_notifications SET read_at=? WHERE id=? AND subject=?")
       .bind(time, id(input.notificationId, "Notification"), subject)
       .run();
-    return { saved: true };
+    const remaining = await db
+      .prepare(
+        "SELECT count(*) AS n FROM x2_notifications WHERE subject=? AND read_at IS NULL",
+      )
+      .bind(subject)
+      .first<{ n: number }>();
+    return { saved: true, unreadNotifications: Number(remaining?.n ?? 0) };
   }
   if (input.action === "bookmark") {
     const kind = String(input.kind),
@@ -923,7 +984,7 @@ export async function mutateSocial(
     return { saved: true };
   }
   if (input.action === "report") {
-    const kind = String(input.kind),
+    const kind = String(input.kind ?? input.targetKind ?? ""),
       target = id(input.targetId, "Item");
     if (kind === "MESSAGE") {
       const m = await db
@@ -935,6 +996,10 @@ export async function mutateSocial(
     } else if (kind === "BODY") await resolveBody(subject, target);
     else throw new HttpError(400, "Report a message or Body.");
     await rate(subject + ":x2-social-report", 10, 86400000);
+    const rawReason =
+      typeof input.note === "string" && input.note.trim()
+        ? `${String(input.reason ?? "").trim()}: ${input.note.trim()}`
+        : String(input.reason ?? "");
     await db
       .prepare(
         "INSERT INTO x2_social_reports (id,reporter,kind,target_id,reason,created_at) VALUES (?,?,?,?,?,?)",
@@ -944,7 +1009,7 @@ export async function mutateSocial(
         subject,
         kind,
         target,
-        field(input.reason, "Reason", 1000, 10),
+        field(rawReason, "Reason", 1000, 10),
         time,
       )
       .run();

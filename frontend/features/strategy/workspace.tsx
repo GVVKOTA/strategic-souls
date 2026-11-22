@@ -51,6 +51,7 @@ import {
   Modal,
   SourceLink,
   api,
+  copyTextSafe,
   moment,
   type WorkspaceState,
   type ScanRun,
@@ -788,8 +789,20 @@ export default function ResearchWorkspace({
       setBuildMode(converted ? "VISUAL" : "FORMULA");
     }
     setUniverse(value.universe);
+    const hasOnlyMcx =
+      value.instrumentIds.length > 0 &&
+      value.instrumentIds.every((idStr) => idStr.toUpperCase().startsWith("MCX:"));
+    const hasCsv =
+      value.instrumentIds.length > 0 &&
+      value.instrumentIds.some((idStr) => idStr.toUpperCase().startsWith("CSV:"));
     setUniversePreset(
-      value.universe === "ECB_DAILY" ? "ECB_DAILY" : "INDIAN_EQUITIES",
+      value.universe === "ECB_DAILY"
+        ? "ECB_DAILY"
+        : hasCsv
+          ? "CUSTOM_CSV"
+          : hasOnlyMcx
+            ? "MCX_FUTURES"
+            : "INDIAN_EQUITIES",
     );
     setInterval(value.interval);
     setInstruments(value.instrumentIds.join(", "));
@@ -1810,8 +1823,14 @@ export default function ResearchWorkspace({
                           type="button"
                           className="x1-text-button"
                           onClick={() => {
-                            void navigator.clipboard?.writeText(active.digest);
-                            notify("Copied scan SHA-256 digest.");
+                            void copyTextSafe(active.digest).then((ok) => {
+                              notify(
+                                ok
+                                  ? "Copied scan SHA-256 digest."
+                                  : "Unable to copy digest on this browser.",
+                                !ok,
+                              );
+                            });
                           }}
                         >
                           <Copy size={13} /> Copy digest
