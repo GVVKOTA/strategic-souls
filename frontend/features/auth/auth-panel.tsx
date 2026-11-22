@@ -18,6 +18,7 @@ export type AuthSessionResponse = {
     handle?: string | null;
     bio?: string;
     discoverable?: boolean;
+    legacyPrivateProfile?: boolean;
     unreadNotifications?: number;
     genderSymbol?: "MALE" | "FEMALE" | "HIDDEN";
     instagramHandle?: string;

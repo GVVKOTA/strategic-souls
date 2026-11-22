@@ -8,8 +8,10 @@ import {
   getPendingFollowRequests,
   getPostComments,
   getPublicResearcherProfile,
+  listProfileConnections,
   listWebSouls,
   mutateResearchNetwork,
+  searchPublicResearchers,
 } from "../../../../backend/services/community/research-network";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +38,20 @@ export async function GET(request: Request): Promise<Response> {
     if (view === "profile") {
       const handle = params.get("handle") ?? "";
       return json(await getPublicResearcherProfile(viewerId, handle), 200, true);
+    }
+
+    if (view === "search") {
+      const q = params.get("q") ?? "";
+      return json(await searchPublicResearchers(viewerId, q), 200, true);
+    }
+
+    if (view === "followers" || view === "following") {
+      const handle = params.get("handle") ?? "";
+      return json(
+        await listProfileConnections(viewerId, handle, view),
+        200,
+        true,
+      );
     }
 
     if (view === "comments") {

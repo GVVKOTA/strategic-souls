@@ -485,10 +485,16 @@ export async function previewSoulPublish(
     { ...scanRow, payload: parsedPayload },
     audience,
   );
+  if (input.title !== undefined && (typeof input.title !== "string" || !input.title.trim())) {
+    throw new HttpError(400, "Enter a Soul name.");
+  }
   const title =
-    typeof input.title === "string" && input.title.trim()
+    typeof input.title === "string"
       ? field(input.title, "Title", 100, 3)
-      : scanRow.name.slice(0, 100);
+      : scanRow.name.trim().slice(0, 100);
+  if (title.length < 3) {
+    throw new HttpError(400, "Enter a Soul name.");
+  }
   const summary =
     typeof input.summary === "string" && input.summary.trim()
       ? field(input.summary, "Summary", 400, 1)
@@ -598,10 +604,16 @@ export async function publishSoulFromScan(
     throw new HttpError(403, safe.blockReason || "Source data rights forbid sharing.");
   }
 
+  if (input.title !== undefined && (typeof input.title !== "string" || !input.title.trim())) {
+    throw new HttpError(400, "Enter a Soul name.");
+  }
   const title =
-    typeof input.title === "string" && input.title.trim()
+    typeof input.title === "string"
       ? field(input.title, "Title", 100, 3)
-      : scanRow.name.slice(0, 100);
+      : scanRow.name.trim().slice(0, 100);
+  if (title.length < 3) {
+    throw new HttpError(400, "Enter a Soul name.");
+  }
   const summary =
     typeof input.summary === "string" && input.summary.trim()
       ? field(input.summary, "Summary", 400, 1)
@@ -962,6 +974,212 @@ export async function getPublicResearcherProfile(
   };
 }
 
+export type PublicResearcherSearchItem = {
+  handle: string;
+  displayName: string;
+  avatarId: string;
+  bio: string;
+  followers: number;
+  publishedSouls: number;
+  followState: "NONE" | "PENDING" | "ACTIVE";
+  isMe: boolean;
+};
+
+/**
+ * Search ONLY intentionally public (discoverable = 1) researcher profiles.
+ * Excludes blocked accounts in both directions and legacy-private accounts.
+ * Never returns email, internal subject IDs, age, or private portfolios.
+ */
+export async function searchPublicResearchers(
+  viewerSubject: string | null,
+  rawQuery: string,
+): Promise<{ researchers: PublicResearcherSearchItem[] }> {
+  const cleaned = rawQuery.trim().replace(/^@+/, "").toLowerCase();
+  if (cleaned.length < 1) return { researchers: [] };
+  if (cleaned.length > 60) {
+    throw new HttpError(400, "Search at most 60 characters.");
+  }
+  const pattern = "%" + cleaned.replace(/[!%_]/g, "!$&") + "%";
+  const viewer = viewerSubject ?? "__guest__";
+  const rows = await database()
+    .prepare(
+      `SELECT
+         b.subject,
+         b.handle,
+         b.display_name AS displayName,
+         b.avatar,
+         b.bio,
+         (SELECT count(*) FROM x51_follows f WHERE f.target_subject = b.subject AND f.state = 'ACTIVE') AS followers,
+         (SELECT count(*) FROM x51_web_souls s WHERE s.author_subject = b.subject AND s.deleted_at IS NULL AND s.audience = 'PUBLIC') AS publishedSouls,
+         (SELECT f.state FROM x51_follows f WHERE f.follower_subject = ? AND f.target_subject = b.subject LIMIT 1) AS followState
+       FROM x1_bodies b
+       JOIN x2_social_preferences p ON p.subject = b.subject
+       WHERE p.discoverable = 1
+         AND (lower(b.handle) LIKE ? ESCAPE '!' OR lower(b.display_name) LIKE ? ESCAPE '!')
+         AND NOT EXISTS (
+           SELECT 1 FROM x2_blocks z
+           WHERE (z.subject = ? AND z.target = b.subject)
+              OR (z.subject = b.subject AND z.target = ?)
+         )
+       ORDER BY b.handle ASC
+       LIMIT 24`,
+    )
+    .bind(viewer, pattern, pattern, viewer, viewer)
+    .all<{
+      subject: string;
+      handle: string;
+      displayName: string;
+      avatar: string;
+      bio: string;
+      followers: number;
+      publishedSouls: number;
+      followState: string | null;
+    }>();
+
+  const items: PublicResearcherSearchItem[] = (rows.results ?? []).map((r) => ({
+    handle: r.handle,
+    displayName: r.displayName,
+    avatarId: normalizeAvatarId(r.avatar),
+    bio: r.bio,
+    followers: Number(r.followers ?? 0),
+    publishedSouls: Number(r.publishedSouls ?? 0),
+    followState:
+      r.followState === "ACTIVE"
+        ? "ACTIVE"
+        : r.followState === "PENDING"
+          ? "PENDING"
+          : "NONE",
+    isMe: r.subject === viewerSubject,
+  }));
+
+  items.sort((a, b) => {
+    const rank = (h: string) =>
+      h.toLowerCase() === cleaned ? 0 : h.toLowerCase().startsWith(cleaned) ? 1 : 2;
+    return rank(a.handle) - rank(b.handle) || a.handle.localeCompare(b.handle);
+  });
+
+  return { researchers: items.slice(0, 12) };
+}
+
+/**
+ * Permitted Followers / Following list for a researcher profile.
+ * Enforces the exact same profile visibility & block gates as getPublicResearcherProfile,
+ * and omits blocked or legacy-private non-self researchers from third-party views.
+ */
+export async function listProfileConnections(
+  viewerSubject: string | null,
+  rawHandle: string,
+  kind: "followers" | "following",
+): Promise<{
+  handle: string;
+  kind: "followers" | "following";
+  profiles: {
+    handle: string;
+    displayName: string;
+    avatarId: string;
+    bio: string;
+    followState: "NONE" | "PENDING" | "ACTIVE";
+    isMe: boolean;
+  }[];
+}> {
+  const handle = bodyHandle(rawHandle);
+  const db = database();
+  const target = await db
+    .prepare("SELECT subject, handle FROM x1_bodies WHERE handle=?")
+    .bind(handle)
+    .first<{ subject: string; handle: string }>();
+  if (!target) throw new HttpError(404, "Body ID not found.");
+
+  const isTargetMe = viewerSubject === target.subject;
+  if (!isTargetMe && viewerSubject && (await isBlocked(viewerSubject, target.subject))) {
+    throw new HttpError(404, "Body ID not found.");
+  }
+
+  const prefs = await db
+    .prepare("SELECT discoverable FROM x2_social_preferences WHERE subject=?")
+    .bind(target.subject)
+    .first<{ discoverable: number }>();
+  const targetDiscoverable = !!prefs?.discoverable;
+
+  if (!isTargetMe && !targetDiscoverable) {
+    const activeFollower = viewerSubject
+      ? await db
+          .prepare(
+            "SELECT 1 FROM x51_follows WHERE follower_subject=? AND target_subject=? AND state='ACTIVE' LIMIT 1",
+          )
+          .bind(viewerSubject, target.subject)
+          .first()
+      : null;
+    const sharedGroup = !activeFollower && viewerSubject
+      ? await db
+          .prepare(
+            "SELECT 1 FROM x1_memberships a JOIN x1_memberships b ON b.group_id=a.group_id WHERE a.subject=? AND b.subject=? LIMIT 1",
+          )
+          .bind(viewerSubject, target.subject)
+          .first()
+      : null;
+    if (!activeFollower && !sharedGroup) {
+      throw new HttpError(404, "Body ID not found or profile is private.");
+    }
+  }
+
+  const viewer = viewerSubject ?? "__guest__";
+  const joinCol = kind === "followers" ? "f.follower_subject" : "f.target_subject";
+  const filterCol = kind === "followers" ? "f.target_subject" : "f.follower_subject";
+
+  const rows = await db
+    .prepare(
+      `SELECT
+         b.subject,
+         b.handle,
+         b.display_name AS displayName,
+         b.avatar,
+         b.bio,
+         COALESCE(p.discoverable, 0) AS discoverable,
+         (SELECT vf.state FROM x51_follows vf WHERE vf.follower_subject = ? AND vf.target_subject = b.subject LIMIT 1) AS followState
+       FROM x51_follows f
+       JOIN x1_bodies b ON b.subject = ${joinCol}
+       LEFT JOIN x2_social_preferences p ON p.subject = b.subject
+       WHERE ${filterCol} = ? AND f.state = 'ACTIVE'
+         AND NOT EXISTS (
+           SELECT 1 FROM x2_blocks z
+           WHERE (z.subject = ? AND z.target = b.subject)
+              OR (z.subject = b.subject AND z.target = ?)
+         )
+         AND (? = 1 OR COALESCE(p.discoverable, 0) = 1 OR b.subject = ?)
+       ORDER BY f.updated_at DESC, b.handle ASC
+       LIMIT 60`,
+    )
+    .bind(viewer, target.subject, viewer, viewer, isTargetMe ? 1 : 0, viewer)
+    .all<{
+      subject: string;
+      handle: string;
+      displayName: string;
+      avatar: string;
+      bio: string;
+      discoverable: number;
+      followState: string | null;
+    }>();
+
+  return {
+    handle: target.handle,
+    kind,
+    profiles: (rows.results ?? []).map((r) => ({
+      handle: r.handle,
+      displayName: r.displayName,
+      avatarId: normalizeAvatarId(r.avatar),
+      bio: r.bio,
+      followState:
+        r.followState === "ACTIVE"
+          ? "ACTIVE"
+          : r.followState === "PENDING"
+            ? "PENDING"
+            : "NONE",
+      isMe: r.subject === viewerSubject,
+    })),
+  };
+}
+
 export async function getPendingFollowRequests(subject: string) {
   const rows = await database()
     .prepare(
@@ -1190,32 +1408,46 @@ export async function mutateResearchNetwork(
         )
         .bind(subject, target.subject)
         .run();
-      return { state: "NONE" };
+      return { state: "NONE", counts: await getSocialCounts(target.subject) };
     }
+
+    const existingFollow = await db
+      .prepare(
+        "SELECT state FROM x51_follows WHERE follower_subject=? AND target_subject=?",
+      )
+      .bind(subject, target.subject)
+      .first<{ state: string }>();
 
     const prefs = await db
       .prepare("SELECT discoverable FROM x2_social_preferences WHERE subject=?")
       .bind(target.subject)
       .first<{ discoverable: number }>();
-    const nextState = prefs?.discoverable ? "ACTIVE" : "PENDING";
 
-    await db
-      .prepare(
-        `INSERT INTO x51_follows (follower_subject, target_subject, state, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(follower_subject, target_subject) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at`,
-      )
-      .bind(subject, target.subject, nextState, now, now)
-      .run();
+    // Public profiles follow immediately (ACTIVE); legacy private profiles keep PENDING unless already ACTIVE.
+    const nextState =
+      existingFollow?.state === "ACTIVE" || prefs?.discoverable
+        ? "ACTIVE"
+        : "PENDING";
 
-    await pushNotification(
-      target.subject,
-      nextState === "PENDING" ? "FOLLOW_REQUEST" : "NEW_FOLLOWER",
-      bodyRow.handle,
-      `follow:${subject}:${target.subject}:${nextState}`,
-    );
+    if (existingFollow?.state !== nextState) {
+      await db
+        .prepare(
+          `INSERT INTO x51_follows (follower_subject, target_subject, state, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(follower_subject, target_subject) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at`,
+        )
+        .bind(subject, target.subject, nextState, now, now)
+        .run();
 
-    return { state: nextState };
+      await pushNotification(
+        target.subject,
+        nextState === "PENDING" ? "FOLLOW_REQUEST" : "NEW_FOLLOWER",
+        bodyRow.handle,
+        `follow:${subject}:${target.subject}:${nextState}`,
+      );
+    }
+
+    return { state: nextState, counts: await getSocialCounts(target.subject) };
   }
 
   if (action === "respond-follow") {

@@ -92,7 +92,7 @@ export async function getCommunity(subject: string, selectedId?: string | null, 
 
 async function saveProfile(subject: string, input: Record<string, unknown>): Promise<Record<string, unknown>> {
   const handle = bodyHandle(input.handle), displayName = field(input.displayName, 'Display name', 60), bio = field(input.bio ?? '', 'Bio', 320, 0), colour = avatar(input.avatar ?? 'mint');
-  const db = database(), current = await account(subject), now = stamp();
+  const db = database(), current = await account(subject), existingBody = await communityBody(subject), now = stamp();
   if (!current || current.adult_confirmed !== 1 || current.consent_version !== CONSENT_VERSION) {
     if (input.adult !== true || input.privacy !== true || input.terms !== true) throw new HttpError(403, 'Confirm age 18+, privacy and terms separately before creating a Body.');
     await db.prepare('INSERT INTO accounts (subject,alias,consent_at,consent_version,adult_confirmed,last_active) VALUES (?,?,?,?,1,?) ON CONFLICT(subject) DO UPDATE SET consent_at=excluded.consent_at,consent_version=excluded.consent_version,adult_confirmed=1,last_active=excluded.last_active').bind(subject, displayName, now, CONSENT_VERSION, now).run();
@@ -104,6 +104,12 @@ async function saveProfile(subject: string, input: Record<string, unknown>): Pro
     if (/UNIQUE constraint failed: x1_bodies.handle|x1_body_handle_unique/.test(String(error))) throw new HttpError(409, 'That handle is already in use.');
     throw error;
   }
+  if (existingBody && existingBody.handle !== handle) {
+    await Promise.all([
+      db.prepare('UPDATE x51_web_souls SET author_handle=? WHERE author_subject=?').bind(handle, subject).run().catch(() => {}),
+      db.prepare('UPDATE x51_web_soul_comments SET author_handle=? WHERE author_subject=?').bind(handle, subject).run().catch(() => {}),
+    ]);
+  }
   if (typeof input.discoverable === 'boolean') {
     try {
       await db
@@ -111,6 +117,18 @@ async function saveProfile(subject: string, input: Record<string, unknown>): Pro
           "INSERT INTO x2_social_preferences (subject,discoverable,messages,receipts,notifications,updated_at) VALUES (?,?,'REQUESTS',0,1,?) ON CONFLICT(subject) DO UPDATE SET discoverable=excluded.discoverable,updated_at=excluded.updated_at",
         )
         .bind(subject, input.discoverable ? 1 : 0, now)
+        .run();
+    } catch {
+      /* Optional in X1-only schema fixtures without x2_social_preferences. */
+    }
+  } else if (!existingBody) {
+    // New Body ID creation defaults to a public discoverable researcher profile without modifying legacy users.
+    try {
+      await db
+        .prepare(
+          "INSERT OR IGNORE INTO x2_social_preferences (subject,discoverable,messages,receipts,notifications,updated_at) VALUES (?,1,'REQUESTS',0,1,?)",
+        )
+        .bind(subject, now)
         .run();
     } catch {
       /* Optional in X1-only schema fixtures without x2_social_preferences. */

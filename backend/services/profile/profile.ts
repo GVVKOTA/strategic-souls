@@ -123,6 +123,7 @@ export type UserProfileSnapshot = {
     publishedSouls: number;
   };
   hasCommunityProfile: boolean;
+  legacyPrivateProfile: boolean;
   preferences: UiPreferences;
   social: SocialSettingsSnapshot;
   unreadNotifications: number;
@@ -372,6 +373,7 @@ export async function getSessionProfileMeta(subject: string): Promise<{
   handle: string | null;
   bio: string;
   discoverable: boolean;
+  legacyPrivateProfile: boolean;
   unreadNotifications: number;
   age: number | null;
   showAge: boolean;
@@ -417,6 +419,7 @@ export async function getSessionProfileMeta(subject: string): Promise<{
     handle: bodyRow?.handle ?? null,
     bio: bodyRow?.bio ?? "",
     discoverable: !!prefsRow?.discoverable,
+    legacyPrivateProfile: !!bodyRow && !prefsRow?.discoverable,
     unreadNotifications: Number(unreadRow?.count ?? 0),
     age: stored?.age ?? null,
     showAge: stored?.showAge === true,
@@ -531,6 +534,7 @@ export async function getPrivateProfile(user: {
     defaultPostAudience: stored?.defaultPostAudience ?? "PUBLIC",
     counts,
     hasCommunityProfile: !!bodyRow,
+    legacyPrivateProfile: !!bodyRow && !social.discoverable,
     preferences: stored?.preferences ?? { ...DEFAULT_UI_PREFERENCES },
     social,
     unreadNotifications,
@@ -682,6 +686,41 @@ export async function mutatePrivateProfile(
           );
         }
         throw err;
+      }
+
+      // New Body ID creation defaults to a public discoverable researcher profile without altering legacy users' explicit choices.
+      if (!existingBody && rawHandle) {
+        try {
+          await db
+            .prepare(
+              `INSERT OR IGNORE INTO x2_social_preferences (subject, discoverable, messages, receipts, notifications, updated_at)
+               VALUES (?, 1, 'REQUESTS', 0, 1, ?)`,
+            )
+            .bind(subject, now)
+            .run();
+        } catch {
+          /* Optional in X1-only fixtures. */
+        }
+      }
+
+      // If handle changed on an existing Body, keep Web Soul & comment author_handle references synchronized.
+      if (existingBody && existingBody.handle !== targetHandle) {
+        await Promise.all([
+          db
+            .prepare(
+              "UPDATE x51_web_souls SET author_handle = ? WHERE author_subject = ?",
+            )
+            .bind(targetHandle, subject)
+            .run()
+            .catch(() => {}),
+          db
+            .prepare(
+              "UPDATE x51_web_soul_comments SET author_handle = ? WHERE author_subject = ?",
+            )
+            .bind(targetHandle, subject)
+            .run()
+            .catch(() => {}),
+        ]);
       }
     }
 

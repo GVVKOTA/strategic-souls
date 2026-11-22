@@ -285,8 +285,26 @@ export async function searchSocial(
 }
 async function inbox(subject: string, q = "") {
   if (q.length > 80) throw new HttpError(400, "Search at most 80 characters.");
+  const pat = "%" + q.replace(/[!%_]/g, "!$&").toLowerCase() + "%";
   return query(
-    `SELECT c.id,c.state,c.created_at AS createdAt,c.updated_at AS updatedAt,b.handle,b.display_name AS displayName,b.avatar,(c.requested_by=?) AS requestedByMe,COALESCE(v.muted,0) AS muted,COALESCE(v.hidden,0) AS hidden,(SELECT count(*) FROM x2_messages x WHERE x.conversation_id=c.id AND x.sender<>? AND x.created_at>COALESCE(v.read_at,'')) AS unread FROM x2_conversations c JOIN x1_bodies b ON b.subject=CASE WHEN c.first_subject=? THEN c.second_subject ELSE c.first_subject END LEFT JOIN x2_conversation_views v ON v.conversation_id=c.id AND v.subject=? WHERE (c.first_subject=? OR c.second_subject=?) AND COALESCE(v.hidden,0)=0 AND ${searchFilter} AND (b.handle LIKE ? ESCAPE '!' OR lower(b.display_name) LIKE ? ESCAPE '!') ORDER BY c.updated_at DESC,c.id LIMIT 50`,
+    `SELECT c.id,c.state,c.created_at AS createdAt,c.updated_at AS updatedAt,
+            b.handle,b.display_name AS displayName,b.avatar,
+            (c.requested_by=?) AS requestedByMe,
+            COALESCE(v.muted,0) AS muted,
+            COALESCE(v.hidden,0) AS hidden,
+            (SELECT count(*) FROM x2_messages x WHERE x.conversation_id=c.id AND x.sender<>? AND x.created_at>COALESCE(v.read_at,'')) AS unread,
+            (SELECT CASE WHEN x.retracted_at IS NOT NULL THEN '' ELSE x.content END FROM x2_messages x WHERE x.conversation_id=c.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1) AS lastMessageText,
+            (SELECT x.created_at FROM x2_messages x WHERE x.conversation_id=c.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1) AS lastMessageAt,
+            (SELECT CASE WHEN x.retracted_at IS NOT NULL THEN 1 ELSE 0 END FROM x2_messages x WHERE x.conversation_id=c.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1) AS lastMessageRetracted,
+            (SELECT CASE WHEN x.sender=? THEN 1 ELSE 0 END FROM x2_messages x WHERE x.conversation_id=c.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1) AS lastMessageIsMine
+     FROM x2_conversations c
+     JOIN x1_bodies b ON b.subject=CASE WHEN c.first_subject=? THEN c.second_subject ELSE c.first_subject END
+     LEFT JOIN x2_conversation_views v ON v.conversation_id=c.id AND v.subject=?
+     WHERE (c.first_subject=? OR c.second_subject=?)
+       AND COALESCE(v.hidden,0)=0
+       AND ${searchFilter}
+       AND (lower(b.handle) LIKE ? ESCAPE '!' OR lower(b.display_name) LIKE ? ESCAPE '!')
+     ORDER BY c.updated_at DESC,c.id LIMIT 50`,
     subject,
     subject,
     subject,
@@ -295,8 +313,9 @@ async function inbox(subject: string, q = "") {
     subject,
     subject,
     subject,
-    "%" + q.replace(/[!%_]/g, "!$&").toLowerCase() + "%",
-    "%" + q.replace(/[!%_]/g, "!$&").toLowerCase() + "%",
+    subject,
+    pat,
+    pat,
   );
 }
 async function invitationInbox(subject: string, handle: string) {

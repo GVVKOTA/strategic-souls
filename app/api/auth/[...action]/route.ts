@@ -112,6 +112,7 @@ async function sessionPayload(user: Awaited<ReturnType<typeof getAuthenticatedUs
       handle: meta.handle,
       bio: meta.bio,
       discoverable: meta.discoverable,
+      legacyPrivateProfile: meta.legacyPrivateProfile,
       unreadNotifications: meta.unreadNotifications,
       genderSymbol: meta.genderSymbol,
       instagramHandle: meta.instagramHandle,
