@@ -133,6 +133,8 @@ async function pushNotification(
 }
 
 async function readExtendedProfileMeta(subject: string): Promise<{
+  age: number | null;
+  showAge: boolean;
   genderSymbol: "MALE" | "FEMALE" | "HIDDEN";
   bannerPresetId: string;
   bannerPosition: "top" | "center" | "bottom";
@@ -150,6 +152,8 @@ async function readExtendedProfileMeta(subject: string): Promise<{
       .first<{ payload: string }>();
     if (!row) {
       return {
+        age: null,
+        showAge: false,
         genderSymbol: "HIDDEN",
         bannerPresetId: DEFAULT_BANNER_ID,
         bannerPosition: "center",
@@ -172,7 +176,14 @@ async function readExtendedProfileMeta(subject: string): Promise<{
       typeof p.bannerOverlay === "number" && Number.isFinite(p.bannerOverlay)
         ? Math.max(0.35, Math.min(0.92, p.bannerOverlay))
         : 0.65;
+    const rawAge =
+      typeof p.age === "number" && Number.isInteger(p.age) && p.age >= 18 && p.age <= 120
+        ? p.age
+        : null;
+    const showAge = p.showAge === true;
     return {
+      age: rawAge,
+      showAge,
       genderSymbol: gs,
       bannerPresetId: resolveBannerPreset(
         typeof p.bannerPresetId === "string" ? p.bannerPresetId : null,
@@ -188,6 +199,8 @@ async function readExtendedProfileMeta(subject: string): Promise<{
     };
   } catch {
     return {
+      age: null,
+      showAge: false,
       genderSymbol: "HIDDEN",
       bannerPresetId: DEFAULT_BANNER_ID,
       bannerPosition: "center",
@@ -322,7 +335,30 @@ export function buildShareSafeSoulSummary(
     total?: number;
   };
 
-  const isPrivateCsv = /private user csv/i.test(sourceStr);
+  const isPrivateCsv = /private user csv|custom_csv/i.test(sourceStr) || String(research.universe ?? "") === "CUSTOM_CSV";
+  const isSimulatedTestCsv =
+    isPrivateCsv &&
+    /test data|sample test csv|simulated fixture/i.test(
+      `${scan.name} ${String(payload.description ?? "")} ${sourceStr}`,
+    );
+
+  if (isSimulatedTestCsv && audience === "PUBLIC") {
+    return {
+      allowed: false,
+      blockReason:
+        "Scans generated from built-in Test CSV fixtures cannot be published to Public Web as live market proof. Run on verified official data or keep private in your Graveyard.",
+      mode: "CLASSIC",
+      formula: "",
+      timeframe: "1d",
+      universeLabel: "",
+      matchedSymbols: [],
+      evidenceStatus: "RESTRICTED",
+      sourceAttribution: sourceStr,
+      riskNote: "",
+      blueprintJson: "{}",
+    };
+  }
+
   // For private CSV, strip raw price rows and CSV: prefix while preserving canonical symbol names only if non-broker
   const matchedSymbols = (results.results ?? [])
     .filter((r) => r.status === "PASS")
@@ -377,6 +413,118 @@ export function buildShareSafeSoulSummary(
     riskNote:
       "Educational research snapshot only — not investment advice or guaranteed performance. Private holdings and raw private datasets are stripped.",
     blueprintJson: JSON.stringify(blueprintSafe),
+  };
+}
+
+/**
+ * [30] Post Preview — Uses the EXACT same server validation, rights checks, and
+ * privacy redaction pipeline as publishSoulFromScan without writing to D1.
+ */
+export async function previewSoulPublish(
+  subject: string,
+  input: Record<string, unknown>,
+): Promise<{
+  allowed: boolean;
+  blockReason: string | null;
+  preview: {
+    authorHandle: string;
+    authorDisplayName: string;
+    title: string;
+    summary: string;
+    audience: PostAudience;
+    groupId: string | null;
+    mode: "CLASSIC" | "ADVANCED";
+    formula: string;
+    timeframe: string;
+    universeLabel: string;
+    matchedSymbols: string[];
+    evidenceStatus: string;
+    sourceAttribution: string;
+    riskNote: string;
+    redactionsApplied: string[];
+  };
+}> {
+  const bodyRow = await requireBodyForNetwork(subject);
+  const scanId = id(input.scanId, "Scan");
+  const rawAudience = String(input.audience ?? "PUBLIC").toUpperCase();
+  if (!["PUBLIC", "FOLLOWERS", "GROUP"].includes(rawAudience)) {
+    throw new HttpError(400, "Choose Public, Followers, or Group audience.");
+  }
+  const audience = rawAudience as PostAudience;
+  let groupId: string | null = null;
+  if (audience === "GROUP") {
+    groupId = id(input.groupId, "Group");
+    const membership = await database()
+      .prepare("SELECT role FROM x1_memberships WHERE group_id=? AND subject=?")
+      .bind(groupId, subject)
+      .first<{ role: string }>();
+    if (!membership) {
+      throw new HttpError(403, "You must be a member of that group to preview or publish to it.");
+    }
+  }
+
+  const scanRow = await database()
+    .prepare(
+      "SELECT id, name, mode, payload, digest, created_at FROM x1_scans WHERE id=? AND subject=?",
+    )
+    .bind(scanId, subject)
+    .first<{
+      id: string;
+      name: string;
+      mode: string;
+      payload: string;
+      digest: string;
+      created_at: string;
+    }>();
+  if (!scanRow) {
+    throw new HttpError(404, "Completed scan not found in your Graveyard.");
+  }
+
+  const parsedPayload = JSON.parse(scanRow.payload) as Record<string, unknown>;
+  const safe = buildShareSafeSoulSummary(
+    { ...scanRow, payload: parsedPayload },
+    audience,
+  );
+  const title =
+    typeof input.title === "string" && input.title.trim()
+      ? field(input.title, "Title", 100, 3)
+      : scanRow.name.slice(0, 100);
+  const summary =
+    typeof input.summary === "string" && input.summary.trim()
+      ? field(input.summary, "Summary", 400, 1)
+      : String(
+          parsedPayload.description ??
+            `Published ${safe.mode} Soul Scan on ${safe.timeframe}.`,
+        ).slice(0, 400);
+
+  const redactionsApplied = [
+    "Private account email, session tokens, and portfolio holdings are never included.",
+    "Raw private CSV OHLCV price rows are stripped; only redacted methodology and matched symbol labels are rendered.",
+  ];
+  if (!safe.allowed) {
+    redactionsApplied.push("Publish blocked by server source-rights policy (preview cannot downgrade security).");
+  }
+
+  return {
+    allowed: safe.allowed,
+    blockReason: safe.blockReason,
+    preview: {
+      authorHandle: bodyRow.handle,
+      authorDisplayName: bodyRow.display_name,
+      title,
+      summary,
+      audience,
+      groupId,
+      mode: safe.mode,
+      formula: safe.formula,
+      timeframe: safe.timeframe,
+      universeLabel: safe.universeLabel,
+      matchedSymbols: safe.matchedSymbols,
+      evidenceStatus: safe.evidenceStatus,
+      sourceAttribution: safe.sourceAttribution,
+      riskNote: safe.riskNote,
+      redactionsApplied,
+    },
   };
 }
 
@@ -793,6 +941,7 @@ export async function getPublicResearcherProfile(
       displayName: target.display_name,
       bio: target.bio,
       avatarId: normalizeAvatarId(target.avatar),
+      age: ext.showAge ? ext.age : null,
       genderSymbol: ext.genderSymbol,
       bannerPresetId: ext.bannerPresetId,
       bannerPosition: ext.bannerPosition,
@@ -847,6 +996,10 @@ export async function mutateResearchNetwork(
   const action = String(input.action ?? "");
   const db = database();
   const now = nowIso();
+
+  if (action === "preview-soul") {
+    return previewSoulPublish(subject, input);
+  }
 
   if (action === "publish-soul") {
     return publishSoulFromScan(subject, input);

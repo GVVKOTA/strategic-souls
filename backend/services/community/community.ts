@@ -54,8 +54,8 @@ export async function getCommunity(subject: string, selectedId?: string | null, 
   const base = {
     body: publicBody(profile), groups: groups.results.slice(0, COMMUNITY_LIMITS.groupsPerBody),
     selectedGroup: selected ? { id: selected.group_id, name: selected.name, description: selected.description, role: selected.role, visibility: 'GROUP', createdAt: selected.created_at } : null,
-    members: [], souls: [], revisions: [], posts: [], comments: [], invitations: [], reports: [],
-    capabilities: { publicPublishing: false, photoUpload: false, siteAudience: 'UNCHANGED', canEdit: !!selected && canWrite(selected.role), canPublish: !!selected && canAdmin(selected.role), canInvite: !!selected && canAdmin(selected.role) },
+    members: [], souls: [], revisions: [], posts: [], pinnedItems: [] as Record<string, unknown>[], comments: [], invitations: [], reports: [],
+    capabilities: { publicPublishing: false, photoUpload: false, siteAudience: 'UNCHANGED', canEdit: !!selected && canWrite(selected.role), canPublish: !!selected && canAdmin(selected.role), canInvite: !!selected && canAdmin(selected.role), canPin: !!selected && canAdmin(selected.role) },
     pagination: { postLimit: COMMUNITY_LIMITS.readPage, commentsLimit: COMMUNITY_LIMITS.commentsPage, nextPostBefore: null as string | null },
   };
   if (!selected) return base;
@@ -74,11 +74,18 @@ export async function getCommunity(subject: string, selectedId?: string | null, 
   const comments = visiblePosts.length ? await db.prepare(`SELECT c.id,c.post_id AS postId,c.parent_id AS parentId,c.author_handle AS authorHandle,cb.avatar AS authorAvatar,c.content AS text,c.created_at AS createdAt,c.edited_at AS editedAt,c.deleted_at AS deletedAt,(c.author_subject=?) AS isMine FROM x1_comments c JOIN x1_group_posts p ON p.id=c.post_id LEFT JOIN x1_bodies cb ON cb.subject=c.author_subject WHERE p.group_id=? AND c.post_id IN (${visiblePosts.map(() => '?').join(',')}) ORDER BY c.created_at,c.id LIMIT 201`).bind(subject, group, ...visiblePosts.map(p => p.id)).all() : { results: [] };
   const invitations = canAdmin(selected.role) ? await db.prepare('SELECT id,invited_handle AS invitedHandle,role,created_at AS createdAt,expires_at AS expiresAt,accepted_at AS acceptedAt,revoked_at AS revokedAt FROM x1_invitations WHERE group_id=? ORDER BY created_at DESC LIMIT 50').bind(group).all() : { results: [] };
   const reports = canAdmin(selected.role) ? await db.prepare('SELECT r.id,r.post_id AS postId,r.reason,r.created_at AS createdAt,r.resolved_at AS resolvedAt FROM x1_reports r JOIN x1_group_posts p ON p.id=r.post_id WHERE p.group_id=? ORDER BY r.created_at DESC LIMIT 50').bind(group).all() : { results: [] };
+  let pinnedItems: Record<string, unknown>[] = [];
+  try {
+    const pinsRes = await db.prepare('SELECT p.target_kind AS targetKind, p.target_id AS targetId, p.position, p.created_at AS pinnedAt, b.handle AS pinnedByHandle FROM x52_group_pins p LEFT JOIN x1_bodies b ON b.subject=p.pinned_by WHERE p.group_id=? ORDER BY p.position ASC, p.created_at ASC LIMIT 3').bind(group).all<Record<string, unknown>>();
+    pinnedItems = pinsRes.results ?? [];
+  } catch {
+    /* Optional in legacy X1-only test fixtures prior to 0009 migration. */
+  }
   const last = visiblePosts.at(-1);
   return {
     ...base, members: members.results, souls: souls.results.map(row => ({ ...row, rule: jsonRule(row.rule) })),
     revisions: revisions.results.map(row => ({ ...row, rule: jsonRule(row.rule) })),
-    posts: visiblePosts.map(row => ({ ...row, supered: !!row.supered })), comments: comments.results.slice(0, COMMUNITY_LIMITS.commentsPage), invitations: invitations.results, reports: reports.results,
+    posts: visiblePosts.map(row => ({ ...row, supered: !!row.supered })), pinnedItems, comments: comments.results.slice(0, COMMUNITY_LIMITS.commentsPage), invitations: invitations.results, reports: reports.results,
     pagination: { ...base.pagination, nextPostBefore: posts.results.length > COMMUNITY_LIMITS.readPage && last ? `${last.createdAt}|${last.id}` : null, commentsTruncated: comments.results.length > COMMUNITY_LIMITS.commentsPage },
   };
 }
@@ -275,6 +282,45 @@ export async function mutateCommunity(subject: string, input: Record<string, unk
       db.prepare('UPDATE x1_reports SET resolved_at=? WHERE post_id=? AND EXISTS (SELECT 1 FROM x1_group_posts p JOIN x1_memberships m ON m.group_id=p.group_id WHERE p.id=x1_reports.post_id AND m.subject=? AND m.role IN (\'OWNER\',\'ADMIN\'))').bind(now, post.id, subject),
     ]);
     return { hidden: input.hidden };
+  }
+  if (input.action === 'pin-group-item') {
+    const member = await membership(subject, input.groupId, 'admin');
+    const targetKind = String(input.targetKind ?? 'POST').toUpperCase();
+    if (targetKind !== 'POST' && targetKind !== 'SOUL') {
+      throw new HttpError(400, 'Pinned item kind must be POST or SOUL.');
+    }
+    const targetId = id(input.targetId, targetKind === 'POST' ? 'Post' : 'Soul');
+    if (targetKind === 'POST') {
+      const exists = await db.prepare('SELECT id FROM x1_group_posts WHERE id=? AND group_id=? AND hidden_at IS NULL').bind(targetId, member.group_id).first();
+      if (!exists) throw new HttpError(404, 'Published group post not found in this group.');
+    } else {
+      const exists = await db.prepare('SELECT id FROM x1_group_souls WHERE id=? AND group_id=?').bind(targetId, member.group_id).first();
+      if (!exists) throw new HttpError(404, 'Group Soul not found in this group.');
+    }
+    const existingPin = await db.prepare('SELECT position FROM x52_group_pins WHERE group_id=? AND target_kind=? AND target_id=?').bind(member.group_id, targetKind, targetId).first<{ position: number }>();
+    if (existingPin) {
+      return { pinned: true, position: existingPin.position };
+    }
+    const inserted = await db.prepare(
+      `INSERT INTO x52_group_pins (group_id, target_kind, target_id, pinned_by, position, created_at)
+       SELECT ?, ?, ?, ?, COALESCE((SELECT max(position) + 1 FROM x52_group_pins WHERE group_id=?), 1), ?
+       WHERE (SELECT count(*) FROM x52_group_pins WHERE group_id=?) < 3
+         AND EXISTS (SELECT 1 FROM x1_memberships WHERE group_id=? AND subject=? AND role IN ('OWNER','ADMIN'))`
+    ).bind(member.group_id, targetKind, targetId, subject, member.group_id, now, member.group_id, member.group_id, subject).run();
+    if (!inserted.meta.changes) {
+      throw new HttpError(400, 'At most 3 research items can be pinned per group. Unpin an item first.');
+    }
+    return { pinned: true };
+  }
+  if (input.action === 'unpin-group-item') {
+    const member = await membership(subject, input.groupId, 'admin');
+    const targetKind = String(input.targetKind ?? 'POST').toUpperCase();
+    if (targetKind !== 'POST' && targetKind !== 'SOUL') {
+      throw new HttpError(400, 'Pinned item kind must be POST or SOUL.');
+    }
+    const targetId = id(input.targetId, targetKind === 'POST' ? 'Post' : 'Soul');
+    await db.prepare('DELETE FROM x52_group_pins WHERE group_id=? AND target_kind=? AND target_id=?').bind(member.group_id, targetKind, targetId).run();
+    return { pinned: false };
   }
   throw new HttpError(400, 'Unsupported Community action.');
 }

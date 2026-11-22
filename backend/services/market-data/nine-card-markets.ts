@@ -299,6 +299,14 @@ export function buildMarketOverviewCards(
     }
 
     const isRestrictedExchange = ["NSE", "BSE", "MCX"].includes(market);
+    const resolvedUnit = (() => {
+      const upper = (entry?.id ?? canonicalId).toUpperCase();
+      if (entry?.assetClass === "INDEX") return "pts";
+      if (upper === "GLOBAL:XAUUSD" || upper === "GLOBAL:XAGUSD") return "USD/oz";
+      if (upper === "GLOBAL:BRENT") return "USD/bbl";
+      if (entry?.assetClass === "BOND_YIELD") return "% yield";
+      return entry?.currency ?? "pts";
+    })();
     return {
       canonicalId: entry?.id ?? canonicalId,
       shortLabel: entry?.label ?? canonicalId.split(":")[1] ?? canonicalId,
@@ -306,7 +314,7 @@ export function buildMarketOverviewCards(
       venue: market,
       assetClass: entry?.assetClass ?? "INDEX",
       currency: entry?.currency ?? "USD",
-      quoteUnit: entry?.currency ?? "Index pts",
+      quoteUnit: resolvedUnit,
       value: null,
       absoluteChange: null,
       percentChange: null,

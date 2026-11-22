@@ -79,6 +79,8 @@ export type StoredProfileRecord = {
   bannerPresetId?: string;
   bannerPosition?: BannerPosition;
   bannerOverlay?: number;
+  age?: number | null;
+  showAge?: boolean;
   genderSymbol?: GenderSymbolOption;
   instagramHandle?: string;
   websiteUrl?: string;
@@ -107,6 +109,8 @@ export type UserProfileSnapshot = {
   bannerPresetId: string;
   bannerPosition: BannerPosition;
   bannerOverlay: number;
+  age: number | null;
+  showAge: boolean;
   genderSymbol: GenderSymbolOption;
   instagramHandle: string;
   websiteUrl: string;
@@ -180,6 +184,20 @@ function parsePreferences(raw: unknown): UiPreferences {
 
 function parseGenderSymbol(raw: unknown): GenderSymbolOption {
   return raw === "MALE" || raw === "FEMALE" ? raw : "HIDDEN";
+}
+
+function parseAge(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (!Number.isInteger(n) || n < 18 || n > 120) {
+    throw new HttpError(400, "Age must be a whole number between 18 and 120 (or left blank).");
+  }
+  return n;
+}
+
+function parseStoredAge(raw: unknown): number | null {
+  if (typeof raw !== "number" || !Number.isInteger(raw)) return null;
+  return raw >= 18 && raw <= 120 ? raw : null;
 }
 
 function parseBannerPosition(raw: unknown): BannerPosition {
@@ -277,6 +295,8 @@ async function readStoredProfileRecord(
         Number.isFinite(parsed.bannerOverlay)
           ? Math.max(0.35, Math.min(0.92, parsed.bannerOverlay))
           : 0.65,
+      age: parseStoredAge(parsed.age),
+      showAge: parsed.showAge === true,
       genderSymbol: parseGenderSymbol(parsed.genderSymbol),
       instagramHandle:
         typeof parsed.instagramHandle === "string" ? parsed.instagramHandle : "",
@@ -353,6 +373,8 @@ export async function getSessionProfileMeta(subject: string): Promise<{
   bio: string;
   discoverable: boolean;
   unreadNotifications: number;
+  age: number | null;
+  showAge: boolean;
   genderSymbol: GenderSymbolOption;
   instagramHandle: string;
   bannerPresetId: string;
@@ -396,6 +418,8 @@ export async function getSessionProfileMeta(subject: string): Promise<{
     bio: bodyRow?.bio ?? "",
     discoverable: !!prefsRow?.discoverable,
     unreadNotifications: Number(unreadRow?.count ?? 0),
+    age: stored?.age ?? null,
+    showAge: stored?.showAge === true,
     genderSymbol: stored?.genderSymbol ?? "HIDDEN",
     instagramHandle: stored?.instagramHandle ?? "",
     bannerPresetId: stored?.bannerPresetId ?? DEFAULT_BANNER_ID,
@@ -496,6 +520,8 @@ export async function getPrivateProfile(user: {
     bannerPresetId: stored?.bannerPresetId ?? DEFAULT_BANNER_ID,
     bannerPosition: stored?.bannerPosition ?? "center",
     bannerOverlay: stored?.bannerOverlay ?? 0.65,
+    age: stored?.age ?? null,
+    showAge: stored?.showAge === true,
     genderSymbol: stored?.genderSymbol ?? "HIDDEN",
     instagramHandle: stored?.instagramHandle ?? "",
     websiteUrl: stored?.websiteUrl ?? "",
@@ -682,6 +708,13 @@ export async function mutatePrivateProfile(
         ? Math.max(0.35, Math.min(0.92, input.bannerOverlay))
         : existingRecord?.bannerOverlay ?? 0.65;
 
+    const nextAge =
+      input.age !== undefined ? parseAge(input.age) : existingRecord?.age ?? null;
+    const nextShowAge =
+      typeof input.showAge === "boolean"
+        ? input.showAge
+        : existingRecord?.showAge === true;
+
     const nextGenderSymbol =
       input.genderSymbol !== undefined
         ? parseGenderSymbol(input.genderSymbol)
@@ -714,6 +747,8 @@ export async function mutatePrivateProfile(
       bannerPresetId: nextBannerId,
       bannerPosition: nextBannerPos,
       bannerOverlay: nextBannerOverlay,
+      age: nextAge,
+      showAge: nextShowAge,
       genderSymbol: nextGenderSymbol,
       instagramHandle: nextInstagram,
       websiteUrl: nextWebsite,

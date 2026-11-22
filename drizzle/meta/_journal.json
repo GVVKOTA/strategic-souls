@@ -64,6 +64,13 @@
       "when": 1795287000000,
       "tag": "0008_x51_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1795320000000,
+      "tag": "0009_x52_intelligence_and_pulse",
+      "breakpoints": true
     }
   ]
 }
