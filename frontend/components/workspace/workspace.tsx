@@ -33,6 +33,7 @@ import type {
   UserProfileSnapshot,
 } from "../../../backend/services/profile/profile";
 import Global, { AssetDialog } from "../../features/global/dashboard";
+import type { EconomicEventChartContext } from "../../features/global/economic-calendar";
 const Strategy = lazy(() => import("./strategy"));
 const CommunityNetwork = lazy(
   () => import("../../features/community/research-network-shell"),
@@ -89,6 +90,11 @@ export default function X1Workspace() {
       null,
     ),
     [asset, setAsset] = useState(""),
+    [assetEventContext, setAssetEventContext] =
+      useState<EconomicEventChartContext | null>(null),
+    [initialProfileHandle, setInitialProfileHandle] = useState<string | null>(
+      null,
+    ),
     [about, setAbout] = useState(false),
     [introPreview, setIntroPreview] = useState(false),
     [initialFormula, setInitialFormula] = useState(""),
@@ -239,7 +245,11 @@ export default function X1Workspace() {
         target = params.get("view")?.toLowerCase(),
         sec = params.get("section")?.toLowerCase();
       if (target === "strategy") setView("Strategy");
-      if (target === "community") setView("Community");
+      if (target === "community") {
+        setView("Community");
+        const prof = params.get("profile")?.trim().replace(/^@/, "");
+        if (prof) setInitialProfileHandle(prof);
+      }
       if (target === "settings") {
         setView("Settings");
         if (
@@ -967,7 +977,14 @@ export default function X1Workspace() {
                   reload={reload}
                   notify={notify}
                   analyze={analyze}
-                  openAsset={setAsset}
+                  openAsset={(id) => {
+                    setAssetEventContext(null);
+                    setAsset(id);
+                  }}
+                  openEventChart={(ctx) => {
+                    setAssetEventContext(ctx);
+                    setAsset(ctx.instrumentId);
+                  }}
                   refreshData={refreshData}
                   refreshing={refreshing}
                   initialPanel={globalPanel}
@@ -1029,7 +1046,7 @@ export default function X1Workspace() {
                   <section className="x1-panel">
                     <h2>Sign in to access Settings &amp; Preferences</h2>
                     <p className="x1-caption">
-                      Profile settings, 50 preset avatars, banners, and privacy preferences are private to your account.
+                      Profile settings, privacy controls, and workspace preferences are private to your account.
                     </p>
                     <div className="x1-actions">
                       <button
@@ -1060,6 +1077,7 @@ export default function X1Workspace() {
                   currentUser={authUser}
                   profileRevision={profileRevision}
                   initialTab={communityTab}
+                  initialProfileHandle={initialProfileHandle}
                   savedOnlyRequested={communitySavedOnly}
                   tabNonce={communityTabNonce}
                   onOpenSettings={openSettings}
@@ -1145,11 +1163,20 @@ export default function X1Workspace() {
           data={data}
           authenticated={isSignedIn && accepted === true}
           isOwner={isOwner}
+          eventContext={assetEventContext}
+          onSelectAsset={(nextId) => {
+            setAssetEventContext(null);
+            setAsset(nextId);
+          }}
           onRequireAuth={() => {
             setAsset("");
+            setAssetEventContext(null);
             setAuthModal("signin");
           }}
-          onClose={() => setAsset("")}
+          onClose={() => {
+            setAsset("");
+            setAssetEventContext(null);
+          }}
           analyze={(formula, id) => analyze(formula, id)}
           notify={notify}
         />
@@ -1249,9 +1276,12 @@ export default function X1Workspace() {
                 : (
                     [
                       ["Markets", "9 customizable cards (3×3 matrix)"],
-                      ["My Portfolio", "Summary & dedicated private ledger"],
+                      ["My Portfolio", "Holdings & cost-basis allocation"],
+                      ["Market Intelligence", "Verified announcements & news"],
+                      ["NSE Sectors & Heatmaps", "Sector indices, heatmaps & comparison"],
+                      ["Daily Market Pulse", "NIFTY 50 & Gold session sentiment polls"],
+                      ["Strategic Globe", "Daily Briefing, 3D Earth & 2D Map"],
                       ["Economic Calendar", "Official RBI, FOMC, BLS, ECB schedules"],
-                      ["Strategic Globe", "Photoreal 3D Earth + 2D Satellite Map"],
                       ["Watchlists", "Private saved instrument lists"],
                       ["Market Explorer", "Source health & official references"],
                     ] as const

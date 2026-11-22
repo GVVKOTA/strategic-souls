@@ -11,16 +11,16 @@ import {
   Pencil,
   Pin,
   PinOff,
+  QrCode,
   Send,
-  Sparkles,
   Trash2,
   UserCheck,
   UserPlus,
   Users,
 } from "lucide-react";
 import type { PublishedSoulCard } from "../../../backend/services/community/research-network";
-import { resolveBannerPreset } from "../../../backend/services/profile/banners";
 import type { UserProfileSnapshot } from "../../../backend/services/profile/profile";
+import { buildQrSvgString } from "../../lib/qr-svg";
 import {
   Empty,
   Modal,
@@ -42,6 +42,7 @@ type PublicProfileResponse = {
     displayName: string;
     bio: string;
     avatarId: string;
+    age: number | null;
     genderSymbol: "MALE" | "FEMALE" | "HIDDEN";
     bannerPresetId: string;
     bannerPosition: "top" | "center" | "bottom";
@@ -88,6 +89,7 @@ type Props = {
   } | null;
   profileRevision?: number;
   initialTab?: PrimaryCommunityTab;
+  initialProfileHandle?: string | null;
   savedOnlyRequested?: boolean;
   tabNonce?: number;
   onOpenSettings: (section: SettingsSection) => void;
@@ -96,9 +98,9 @@ type Props = {
   onCopyToStrategy: (formula: string) => void;
 };
 
-function genderGlyph(g?: "MALE" | "FEMALE" | "HIDDEN"): string {
-  if (g === "MALE") return " ♂";
-  if (g === "FEMALE") return " ♀";
+function genderLabel(g?: "MALE" | "FEMALE" | "HIDDEN"): string {
+  if (g === "MALE") return "Male";
+  if (g === "FEMALE") return "Female";
   return "";
 }
 
@@ -111,6 +113,7 @@ export default function ResearchNetworkShell({
   currentUser,
   profileRevision = 0,
   initialTab = "web",
+  initialProfileHandle = null,
   savedOnlyRequested = false,
   tabNonce = 0,
   onOpenSettings,
@@ -133,6 +136,7 @@ export default function ResearchNetworkShell({
   const [loadingFeed, setLoadingFeed] = useState(true);
   const [myProfile, setMyProfile] = useState<UserProfileSnapshot | null>(null);
   const [avatarStudioOpen, setAvatarStudioOpen] = useState(false);
+  const [qrHandle, setQrHandle] = useState<string | null>(null);
 
   // Public researcher profile modal
   const [viewedProfile, setViewedProfile] = useState<
@@ -218,24 +222,39 @@ export default function ResearchNetworkShell({
     };
   }, [tab, loadWebFeed]);
 
-  async function openResearcherProfile(rawHandle: string) {
-    const clean = rawHandle.trim().replace(/^@/, "");
-    if (!clean) return;
-    setProfileLoading(true);
-    try {
-      const res = await api<PublicProfileResponse>(
-        `/api/community/network?view=profile&handle=${encodeURIComponent(clean)}`,
-      );
-      setViewedProfile(res.profile);
-    } catch (err) {
-      notify(
-        err instanceof Error ? err.message : `Could not open @${clean}.`,
-        true,
-      );
-    } finally {
-      setProfileLoading(false);
-    }
-  }
+  const openResearcherProfile = useCallback(
+    async (rawHandle: string) => {
+      const clean = rawHandle.trim().replace(/^@/, "");
+      if (!clean) return;
+      setProfileLoading(true);
+      try {
+        const res = await api<PublicProfileResponse>(
+          `/api/community/network?view=profile&handle=${encodeURIComponent(clean)}`,
+        );
+        setViewedProfile(res.profile);
+      } catch (err) {
+        notify(
+          err instanceof Error ? err.message : `Could not open @${clean}.`,
+          true,
+        );
+      } finally {
+        setProfileLoading(false);
+      }
+    },
+    [notify],
+  );
+
+  // [28] Support QR deep link /?view=community&profile=<handle>
+  useEffect(() => {
+    if (!initialProfileHandle) return;
+    let alive = true;
+    queueMicrotask(() => {
+      if (alive) void openResearcherProfile(initialProfileHandle);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [initialProfileHandle, openResearcherProfile]);
 
   async function toggleFollow(handle: string, currentlyFollowingOrPending: boolean) {
     if (!authenticated) {
@@ -441,10 +460,8 @@ export default function ResearchNetworkShell({
   const avatarId = myProfile?.avatarId ?? currentUser?.avatarId ?? "a01";
   const genderSym =
     myProfile?.genderSymbol ?? currentUser?.genderSymbol ?? "HIDDEN";
-  const bannerId =
-    myProfile?.bannerPresetId ?? currentUser?.bannerPresetId ?? "b01";
-  const bannerPos = myProfile?.bannerPosition ?? "center";
-  const bannerOverlay = myProfile?.bannerOverlay ?? 0.55;
+  const visibleAge =
+    myProfile?.showAge && typeof myProfile.age === "number" ? myProfile.age : null;
   const bio = myProfile?.bio ?? currentUser?.bio ?? "";
   const instagram =
     myProfile?.instagramHandle ?? currentUser?.instagramHandle ?? "";
@@ -452,162 +469,141 @@ export default function ResearchNetworkShell({
   const interests = myProfile?.researchInterests ?? [];
   const counts = myProfile?.counts ??
     currentUser?.counts ?? { followers: 0, following: 0, publishedSouls: 0 };
-  const bannerPreset = resolveBannerPreset(bannerId);
   const myPinnedSouls = posts.filter((p) => p.isMine && p.pinned).slice(0, 3);
   const cleanSearchHandle = searchQuery.trim().replace(/^@/, "");
 
+  const qrUrl = qrHandle
+    ? `${typeof window !== "undefined" ? window.location.origin : "https://strategic-souls.vishnukota20071005.workers.dev"}/?view=community&profile=${encodeURIComponent(qrHandle)}`
+    : "";
+  const qrSvg = qrUrl ? buildQrSvgString(qrUrl, 196) : "";
+
   return (
     <div className="x51-global-stack">
-      {/* 1. CENTERED PERSONAL PROFILE PREVIEW CARD */}
-      <section className="x51-profile-hero" aria-label="Your researcher profile">
-        <div
-          className="x51-profile-banner"
-          style={{
-            background: bannerPreset.gradient,
-            backgroundPosition: bannerPos,
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              background: `rgba(7, 8, 9, ${bannerOverlay * 0.55})`,
-            }}
-            aria-hidden="true"
-          />
-        </div>
-        <div className="x51-profile-body">
-          <div className="x51-profile-avatar-lift">
-            <AvatarBadge
-              avatarId={avatarId}
-              size={72}
-              ring
-              alt={`${displayName} avatar`}
-            />
-          </div>
+      {/* 1. CLEAN UNDERSTATED VERTICAL PERSONAL PROFILE */}
+      <section className="x52-vertical-profile" aria-label="Your researcher profile">
+        <AvatarBadge
+          avatarId={avatarId}
+          size={58}
+          ring
+          alt={`${displayName} avatar`}
+        />
 
-          {authenticated ? (
-            <>
+        {authenticated ? (
+          <>
+            <div>
+              <h2 style={{ margin: "2px 0 0", fontSize: "1.14rem" }}>
+                {displayName}
+              </h2>
+              <div className="x52-profile-meta-row" style={{ marginTop: 3 }}>
+                <span>{handle ? `@${handle}` : "No Body ID set yet"}</span>
+                {visibleAge !== null && <span>· Age {visibleAge}</span>}
+                {genderLabel(genderSym) && <span>· {genderLabel(genderSym)}</span>}
+              </div>
+            </div>
+
+            {bio && (
+              <p className="x1-caption" style={{ maxWidth: 460, margin: 0 }}>
+                {bio}
+              </p>
+            )}
+
+            {(instagram || website || interests.length > 0) && (
+              <div className="x51-chip-row" style={{ justifyContent: "center" }}>
+                {instagram && (
+                  <a
+                    className="x51-pill"
+                    href={`https://instagram.com/${encodeURIComponent(instagram)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    @{instagram} <ExternalLink size={11} />
+                  </a>
+                )}
+                {website && (
+                  <a
+                    className="x51-pill"
+                    href={website}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Website <ExternalLink size={11} />
+                  </a>
+                )}
+                {interests.map((tag) => (
+                  <span key={tag} className="x51-pill">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div className="x51-profile-stats">
               <div>
-                <h2 style={{ margin: "2px 0 0", fontSize: "1.18rem" }}>
-                  {displayName}
-                  {genderGlyph(genderSym)}
-                </h2>
-                <p className="x1-caption" style={{ margin: "2px 0 0" }}>
-                  {handle ? `@${handle}` : "No Body ID (@handle) claimed yet"} ·
-                  Private portfolio hidden
-                </p>
+                <strong>{counts.followers}</strong>
+                <span>Followers</span>
               </div>
-              {bio && (
-                <p
-                  className="x1-caption"
-                  style={{ maxWidth: 520, margin: "2px 0 0" }}
-                >
-                  {bio}
-                </p>
-              )}
-              {(instagram || website || interests.length > 0) && (
-                <div
-                  className="x51-chip-row"
-                  style={{ justifyContent: "center" }}
-                >
-                  {instagram && (
-                    <a
-                      className="x51-pill"
-                      href={`https://instagram.com/${encodeURIComponent(instagram)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      IG @{instagram} <ExternalLink size={11} />
-                    </a>
-                  )}
-                  {website && (
-                    <a
-                      className="x51-pill"
-                      href={website}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Website <ExternalLink size={11} />
-                    </a>
-                  )}
-                  {interests.map((tag) => (
-                    <span key={tag} className="x51-pill x51-pill-green">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              <div className="x51-profile-stats">
-                <div>
-                  <strong>{counts.followers}</strong>
-                  <span>Followers</span>
-                </div>
-                <div>
-                  <strong>{counts.following}</strong>
-                  <span>Following</span>
-                </div>
-                <div>
-                  <strong>{counts.publishedSouls}</strong>
-                  <span>Published Souls</span>
-                </div>
+              <div>
+                <strong>{counts.following}</strong>
+                <span>Following</span>
               </div>
+              <div>
+                <strong>{counts.publishedSouls}</strong>
+                <span>Souls</span>
+              </div>
+            </div>
 
-              <div className="x1-actions" style={{ justifyContent: "center", flexWrap: "wrap" }}>
+            <div className="x1-actions" style={{ justifyContent: "center", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="x1-secondary"
+                style={{ minHeight: 36, fontSize: "0.82rem" }}
+                onClick={() => onOpenSettings("profile")}
+              >
+                <Pencil size={13} />
+                <span>{handle ? "Edit Profile" : "Set @BodyID"}</span>
+              </button>
+              {handle && (
                 <button
                   type="button"
                   className="x1-secondary"
-                  style={{ minHeight: 38, fontSize: "0.84rem" }}
-                  onClick={() => onOpenSettings("profile")}
+                  style={{ minHeight: 36, fontSize: "0.82rem" }}
+                  onClick={() => setQrHandle(handle)}
                 >
-                  <Pencil size={14} />
-                  <span>{handle ? "Edit Profile & Banner" : "Claim @BodyID"}</span>
+                  <QrCode size={13} />
+                  <span>Share QR</span>
                 </button>
-                <button
-                  type="button"
-                  className="x51-accent-btn"
-                  style={{ minHeight: 38, fontSize: "0.84rem" }}
-                  onClick={() => setAvatarStudioOpen(true)}
-                >
-                  <Sparkles size={14} />
-                  <span>50 Avatars</span>
-                </button>
-              </div>
-
-              {myPinnedSouls.length > 0 && (
-                <div style={{ width: "100%", marginTop: 6, textAlign: "left" }}>
-                  <p className="x1-caption" style={{ margin: "0 0 6px" }}>
-                    Pinned Souls ({myPinnedSouls.length}/3)
-                  </p>
-                  <div className="x51-chip-row">
-                    {myPinnedSouls.map((ps) => (
-                      <span key={ps.id} className="x51-pill x51-pill-blue">
-                        <Pin size={11} /> {ps.title}
-                      </span>
-                    ))}
-                  </div>
-                </div>
               )}
-            </>
-          ) : (
-            <>
-              <h2 style={{ margin: "2px 0 0" }}>The Research Network</h2>
-              <p className="x1-caption" style={{ maxWidth: 480, margin: 0 }}>
-                Explore public research Souls from independent analysts. Sign in
-                to claim your unique @BodyID, choose from 50 avatars, follow
-                researchers, post Souls, and join Research Groups.
-              </p>
-              <button
-                type="button"
-                className="x51-accent-btn"
-                onClick={onRequireAuth}
-              >
-                Sign in to claim @BodyID
-              </button>
-            </>
-          )}
-        </div>
+            </div>
+
+            {myPinnedSouls.length > 0 && (
+              <div style={{ width: "100%", marginTop: 4 }}>
+                <div className="x51-chip-row" style={{ justifyContent: "center" }}>
+                  {myPinnedSouls.map((ps) => (
+                    <span key={ps.id} className="x51-pill x51-pill-blue">
+                      <Pin size={11} /> {ps.title}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <h2 style={{ margin: "2px 0 0", fontSize: "1.12rem" }}>Research Network</h2>
+            <p className="x1-caption" style={{ maxWidth: 440, margin: 0 }}>
+              Explore public research Souls from independent analysts. Sign in
+              to claim your unique @BodyID, follow researchers, and join Research Rooms.
+            </p>
+            <button
+              type="button"
+              className="x51-accent-btn"
+              style={{ minHeight: 38 }}
+              onClick={onRequireAuth}
+            >
+              Sign in to set @BodyID
+            </button>
+          </>
+        )}
       </section>
 
       {/* Body ID Quick Jump Banner when user types in Community Header search */}
@@ -768,7 +764,6 @@ export default function ResearchNetworkShell({
                       <div>
                         <strong style={{ fontSize: "0.9rem" }}>
                           {post.authorDisplayName}
-                          {genderGlyph(post.authorGenderSymbol)}
                         </strong>
                         <div className="x1-caption">
                           @{post.authorHandle} · {moment(post.createdAt)}
@@ -1023,101 +1018,154 @@ export default function ResearchNetworkShell({
         </Modal>
       )}
 
+      {/* [28] Body ID QR Sharing Modal (Zero External CDNs, Public Handle Only) */}
+      {qrHandle && (
+        <Modal title={`Share @${qrHandle}`} onClose={() => setQrHandle(null)}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, textAlign: "center" }}>
+            <div
+              className="x52-qr-frame"
+              aria-label={`QR code linking to public profile @${qrHandle}`}
+              dangerouslySetInnerHTML={{ __html: qrSvg }}
+            />
+            <code className="x51-soul-formula" style={{ maxWidth: "100%" }}>
+              {qrUrl}
+            </code>
+            <p className="x1-caption" style={{ margin: 0 }}>
+              Encodes only your public Body ID profile link. Never includes email,
+              session tokens, or private portfolio records.
+            </p>
+            <div className="x1-actions" style={{ justifyContent: "center", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="x1-secondary"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(qrUrl);
+                    notify("Profile link copied.");
+                  } catch {
+                    notify("Copy the URL shown above.");
+                  }
+                }}
+              >
+                <Copy size={14} />
+                <span>Copy link</span>
+              </button>
+              <button
+                type="button"
+                className="x1-secondary"
+                onClick={() => {
+                  const blob = new Blob([qrSvg], { type: "image/svg+xml" });
+                  const u = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = u;
+                  a.download = `strategic-souls-${qrHandle}-qr.svg`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  URL.revokeObjectURL(u);
+                }}
+              >
+                <span>Download QR (.svg)</span>
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {/* Public Researcher Body ID Profile Sheet */}
       {viewedProfile && (
         <Modal
           title={`@${viewedProfile.handle}`}
           onClose={() => setViewedProfile(null)}
         >
-          <div className="x51-profile-hero" style={{ marginBottom: 12 }}>
-            <div
-              className="x51-profile-banner"
-              style={{
-                height: 112,
-                background: resolveBannerPreset(viewedProfile.bannerPresetId)
-                  .gradient,
-                backgroundPosition: viewedProfile.bannerPosition,
-              }}
+          <div className="x52-vertical-profile" style={{ marginBottom: 12 }}>
+            <AvatarBadge
+              avatarId={viewedProfile.avatarId}
+              size={58}
+              ring
+              alt=""
             />
-            <div className="x51-profile-body">
-              <div className="x51-profile-avatar-lift">
-                <AvatarBadge
-                  avatarId={viewedProfile.avatarId}
-                  size={64}
-                  ring
-                  alt=""
-                />
-              </div>
-              <h3 style={{ margin: "2px 0 0" }}>
-                {viewedProfile.displayName}
-                {genderGlyph(viewedProfile.genderSymbol)}
-              </h3>
-              <span className="x1-caption">
-                @{viewedProfile.handle} · Private portfolio hidden
-              </span>
-              {viewedProfile.bio && (
-                <p className="x1-caption" style={{ margin: 0 }}>
-                  {viewedProfile.bio}
-                </p>
+            <h3 style={{ margin: "2px 0 0" }}>{viewedProfile.displayName}</h3>
+            <div className="x52-profile-meta-row">
+              <span>@{viewedProfile.handle}</span>
+              {typeof viewedProfile.age === "number" && (
+                <span>· Age {viewedProfile.age}</span>
               )}
-              <div className="x51-profile-stats">
-                <div>
-                  <strong>{viewedProfile.counts.followers}</strong>
-                  <span>Followers</span>
-                </div>
-                <div>
-                  <strong>{viewedProfile.counts.following}</strong>
-                  <span>Following</span>
-                </div>
-                <div>
-                  <strong>{viewedProfile.counts.publishedSouls}</strong>
-                  <span>Souls</span>
-                </div>
+              {genderLabel(viewedProfile.genderSymbol) && (
+                <span>· {genderLabel(viewedProfile.genderSymbol)}</span>
+              )}
+            </div>
+            {viewedProfile.bio && (
+              <p className="x1-caption" style={{ margin: 0 }}>
+                {viewedProfile.bio}
+              </p>
+            )}
+            <div className="x51-profile-stats">
+              <div>
+                <strong>{viewedProfile.counts.followers}</strong>
+                <span>Followers</span>
               </div>
+              <div>
+                <strong>{viewedProfile.counts.following}</strong>
+                <span>Following</span>
+              </div>
+              <div>
+                <strong>{viewedProfile.counts.publishedSouls}</strong>
+                <span>Souls</span>
+              </div>
+            </div>
+            <div className="x1-actions" style={{ justifyContent: "center", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="x1-secondary"
+                style={{ minHeight: 36, fontSize: "0.82rem" }}
+                onClick={() => setQrHandle(viewedProfile.handle)}
+              >
+                <QrCode size={13} />
+                <span>QR</span>
+              </button>
               {!viewedProfile.isMe && (
-                <div className="x1-actions" style={{ justifyContent: "center" }}>
-                  <button
-                    type="button"
-                    className={
-                      viewedProfile.followState === "NONE"
-                        ? "x51-accent-btn"
-                        : "x1-secondary"
-                    }
-                    disabled={actionBusy === "follow:" + viewedProfile.handle}
-                    onClick={() =>
-                      void toggleFollow(
-                        viewedProfile.handle,
-                        viewedProfile.followState !== "NONE",
-                      )
-                    }
-                  >
-                    {viewedProfile.followState === "ACTIVE" ? (
-                      <>
-                        <UserCheck size={14} /> Following
-                      </>
-                    ) : viewedProfile.followState === "PENDING" ? (
-                      <>
-                        <Check size={14} /> Request Pending
-                      </>
-                    ) : (
-                      <>
-                        <UserPlus size={14} /> Follow
-                      </>
-                    )}
-                  </button>
-                  {viewedProfile.canMessage && (
-                    <button
-                      type="button"
-                      className="x1-secondary"
-                      onClick={() => {
-                        setViewedProfile(null);
-                        setTab("chats");
-                      }}
-                    >
-                      <MessageSquare size={14} /> Message
-                    </button>
+                <button
+                  type="button"
+                  className={
+                    viewedProfile.followState === "NONE"
+                      ? "x51-accent-btn"
+                      : "x1-secondary"
+                  }
+                  disabled={actionBusy === "follow:" + viewedProfile.handle}
+                  onClick={() =>
+                    void toggleFollow(
+                      viewedProfile.handle,
+                      viewedProfile.followState !== "NONE",
+                    )
+                  }
+                >
+                  {viewedProfile.followState === "ACTIVE" ? (
+                    <>
+                      <UserCheck size={14} /> Following
+                    </>
+                  ) : viewedProfile.followState === "PENDING" ? (
+                    <>
+                      <Check size={14} /> Pending
+                    </>
+                  ) : (
+                    <>
+                      <UserPlus size={14} /> Follow
+                    </>
                   )}
-                </div>
+                </button>
+              )}
+              {!viewedProfile.isMe && viewedProfile.canMessage && (
+                <button
+                  type="button"
+                  className="x1-secondary"
+                  onClick={() => {
+                    setViewedProfile(null);
+                    setTab("chats");
+                  }}
+                >
+                  <MessageSquare size={14} /> Message
+                </button>
               )}
             </div>
           </div>

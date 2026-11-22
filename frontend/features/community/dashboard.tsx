@@ -13,6 +13,7 @@ import {
   Mail,
   MessageSquare,
   Pencil,
+  Pin,
   Plus,
   Send,
   Settings,
@@ -118,6 +119,13 @@ type CommunityState = {
   souls: Soul[];
   revisions: Revision[];
   posts: Post[];
+  pinnedItems?: {
+    targetKind: "POST" | "SOUL";
+    targetId: string;
+    position: number;
+    pinnedAt: string;
+    pinnedByHandle: string | null;
+  }[];
   comments: Comment[];
   invitations: {
     id: string;
@@ -127,7 +135,7 @@ type CommunityState = {
     acceptedAt: string | null;
     revokedAt: string | null;
   }[];
-  capabilities: { canEdit: boolean; canPublish: boolean; canInvite: boolean };
+  capabilities: { canEdit: boolean; canPublish: boolean; canInvite: boolean; canPin?: boolean };
   pagination: { nextPostBefore: string | null; commentsTruncated?: boolean };
 };
 type Editor = {
@@ -1044,6 +1052,71 @@ export default function Community({
                           title="Published Room Feed"
                           kicker="Peer-reviewed revisions & threaded comments"
                         >
+                          {/* [29] Pinned Group Research Strip (max 3 moderator pins) */}
+                          {(data.pinnedItems?.length ?? 0) > 0 && (
+                            <div
+                              style={{
+                                marginBottom: 14,
+                                padding: 12,
+                                borderRadius: 10,
+                                border: "1px solid var(--x51-blue-border)",
+                                background: "var(--x51-blue-soft)",
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 8,
+                              }}
+                              aria-label="Pinned group research"
+                            >
+                              <strong style={{ fontSize: "0.86rem", color: "var(--x1-title-blue)" }}>
+                                <Pin size={13} style={{ marginRight: 5, verticalAlign: "middle" }} />
+                                Pinned Research ({data.pinnedItems!.length}/3)
+                              </strong>
+                              {data.pinnedItems!.map((pin) => {
+                                const matchedPost = data.posts.find((p) => p.id === pin.targetId);
+                                const matchedSoul = data.souls.find((s) => s.id === pin.targetId);
+                                const label = matchedPost?.title ?? matchedSoul?.title ?? pin.targetId;
+                                return (
+                                  <div
+                                    key={`${pin.targetKind}:${pin.targetId}`}
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "space-between",
+                                      gap: 8,
+                                      fontSize: "0.84rem",
+                                    }}
+                                  >
+                                    <span>
+                                      <strong>{label}</strong>{" "}
+                                      <span className="x1-caption">
+                                        {pin.pinnedByHandle ? `· pinned by @${pin.pinnedByHandle}` : ""}
+                                      </span>
+                                    </span>
+                                    {data.capabilities.canPin && (
+                                      <button
+                                        type="button"
+                                        className="x1-text-button"
+                                        disabled={busy}
+                                        onClick={() =>
+                                          void mutate(
+                                            {
+                                              action: "unpin-group-item",
+                                              groupId: group.id,
+                                              targetKind: pin.targetKind,
+                                              targetId: pin.targetId,
+                                            },
+                                            "Unpinned from group.",
+                                          )
+                                        }
+                                      >
+                                        Unpin
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                           {data.posts.length ? (
                             data.posts.map((post) => (
                               <article
@@ -1142,6 +1215,37 @@ export default function Community({
                                   >
                                     <Flag size={15} />
                                   </button>
+                                  {data.capabilities.canPin && !post.hiddenAt && (
+                                    <button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={() => {
+                                        const isPinned = (data.pinnedItems ?? []).some(
+                                          (p) => p.targetKind === "POST" && p.targetId === post.id,
+                                        );
+                                        void mutate(
+                                          {
+                                            action: isPinned
+                                              ? "unpin-group-item"
+                                              : "pin-group-item",
+                                            groupId: group.id,
+                                            targetKind: "POST",
+                                            targetId: post.id,
+                                          },
+                                          isPinned
+                                            ? "Unpinned from group."
+                                            : "Pinned to top of group (max 3).",
+                                        );
+                                      }}
+                                    >
+                                      <Pin size={14} />
+                                      {(data.pinnedItems ?? []).some(
+                                        (p) => p.targetKind === "POST" && p.targetId === post.id,
+                                      )
+                                        ? "Unpin"
+                                        : "Pin"}
+                                    </button>
+                                  )}
                                   {data.capabilities.canPublish && (
                                     <button
                                       disabled={busy}

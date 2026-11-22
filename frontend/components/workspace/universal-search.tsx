@@ -1,6 +1,14 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X, ArrowUpRight, UserPlus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Search,
+  X,
+  ArrowUpRight,
+  UserPlus,
+  Clock,
+  Star,
+  Trash2,
+} from "lucide-react";
 import { api } from "./shared";
 import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import {
@@ -8,6 +16,10 @@ import {
   searchCanonicalInstruments,
   type SearchableInstrument,
 } from "../../../backend/services/market-data/instrument-registry";
+import type {
+  SearchHistoryEntry,
+  SearchHistoryState,
+} from "../../../backend/services/user/preferences-store";
 
 type SocialResults = {
   bodies: { handle: string; displayName: string; bio?: string }[];
@@ -35,6 +47,32 @@ const SCOPE_OPTIONS = [
   { id: "souls", label: "Souls" },
 ] as const;
 
+const GUEST_HISTORY_KEY = "ss-x52-guest-search-history-v1";
+
+function loadGuestHistory(): SearchHistoryState {
+  try {
+    const raw = window.localStorage.getItem(GUEST_HISTORY_KEY);
+    if (!raw) return { recents: [], favorites: [], optedOut: false, updatedAt: null };
+    const parsed = JSON.parse(raw) as Partial<SearchHistoryState>;
+    return {
+      recents: Array.isArray(parsed.recents) ? parsed.recents.slice(0, 12) : [],
+      favorites: Array.isArray(parsed.favorites) ? parsed.favorites.slice(0, 12) : [],
+      optedOut: parsed.optedOut === true,
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : null,
+    };
+  } catch {
+    return { recents: [], favorites: [], optedOut: false, updatedAt: null };
+  }
+}
+
+function saveGuestHistory(next: SearchHistoryState) {
+  try {
+    window.localStorage.setItem(GUEST_HISTORY_KEY, JSON.stringify(next));
+  } catch {
+    /* Storage optional */
+  }
+}
+
 export default function UniversalSearch({
   data,
   authenticated = false,
@@ -47,16 +85,135 @@ export default function UniversalSearch({
   onCommunity: (query: string) => void;
 }) {
   const [query, setQuery] = useState(""),
+    [focused, setFocused] = useState(false),
     [scope, setScope] = useState<string>("all"),
     [social, setSocial] = useState<SocialResults | null>(null),
     [remoteAssets, setRemoteAssets] = useState<SearchableInstrument[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [activeIndex, setActiveIndex] = useState(-1);
+    [activeIndex, setActiveIndex] = useState(-1),
+    [history, setHistory] = useState<SearchHistoryState>({
+      recents: [],
+      favorites: [],
+      optedOut: false,
+      updatedAt: null,
+    });
   const [registry, setRegistry] = useState<SearchableInstrument[]>([
     ...X2_INSTRUMENTS,
   ]);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const onDocClick = (ev: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(ev.target as Node)) {
+        setFocused(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  // Load Smart Search History [11]
+  useEffect(() => {
+    let active = true;
+    if (authenticated) {
+      api<SearchHistoryState>("/api/search/history")
+        .then((res) => {
+          if (active) setHistory(res);
+        })
+        .catch(() => {
+          /* Ignore transient failure */
+        });
+    } else {
+      queueMicrotask(() => {
+        if (active) setHistory(loadGuestHistory());
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [authenticated]);
+
+  const recordSearch = useCallback(
+    (entry: Omit<SearchHistoryEntry, "id" | "savedAt">) => {
+      const nowIso = new Date().toISOString();
+      const full: SearchHistoryEntry = {
+        ...entry,
+        id: `${entry.kind}:${entry.target.toLowerCase()}`,
+        savedAt: nowIso,
+      };
+      if (history.optedOut) return;
+      if (!authenticated) {
+        setHistory((prev) => {
+          const next: SearchHistoryState = {
+            ...prev,
+            recents: [full, ...prev.recents.filter((r) => r.id !== full.id)].slice(0, 12),
+            updatedAt: nowIso,
+          };
+          saveGuestHistory(next);
+          return next;
+        });
+        return;
+      }
+      setHistory((prev) => ({
+        ...prev,
+        recents: [full, ...prev.recents.filter((r) => r.id !== full.id)].slice(0, 12),
+      }));
+      void api<SearchHistoryState & { ok: boolean }>("/api/search/history", {
+        action: "record",
+        entry: full,
+      })
+        .then((res) => setHistory(res))
+        .catch(() => {});
+    },
+    [authenticated, history.optedOut],
+  );
+
+  const mutateHistory = useCallback(
+    async (
+      action: "toggle-favorite" | "remove" | "clear" | "set-opt-out",
+      payload: Record<string, unknown> = {},
+    ) => {
+      const nowIso = new Date().toISOString();
+      if (!authenticated) {
+        setHistory((prev) => {
+          let recents = [...prev.recents];
+          let favorites = [...prev.favorites];
+          let optedOut = prev.optedOut;
+          if (action === "toggle-favorite" && payload.entry) {
+            const e = payload.entry as SearchHistoryEntry;
+            favorites = favorites.some((f) => f.id === e.id)
+              ? favorites.filter((f) => f.id !== e.id)
+              : [e, ...favorites].slice(0, 12);
+          } else if (action === "remove") {
+            const eid = String(payload.id ?? "");
+            recents = recents.filter((r) => r.id !== eid);
+            favorites = favorites.filter((f) => f.id !== eid);
+          } else if (action === "clear") {
+            recents = [];
+          } else if (action === "set-opt-out") {
+            optedOut = Boolean(payload.optedOut);
+            if (optedOut) recents = [];
+          }
+          const next = { recents, favorites, optedOut, updatedAt: nowIso };
+          saveGuestHistory(next);
+          return next;
+        });
+        return;
+      }
+      try {
+        const res = await api<SearchHistoryState & { ok: boolean }>(
+          "/api/search/history",
+          { action, ...payload },
+        );
+        setHistory(res);
+      } catch {
+        /* Keep local view stable */
+      }
+    },
+    [authenticated],
+  );
 
   useEffect(() => {
     if (!authenticated) return;
@@ -101,15 +258,15 @@ export default function UniversalSearch({
           signal: controller.signal,
         },
       )
-        .then((res) => (res.ok ? (res.json() as Promise<RemoteInstrumentResponse>) : null))
+        .then((res) =>
+          res.ok ? (res.json() as Promise<RemoteInstrumentResponse>) : null,
+        )
         .then((payload) => {
           if (!controller.signal.aborted && Array.isArray(payload?.instruments)) {
             setRemoteAssets(payload.instruments);
           }
         })
-        .catch(() => {
-          /* Local canonical registry remains active on network/offline errors. */
-        });
+        .catch(() => {});
     }, 160);
     return () => {
       clearTimeout(timer);
@@ -122,7 +279,8 @@ export default function UniversalSearch({
     for (const item of [...(data?.quotes || []), ...(data?.yields || [])]) {
       set.add(item.id.toUpperCase());
     }
-    const marketQuotes = (data as { marketQuotes?: { id: string }[] } | null)?.marketQuotes;
+    const marketQuotes = (data as { marketQuotes?: { id: string }[] } | null)
+      ?.marketQuotes;
     if (Array.isArray(marketQuotes)) {
       for (const mq of marketQuotes) set.add(mq.id.toUpperCase());
     }
@@ -168,10 +326,13 @@ export default function UniversalSearch({
     });
 
     if (scope === "currencies") {
-      return ranked.filter((x) =>
-        ["FX", "BOND_YIELD"].includes((x.assetClass ?? x.segment ?? "").toUpperCase()) ||
-        x.id.startsWith("ECB:") ||
-        x.id.startsWith("UST:"),
+      return ranked.filter(
+        (x) =>
+          ["FX", "BOND_YIELD"].includes(
+            (x.assetClass ?? x.segment ?? "").toUpperCase(),
+          ) ||
+          x.id.startsWith("ECB:") ||
+          x.id.startsWith("UST:"),
       );
     }
     return ranked;
@@ -202,9 +363,7 @@ export default function UniversalSearch({
         .then(setSocial)
         .catch(() => {
           if (!controller.signal.aborted)
-            setError(
-              "Community search is unavailable. Open Community to review your profile settings.",
-            );
+            setError("Community search is temporarily unavailable.");
         })
         .finally(() => {
           if (!controller.signal.aborted) setBusy(false);
@@ -227,62 +386,72 @@ export default function UniversalSearch({
     }
   };
 
+  const openAssetResult = useCallback(
+    (id: string, label: string) => {
+      recordSearch({ kind: "ASSET", target: id, label });
+      onAsset(id);
+      updateQuery("");
+      setFocused(false);
+    },
+    [onAsset, recordSearch],
+  );
+
+  const openCommunityResult = useCallback(
+    (kind: "BODY" | "GROUP" | "SOUL" | "QUERY", target: string, label: string) => {
+      recordSearch({ kind, target, label });
+      onCommunity(target);
+      updateQuery("");
+      setFocused(false);
+    },
+    [onCommunity, recordSearch],
+  );
+
+  const runHistoryEntry = (entry: SearchHistoryEntry) => {
+    if (entry.kind === "ASSET") {
+      openAssetResult(entry.target, entry.label);
+    } else {
+      openCommunityResult(entry.kind, entry.target, entry.label);
+    }
+  };
+
   const actionableItems = useMemo(() => {
     const list: { key: string; run: () => void }[] = [];
     for (const a of assets) {
       list.push({
         key: `asset:${a.id}`,
-        run: () => {
-          onAsset(a.id);
-          updateQuery("");
-        },
+        run: () => openAssetResult(a.id, a.name),
       });
     }
     for (const b of social?.bodies ?? []) {
       list.push({
         key: `body:${b.handle}`,
-        run: () => {
-          onCommunity("@" + b.handle);
-          updateQuery("");
-        },
+        run: () => openCommunityResult("BODY", "@" + b.handle, "@" + b.handle),
       });
     }
     for (const g of social?.groups ?? []) {
       list.push({
         key: `group:${g.id}`,
-        run: () => {
-          onCommunity(g.name);
-          updateQuery("");
-        },
+        run: () => openCommunityResult("GROUP", g.name, g.name),
       });
     }
     for (const s of social?.souls ?? []) {
       list.push({
         key: `soul:${s.id}`,
-        run: () => {
-          onCommunity(s.title);
-          updateQuery("");
-        },
+        run: () => openCommunityResult("SOUL", s.title, s.title),
       });
     }
     return list;
-  }, [assets, onAsset, onCommunity, social]);
+  }, [assets, openAssetResult, openCommunityResult, social]);
 
   function availabilityLabel(item: SearchableInstrument): string {
     const id = item.id.toUpperCase();
     if (connectedIds.has(id) || id.startsWith("ECB:") || id.startsWith("UST:")) {
-      return "Daily reference connected";
+      return "Daily reference";
     }
     if (item.availabilityState === "DATA_CONNECTED") {
-      return "Owner broker feed connected";
+      return "Owner feed";
     }
-    if (
-      item.mappingStatus === "CONTRACT_SELECTION_REQUIRED" ||
-      item.availabilityState === "CONTRACT_SELECTION_REQUIRED"
-    ) {
-      return "Dated contract selection";
-    }
-    return "Identity verified · market data not connected";
+    return "Catalog entry";
   }
 
   const totalCount =
@@ -291,19 +460,32 @@ export default function UniversalSearch({
     (social?.groups.length ?? 0) +
     (social?.souls.length ?? 0);
 
+  const favIds = useMemo(
+    () => new Set(history.favorites.map((f) => f.id)),
+    [history.favorites],
+  );
+
+  const showHistoryDropdown =
+    focused && !q && (history.favorites.length > 0 || history.recents.length > 0 || history.optedOut);
+
   return (
     <div className="x2-omnisearch" ref={containerRef}>
       <Search size={18} />
       <input
         aria-label="Universal search"
-        placeholder="Search HDFC, SBIN, NIFTY, GOLD, @handle, Rooms, Souls…"
+        placeholder="Search HDFC, NIFTY, GOLD, @handle, Rooms, Souls…"
         type="search"
         autoComplete="off"
         value={query}
-        onChange={(e) => updateQuery(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onChange={(e) => {
+          setFocused(true);
+          updateQuery(e.target.value);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             updateQuery("");
+            setFocused(false);
             return;
           }
           if (!q || !actionableItems.length) return;
@@ -315,7 +497,11 @@ export default function UniversalSearch({
             setActiveIndex((prev) =>
               prev <= 0 ? actionableItems.length - 1 : prev - 1,
             );
-          } else if (e.key === "Enter" && activeIndex >= 0 && actionableItems[activeIndex]) {
+          } else if (
+            e.key === "Enter" &&
+            activeIndex >= 0 &&
+            actionableItems[activeIndex]
+          ) {
             e.preventDefault();
             actionableItems[activeIndex].run();
           }
@@ -326,6 +512,123 @@ export default function UniversalSearch({
           <X size={16} />
         </button>
       )}
+
+      {/* [11] Smart Search History & Pinned Favorites when focused with empty query */}
+      {showHistoryDropdown && (
+        <div
+          className="x2-search-results"
+          role="region"
+          aria-label="Recent searches and favorites"
+        >
+          {history.favorites.length > 0 && (
+            <div>
+              <div className="x52-search-history-head">
+                <span>Pinned Favorites</span>
+              </div>
+              {history.favorites.map((entry) => (
+                <div key={`fav-${entry.id}`} className="x52-search-history-row">
+                  <button
+                    type="button"
+                    className="x52-search-history-btn"
+                    onClick={() => runHistoryEntry(entry)}
+                  >
+                    <Star size={14} className="is-fav" />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <strong>{entry.label}</strong>{" "}
+                      <small className="x1-caption">{entry.target}</small>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="x52-search-icon-mini is-fav"
+                    aria-label={`Unpin ${entry.label}`}
+                    onClick={() =>
+                      void mutateHistory("toggle-favorite", { entry })
+                    }
+                  >
+                    <Star size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {!history.optedOut && history.recents.length > 0 && (
+            <div>
+              <div className="x52-search-history-head">
+                <span>Recent Searches</span>
+                <button
+                  type="button"
+                  className="x1-text-button"
+                  onClick={() => void mutateHistory("clear")}
+                >
+                  Clear recents
+                </button>
+              </div>
+              {history.recents.slice(0, 6).map((entry) => {
+                const isFav = favIds.has(entry.id);
+                return (
+                  <div key={`rec-${entry.id}`} className="x52-search-history-row">
+                    <button
+                      type="button"
+                      className="x52-search-history-btn"
+                      onClick={() => runHistoryEntry(entry)}
+                    >
+                      <Clock size={14} />
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <strong>{entry.label}</strong>{" "}
+                        <small className="x1-caption">{entry.target}</small>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className={"x52-search-icon-mini" + (isFav ? " is-fav" : "")}
+                      aria-label={isFav ? `Unpin ${entry.label}` : `Pin ${entry.label} as favorite`}
+                      onClick={() =>
+                        void mutateHistory("toggle-favorite", { entry })
+                      }
+                    >
+                      <Star size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="x52-search-icon-mini"
+                      aria-label={`Remove ${entry.label} from recents`}
+                      onClick={() =>
+                        void mutateHistory("remove", { id: entry.id })
+                      }
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="x52-search-history-head" style={{ borderTop: "1px solid var(--x51-hairline)", paddingTop: 8 }}>
+            <span>
+              {history.optedOut
+                ? "Search history paused"
+                : authenticated
+                  ? "Private to your account"
+                  : "Stored locally on this device"}
+            </span>
+            <button
+              type="button"
+              className="x1-text-button"
+              onClick={() =>
+                void mutateHistory("set-opt-out", {
+                  optedOut: !history.optedOut,
+                })
+              }
+            >
+              {history.optedOut ? "Resume history" : "Pause history"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {q && (
         <div
           className="x2-search-results"
@@ -334,7 +637,7 @@ export default function UniversalSearch({
         >
           <div className="x2-scope">
             <span>
-              Search scope ({totalCount} {totalCount === 1 ? "match" : "matches"})
+              {totalCount} {totalCount === 1 ? "match" : "matches"}
             </span>
             <select
               aria-label="Search scope"
@@ -362,28 +665,45 @@ export default function UniversalSearch({
               x.id.split(":")[0] ??
               "ASSET"
             ).toUpperCase();
-            const classBadge = (
-              x.assetClass ??
-              x.segment ??
-              "INSTRUMENT"
-            ).toUpperCase();
+            const entryId = `ASSET:${x.id.toLowerCase()}`;
+            const isFav = favIds.has(entryId);
             return (
-              <button
+              <div
                 key={x.id}
-                data-active={activeIndex === idx ? "true" : undefined}
-                onClick={() => {
-                  onAsset(x.id);
-                  updateQuery("");
-                }}
+                style={{ display: "flex", alignItems: "center", gap: 4 }}
               >
-                <span>
-                  <strong>{x.name}</strong>
-                  <small>
-                    {x.id} · {marketBadge} {classBadge} · {availabilityLabel(x)}
-                  </small>
-                </span>
-                <ArrowUpRight size={14} />
-              </button>
+                <button
+                  style={{ flex: 1 }}
+                  data-active={activeIndex === idx ? "true" : undefined}
+                  onClick={() => openAssetResult(x.id, x.name)}
+                >
+                  <span>
+                    <strong>{x.name}</strong>
+                    <small>
+                      {x.id} · {marketBadge} · {availabilityLabel(x)}
+                    </small>
+                  </span>
+                  <ArrowUpRight size={14} />
+                </button>
+                <button
+                  type="button"
+                  className={"x52-search-icon-mini" + (isFav ? " is-fav" : "")}
+                  aria-label={isFav ? `Unpin ${x.name}` : `Pin ${x.name}`}
+                  onClick={() =>
+                    void mutateHistory("toggle-favorite", {
+                      entry: {
+                        id: entryId,
+                        kind: "ASSET",
+                        target: x.id,
+                        label: x.name,
+                        savedAt: new Date().toISOString(),
+                      },
+                    })
+                  }
+                >
+                  <Star size={14} />
+                </button>
+              </div>
             );
           })}
 
@@ -393,14 +713,13 @@ export default function UniversalSearch({
               <button
                 key={x.handle}
                 data-active={activeIndex === idx ? "true" : undefined}
-                onClick={() => {
-                  onCommunity("@" + x.handle);
-                  updateQuery("");
-                }}
+                onClick={() =>
+                  openCommunityResult("BODY", "@" + x.handle, "@" + x.handle)
+                }
               >
                 <span>
                   <strong>@{x.handle}</strong>
-                  <small>{x.displayName} · Discoverable researcher</small>
+                  <small>{x.displayName} · Researcher</small>
                 </span>
                 <ArrowUpRight size={14} />
               </button>
@@ -413,14 +732,11 @@ export default function UniversalSearch({
               <button
                 key={x.id}
                 data-active={activeIndex === idx ? "true" : undefined}
-                onClick={() => {
-                  onCommunity(x.name);
-                  updateQuery("");
-                }}
+                onClick={() => openCommunityResult("GROUP", x.name, x.name)}
               >
                 <span>
                   <strong>{x.name}</strong>
-                  <small>Discoverable Research Room</small>
+                  <small>Research Room</small>
                 </span>
                 <ArrowUpRight size={14} />
               </button>
@@ -437,14 +753,11 @@ export default function UniversalSearch({
               <button
                 key={x.id}
                 data-active={activeIndex === idx ? "true" : undefined}
-                onClick={() => {
-                  onCommunity(x.title);
-                  updateQuery("");
-                }}
+                onClick={() => openCommunityResult("SOUL", x.title, x.title)}
               >
                 <span>
                   <strong>{x.title}</strong>
-                  <small>Shared Soul · Research Room</small>
+                  <small>Shared Soul</small>
                 </span>
                 <ArrowUpRight size={14} />
               </button>
@@ -453,41 +766,29 @@ export default function UniversalSearch({
 
           {authenticated &&
             social?.callerHasBody === false &&
-            (q.startsWith("@") || ["bodies", "groups", "souls"].includes(scope)) && (
+            (q.startsWith("@") ||
+              ["bodies", "groups", "souls"].includes(scope)) && (
               <button
                 type="button"
-                onClick={() => {
-                  onCommunity(q);
-                  updateQuery("");
-                }}
+                onClick={() => openCommunityResult("QUERY", q, q)}
               >
                 <span>
-                  <strong>Set your @handle in Profile to search researchers</strong>
-                  <small>
-                    Community researcher discovery requires your own @handle profile.
-                  </small>
+                  <strong>Set your Body ID in Profile to search researchers</strong>
+                  <small>Requires an @handle in Profile settings.</small>
                 </span>
                 <UserPlus size={14} />
               </button>
             )}
 
-          {busy && <p role="status">Searching permitted research…</p>}
+          {busy && <p role="status">Searching…</p>}
           {error && <p role="status">{error}</p>}
           {!busy &&
             !assets.length &&
             !social?.bodies.length &&
             !social?.groups.length &&
             !social?.souls.length && (
-              <p>
-                {q.startsWith("@") || scope === "bodies"
-                  ? `No discoverable profile matched "${q}". Profiles stay private unless the researcher enables discovery in Settings.`
-                  : `No matching instrument or permitted research found for "${q}".`}
-              </p>
+              <p>No matching instrument or permitted research found for “{q}”.</p>
             )}
-          <small>
-            Instrument identity discovery is separate from live price access.
-            Opted-out profiles and private rooms stay hidden.
-          </small>
         </div>
       )}
     </div>

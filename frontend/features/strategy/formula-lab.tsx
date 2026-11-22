@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, FlaskConical } from "lucide-react";
 import {
   bsm,
@@ -10,9 +10,42 @@ import {
   type ManualHistoricalInvestmentResult,
   type OptionInput,
 } from "../../../backend/engines/math";
-import { Panel, Empty, number, type Notice } from "../../components/workspace/shared";
+import type {
+  CorrelationLabResult,
+  QuantitativeEnvelope,
+  ReturnMethod,
+} from "../../../backend/engines/analytics";
+import {
+  Panel,
+  Empty,
+  api,
+  number,
+  type Notice,
+} from "../../components/workspace/shared";
+
+type CompareApiPayload = {
+  asOfUTC: string;
+  availableSeries: {
+    id: string;
+    label: string;
+    currency: string;
+    source: string;
+    observations: number;
+  }[];
+  correlation: QuantitativeEnvelope<CorrelationLabResult>;
+};
+
+const FORMULA_LAB_TOOLS = [
+  "Correlation Lab",
+  "Options & Greeks",
+  "Implied volatility",
+  "CAGR",
+  "XIRR",
+  "Historical investment",
+] as const;
+
 export default function FormulaLab({ notify }: { notify: Notice }) {
-  const [calculator, setCalculator] = useState("Options & Greeks"),
+  const [calculator, setCalculator] = useState<string>("Correlation Lab"),
     [option, setOption] = useState<OptionInput>({
       spot: 100,
       strike: 100,
@@ -24,7 +57,45 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
     [result, setResult] = useState<ReturnType<typeof bsm> | null>(null),
     [manualHist, setManualHist] =
       useState<ManualHistoricalInvestmentResult | null>(null),
-    [growth, setGrowth] = useState<string | null>(null);
+    [growth, setGrowth] = useState<string | null>(null),
+    // [27] Correlation Lab state
+    [corrA, setCorrA] = useState("ECB:USDINR"),
+    [corrB, setCorrB] = useState("ECB:EURUSD"),
+    [corrMethod, setCorrMethod] = useState<ReturnMethod>("simple"),
+    [corrWindow, setCorrWindow] = useState<20 | 60 | 120>(20),
+    [corrData, setCorrData] = useState<CompareApiPayload | null>(null),
+    [corrBusy, setCorrBusy] = useState(false);
+
+  const runCorrelation = useCallback(
+    async (a: string, b: string, method: ReturnMethod, win: 20 | 60 | 120) => {
+      setCorrBusy(true);
+      try {
+        const res = await api<CompareApiPayload>(
+          `/api/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&method=${method}&window=${win}`,
+        );
+        setCorrData(res);
+      } catch (err) {
+        notify(
+          err instanceof Error ? err.message : "Could not run Correlation Lab.",
+          true,
+        );
+      } finally {
+        setCorrBusy(false);
+      }
+    },
+    [notify],
+  );
+
+  useEffect(() => {
+    if (calculator !== "Correlation Lab") return;
+    let alive = true;
+    queueMicrotask(() => {
+      if (alive) void runCorrelation(corrA, corrB, corrMethod, corrWindow);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [calculator, corrA, corrB, corrMethod, corrWindow, runCorrelation]);
   const calculate = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
@@ -92,18 +163,15 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
   };
   return (
     <div className="x1-work-grid">
-      <Panel title="Choose the mathematics" kicker="User-entered assumptions">
-        <div className="x1-chip-row">
-          {[
-            "Options & Greeks",
-            "Implied volatility",
-            "CAGR",
-            "XIRR",
-            "Historical investment",
-          ].map((c) => (
+      <Panel title="Formula Lab" kicker="Quantitative models & cross-asset correlation">
+        <div className="x52-formula-grid" role="tablist" aria-label="Formula Lab tools">
+          {FORMULA_LAB_TOOLS.map((c) => (
             <button
               key={c}
-              aria-pressed={calculator === c}
+              type="button"
+              role="tab"
+              className="x52-formula-tab"
+              aria-selected={calculator === c}
               onClick={() => {
                 setCalculator(c);
                 setGrowth(null);
@@ -115,6 +183,80 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
             </button>
           ))}
         </div>
+        {calculator === "Correlation Lab" ? (
+          <div className="x1-form">
+            <div className="x1-form-grid">
+              <label>
+                Asset A
+                <select value={corrA} onChange={(e) => setCorrA(e.target.value)}>
+                  {(corrData?.availableSeries ?? [
+                    { id: "ECB:USDINR", label: "USD / INR" },
+                    { id: "ECB:EURUSD", label: "EUR / USD" },
+                    { id: "ECB:GBPUSD", label: "GBP / USD" },
+                    { id: "ECB:USDJPY", label: "USD / JPY" },
+                    { id: "ECB:EURINR", label: "EUR / INR" },
+                  ]).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label} ({s.id})
+                    </option>
+                  ))}
+                  <option value="NSE:NIFTY">NIFTY 50 (Pending NSE feed)</option>
+                  <option value="GLOBAL:XAUUSD">Gold XAU/USD (Pending feed)</option>
+                </select>
+              </label>
+              <label>
+                Asset B
+                <select value={corrB} onChange={(e) => setCorrB(e.target.value)}>
+                  {(corrData?.availableSeries ?? [
+                    { id: "ECB:EURUSD", label: "EUR / USD" },
+                    { id: "ECB:USDINR", label: "USD / INR" },
+                    { id: "ECB:GBPUSD", label: "GBP / USD" },
+                    { id: "ECB:USDJPY", label: "USD / JPY" },
+                    { id: "ECB:EURINR", label: "EUR / INR" },
+                  ]).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label} ({s.id})
+                    </option>
+                  ))}
+                  <option value="NSE:NIFTY">NIFTY 50 (Pending NSE feed)</option>
+                  <option value="GLOBAL:XAUUSD">Gold XAU/USD (Pending feed)</option>
+                </select>
+              </label>
+              <label>
+                Return definition
+                <select
+                  value={corrMethod}
+                  onChange={(e) => setCorrMethod(e.target.value as ReturnMethod)}
+                >
+                  <option value="simple">Simple returns (Pₜ/Pₜ₋₁ − 1)</option>
+                  <option value="log">Log returns ln(Pₜ/Pₜ₋₁)</option>
+                </select>
+              </label>
+              <label>
+                Rolling window
+                <select
+                  value={corrWindow}
+                  onChange={(e) =>
+                    setCorrWindow(Number(e.target.value) as 20 | 60 | 120)
+                  }
+                >
+                  <option value={20}>20 trading days</option>
+                  <option value={60}>60 trading days</option>
+                  <option value={120}>120 trading days</option>
+                </select>
+              </label>
+            </div>
+            <button
+              type="button"
+              className="x1-primary x1-motion-button"
+              disabled={corrBusy}
+              onClick={() => void runCorrelation(corrA, corrB, corrMethod, corrWindow)}
+            >
+              {corrBusy ? "Computing correlation…" : "Compute Correlation"}
+              <ArrowRight size={16} />
+            </button>
+          </div>
+        ) : (
         <form key={calculator} className="x1-form" onSubmit={calculate}>
           {calculator === "Options & Greeks" ||
           calculator === "Implied volatility" ? (
@@ -276,9 +418,70 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
             <ArrowRight size={16} />
           </button>
         </form>
+        )}
       </Panel>
       <Panel title="Calculation result" kicker="Educational mathematics">
-        {result ? (
+        {calculator === "Correlation Lab" ? (
+          corrBusy ? (
+            <p className="x1-caption">Aligning paired returns and computing Pearson ρ…</p>
+          ) : corrData?.correlation.status === "OK" && corrData.correlation.value ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div className="x1-result-summary">
+                <div>
+                  <strong>{corrData.correlation.value.pearsonRho.toFixed(4)}</strong>
+                  <span>Pearson ρ (n = {corrData.correlation.value.pairedReturnCount} pairs)</span>
+                </div>
+                <div>
+                  <strong>{(corrData.correlation.value.rSquared * 100).toFixed(1)}%</strong>
+                  <span>R² ({corrData.correlation.value.returnMethod} returns)</span>
+                </div>
+              </div>
+              <dl className="x1-details">
+                <div>
+                  <dt>Window</dt>
+                  <dd>
+                    {corrData.correlation.value.startDate} → {corrData.correlation.value.endDate}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{corrData.correlation.value.assetA.label} daily vol</dt>
+                  <dd>{corrData.correlation.value.sampleVolPctA.toFixed(2)}%</dd>
+                </div>
+                <div>
+                  <dt>{corrData.correlation.value.assetB.label} daily vol</dt>
+                  <dd>{corrData.correlation.value.sampleVolPctB.toFixed(2)}%</dd>
+                </div>
+              </dl>
+              {corrData.correlation.value.rollingSeries.length >= 2 && (
+                <RollingCorrelationChart
+                  points={corrData.correlation.value.rollingSeries}
+                  windowDays={corrData.correlation.value.rollingWindow}
+                />
+              )}
+              {corrData.correlation.warnings.map((w, i) => (
+                <p key={i} className="x1-caption" style={{ margin: 0 }}>
+                  Warning: {w}
+                </p>
+              ))}
+              <p className="x1-caption" style={{ margin: 0 }}>
+                Source: {corrData.correlation.source}. Correlation measures historical
+                linear co-movement only, never causation or future stability.
+              </p>
+            </div>
+          ) : (
+            <div className="x1-callout">
+              <strong>
+                {corrData?.correlation.status === "UNDEFINED_CONSTANT_SERIES"
+                  ? "Correlation undefined (zero variance)"
+                  : "Insufficient aligned coverage"}
+              </strong>
+              <p className="x1-caption" style={{ margin: "4px 0 0" }}>
+                {corrData?.correlation.warnings[0] ??
+                  "Select two connected ECB reference series with at least 30 shared return observations."}
+              </p>
+            </div>
+          )
+        ) : result ? (
           <>
             <div className="x1-result-summary">
               <div>
@@ -485,6 +688,61 @@ function OptionPayoff({
           </dd>
         </div>
       </dl>
+    </div>
+  );
+}
+
+function RollingCorrelationChart({
+  points,
+  windowDays,
+}: {
+  points: { date: string; rho: number | null }[];
+  windowDays: number;
+}) {
+  const valid = points.filter((p): p is { date: string; rho: number } => p.rho !== null);
+  if (valid.length < 2) return null;
+  const w = 400;
+  const h = 155;
+  const x = (i: number) => 34 + (i / (valid.length - 1)) * (w - 46);
+  const y = (rho: number) => 16 + ((1 - rho) / 2) * (h - 38);
+  const d = valid
+    .map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.rho).toFixed(1)}`)
+    .join(" ");
+
+  return (
+    <div>
+      <strong style={{ fontSize: "0.86rem" }}>
+        Rolling {windowDays}-day Pearson correlation (ρ ∈ [−1, +1])
+      </strong>
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        style={{ width: "100%", height: "auto", display: "block", marginTop: 6 }}
+        role="img"
+        aria-label={`Rolling ${windowDays}-day Pearson correlation chart`}
+      >
+        {([1, 0, -1] as const).map((lvl) => (
+          <g key={lvl}>
+            <line
+              x1="34"
+              x2={w - 12}
+              y1={y(lvl)}
+              y2={y(lvl)}
+              stroke={lvl === 0 ? "rgba(255,255,255,0.28)" : "rgba(255,255,255,0.1)"}
+              strokeDasharray={lvl === 0 ? "4 3" : undefined}
+            />
+            <text x="4" y={y(lvl) + 4} fill="#9AA3AE" fontSize="10">
+              {lvl > 0 ? "+1" : String(lvl)}
+            </text>
+          </g>
+        ))}
+        <path d={d} fill="none" stroke="#76C0FF" strokeWidth="2" />
+        <text x="34" y={h - 4} fill="#9AA3AE" fontSize="10">
+          {valid[0].date}
+        </text>
+        <text x={w - 12} y={h - 4} textAnchor="end" fill="#9AA3AE" fontSize="10">
+          {valid[valid.length - 1].date}
+        </text>
+      </svg>
     </div>
   );
 }

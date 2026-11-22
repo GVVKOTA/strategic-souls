@@ -199,9 +199,7 @@ export default function EclipseIntro({
         >
           <img className="x2-eclipse-approved-logo" src="/gvv-approved.jpg" width="72" height="72" alt="" />
         </div>
-        <h1 className="x1-eclipse-title">
-          STRATEGIC SOULS <span>X2</span>
-        </h1>
+        <h1 className="x1-eclipse-title">STRATEGIC SOULS</h1>
       </div>
     </section>
   );

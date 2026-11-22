@@ -454,7 +454,10 @@ export default function ResearchWorkspace({
   );
   const [savedSignature, setSavedSignature] = useState("");
 
-  // One-Click Post Soul modal state
+  // [06] Compact searchable Classic formula dialog
+  const [formulaPickerOpen, setFormulaPickerOpen] = useState(false);
+
+  // One-Click Post Soul + [30] Server-Validated Post Preview state
   const [postTarget, setPostTarget] = useState<ScanRun | null>(null);
   const [postAudience, setPostAudience] = useState<
     "PUBLIC" | "FOLLOWERS" | "GROUP"
@@ -465,6 +468,27 @@ export default function ResearchWorkspace({
     "Educational research hypothesis on historical observations only; not financial advice.",
   );
   const [postBusy, setPostBusy] = useState(false);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [postPreview, setPostPreview] = useState<{
+    allowed: boolean;
+    blockReason: string | null;
+    preview: {
+      authorHandle: string;
+      authorDisplayName: string;
+      title: string;
+      summary: string;
+      audience: string;
+      mode: string;
+      formula: string;
+      timeframe: string;
+      universeLabel: string;
+      matchedSymbols: string[];
+      evidenceStatus: string;
+      sourceAttribution: string;
+      riskNote: string;
+      redactionsApplied: string[];
+    };
+  } | null>(null);
   const [postedResultId, setPostedResultId] = useState<string | null>(null);
 
   const lock = useRef(false);
@@ -524,6 +548,7 @@ export default function ResearchWorkspace({
         p.label.toLowerCase().includes(q) ||
         p.category.toLowerCase().includes(q) ||
         p.note.toLowerCase().includes(q) ||
+        p.formula.toLowerCase().includes(q) ||
         String(p.number) === q
       );
     });
@@ -911,11 +936,40 @@ export default function ResearchWorkspace({
     setPostTarget(run);
     setPostAudience("PUBLIC");
     setPostGroupId("");
+    setPostPreview(null);
     setPostedResultId(null);
     setPostSummary(
       rich.payload.description ||
         `Evaluated ${run.payload.rule.formula} across ${run.payload.results.total} instruments (${run.payload.results.matches} matched).`,
     );
+  }
+
+  async function runPostPreview() {
+    if (!postTarget || previewBusy) return;
+    setPreviewBusy(true);
+    try {
+      const res = await api<
+        NonNullable<typeof postPreview> & { ok: boolean }
+      >("/api/community/network", {
+        action: "preview-soul",
+        scanId: postTarget.id,
+        audience: postAudience,
+        groupId: postAudience === "GROUP" ? postGroupId.trim() : undefined,
+        summary: postSummary.trim(),
+      });
+      setPostPreview({
+        allowed: res.allowed,
+        blockReason: res.blockReason,
+        preview: res.preview,
+      });
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : "Could not generate server post preview.",
+        true,
+      );
+    } finally {
+      setPreviewBusy(false);
+    }
   }
 
   async function submitPostSoul(e: React.FormEvent) {
@@ -960,13 +1014,15 @@ export default function ResearchWorkspace({
 
   return (
     <>
-      {/* EXACTLY TWO SUB-DASHBOARDS: Soul Scan | Formula Lab */}
-      <div className="x1-subnav" aria-label="Strategy sub-dashboards">
+      {/* EXACTLY TWO SUB-DASHBOARDS: Full-Width 50/50 SS Blue Tabs */}
+      <div className="x52-full-tabs-2" role="tablist" aria-label="Strategy sub-dashboards">
         {(["Soul Scan", "Formula Lab"] as const).map((t) => (
           <button
             key={t}
             type="button"
-            aria-current={panel === t ? "page" : undefined}
+            role="tab"
+            aria-selected={panel === t}
+            className="x52-full-tab"
             onClick={() => setPanel(t)}
           >
             {t}
@@ -976,15 +1032,17 @@ export default function ResearchWorkspace({
 
       {panel === "Soul Scan" && (
         <div className="x51-global-stack">
-          {/* Classic / Advanced Switcher (Inside Soul Scan ONLY) + Server Quota Bar */}
-          <div className="x51-quota-bar">
+          {/* Full-Width 50/50 SS Blue Classic | Advanced Switcher + 1-line integrated quota */}
+          <div>
             <div
-              className="x1-segment"
+              className="x52-full-tabs-2"
               role="group"
               aria-label="Soul Scan mode"
+              style={{ marginBottom: 4 }}
             >
               <button
                 type="button"
+                className="x52-full-tab"
                 aria-pressed={scanMode === "CLASSIC"}
                 onClick={() => {
                   setScanMode("CLASSIC");
@@ -992,43 +1050,34 @@ export default function ResearchWorkspace({
                   setPreflight(null);
                 }}
               >
-                Classic (50 Presets)
+                Classic
               </button>
               <button
                 type="button"
+                className="x52-full-tab"
                 aria-pressed={scanMode === "ADVANCED"}
                 onClick={() => {
                   setScanMode("ADVANCED");
                   setPreflight(null);
                 }}
               >
-                Advanced (Soul Genome)
+                Advanced
               </button>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {scanMode === "CLASSIC" ? (
-                <span className="x51-pill x51-pill-green">
-                  {quota
-                    ? `${quota.classic.remaining}/${quota.classic.limit} Classic scans left today (IST) · Resets ${localTimeShort(quota.classic.resetsAtUTC)}`
-                    : "Classic allowance: 8 completed scans / IST day"}
-                </span>
-              ) : (
-                <span
-                  className={
-                    quota && quota.advanced.remaining === 0
-                      ? "x51-pill x51-pill-amber"
-                      : "x51-pill x51-pill-green"
-                  }
-                >
-                  {quota
+            <div className="x52-quota-inline">
+              <span>
+                {scanMode === "CLASSIC"
+                  ? quota
+                    ? `${quota.classic.remaining}/${quota.classic.limit} Classic scans left today (IST) · resets ${localTimeShort(quota.classic.resetsAtUTC)}`
+                    : "8 Classic scans / IST day · 50 verified rules"
+                  : quota
                     ? quota.advanced.remaining > 0
                       ? "1/1 Advanced scan ready (rolling 60 min)"
-                      : `Advanced cooldown · Next eligible ${localTimeShort(quota.advanced.nextEligibleAtUTC)}`
-                    : "Advanced allowance: 1 completed scan / rolling 60 min"}
-                </span>
-              )}
-              <span className="x51-pill">Failed runs never deduct quota</span>
+                      : `Advanced cooldown · next eligible ${localTimeShort(quota.advanced.nextEligibleAtUTC)}`
+                    : "1 Advanced scan / rolling 60 min"}
+              </span>
+              <span>Failed scans never deduct quota</span>
             </div>
           </div>
 
@@ -1037,24 +1086,19 @@ export default function ResearchWorkspace({
               title={
                 scanMode === "CLASSIC"
                   ? "Classic Soul Scan"
-                  : "Advanced Soul Scan · Soul Genome"
-              }
-              kicker={
-                scanMode === "CLASSIC"
-                  ? "Name → Select 1 of 50 verified rules → Timeframe → Run"
-                  : "Discover · Build · Draw on the single canonical AST"
+                  : "Advanced Soul Scan"
               }
             >
-              {/* Compact Universe Selector */}
+              {/* Compact Market Selector */}
               <div className="x1-label">
-                <span>Universe (honest source coverage)</span>
-                <div className="x51-chip-row" role="group" aria-label="Scan universe">
+                <span>Market</span>
+                <div className="x51-chip-row" role="group" aria-label="Scan market">
                   {(
                     [
-                      ["ECB_DAILY", "Official ECB Daily FX"],
-                      ["CUSTOM_CSV", "Private CSV / 5-Stock India Test"],
+                      ["ECB_DAILY", "ECB Daily FX"],
+                      ["CUSTOM_CSV", "Private CSV"],
                       ["MY_WATCHLIST", "My Watchlist"],
-                      ["INDIAN_EQUITIES", "Connected NSE / BSE"],
+                      ["INDIAN_EQUITIES", "NSE / BSE"],
                       ["MCX_FUTURES", "MCX Futures"],
                     ] as const
                   ).map(([id, label]) => (
@@ -1076,7 +1120,7 @@ export default function ResearchWorkspace({
               {universePreset === "CUSTOM_CSV" && (
                 <div className="x1-label">
                   <span>
-                    Private CSV OHLCV (<code>symbol,date,open,high,low,close,volume</code> · TEST / USER-IMPORTED)
+                    Private CSV OHLCV (<code>symbol,date,open,high,low,close,volume</code> · user-supplied only)
                   </span>
                   <textarea
                     className="x1-code-editor"
@@ -1095,20 +1139,21 @@ export default function ResearchWorkspace({
                       style={{ minHeight: 34, fontSize: "0.8rem" }}
                       onClick={() => {
                         setCustomCsv(buildSampleTestCsv());
+                        setDescription("Simulated 5-stock Indian equity test CSV fixture (non-publishable TEST DATA).");
                         setPreflight(null);
                       }}
                     >
-                      Load 5-stock Indian equity test fixture (42 bars · TEST DATA)
+                      Load 5-stock test CSV (non-publishable fixture)
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* CLASSIC MODE: Exact Section 10 sequence */}
+              {/* CLASSIC MODE [06]: Clean Compact Searchable Formula Selector */}
               {scanMode === "CLASSIC" ? (
                 <>
                   <label className="x1-label">
-                    1. SOUL NAME
+                    Soul name
                     <input
                       value={name}
                       maxLength={100}
@@ -1118,83 +1163,27 @@ export default function ResearchWorkspace({
                   </label>
 
                   <div className="x1-label">
-                    <span>
-                      2. FORMULA (Select 1 of 50 deterministic presets — typing
-                      filters presets only)
-                    </span>
-                    <div className="x51-preset-picker">
-                      <div className="x51-chip-row" role="group" aria-label="Preset category">
-                        <button
-                          type="button"
-                          className={
-                            "x51-chip" +
-                            (classicCategory === "ALL" ? " is-active" : "")
-                          }
-                          onClick={() => setClassicCategory("ALL")}
-                        >
-                          All (50)
-                        </button>
-                        {CLASSIC_PRESET_CATEGORIES.map((cat) => (
-                          <button
-                            key={cat}
-                            type="button"
-                            className={
-                              "x51-chip" +
-                              (classicCategory === cat ? " is-active" : "")
-                            }
-                            onClick={() => setClassicCategory(cat)}
-                          >
-                            {cat}
-                          </button>
-                        ))}
+                    <span>Formula (50 verified rules)</span>
+                    <button
+                      type="button"
+                      className="x52-formula-trigger"
+                      aria-haspopup="dialog"
+                      onClick={() => setFormulaPickerOpen(true)}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <strong style={{ display: "block", fontSize: "0.92rem" }}>
+                          #{String(activeClassicPreset.number).padStart(2, "0")} · {activeClassicPreset.label}
+                        </strong>
+                        <span className="x1-caption">
+                          {activeClassicPreset.category} · <code>{activeClassicPreset.formula}</code>
+                        </span>
                       </div>
-                      <input
-                        type="search"
-                        value={classicFilter}
-                        onChange={(e) => setClassicFilter(e.target.value)}
-                        aria-label="Filter 50 Classic presets"
-                        placeholder="Filter 50 rules (e.g. RSI, Golden Cross, MACD, Bollinger, ADX, Volume)…"
-                      />
-                      <div
-                        className="x51-preset-list"
-                        role="listbox"
-                        aria-label="50 Classic Soul Scan presets"
-                      >
-                        {filteredClassicPresets.map((preset) => (
-                          <button
-                            key={preset.id}
-                            type="button"
-                            role="option"
-                            aria-selected={selectedClassicId === preset.id}
-                            className={
-                              "x51-preset-option" +
-                              (selectedClassicId === preset.id ? " is-active" : "")
-                            }
-                            onClick={() => selectClassicPreset(preset)}
-                          >
-                            <div style={{ minWidth: 0 }}>
-                              <strong style={{ fontSize: "0.86rem" }}>
-                                #{String(preset.number).padStart(2, "0")} ·{" "}
-                                {preset.label}
-                              </strong>
-                              <div className="x1-caption">
-                                {preset.category} · min {preset.minBars} bars
-                                {preset.requiresVolume ? " · needs volume" : ""}
-                                {preset.requiresOhlc ? " · needs OHLC" : ""}
-                              </div>
-                            </div>
-                            <span className="x51-pill">{preset.category}</span>
-                          </button>
-                        ))}
-                      </div>
-                      <div className="x1-rule-preview">
-                        <code>{activeClassicPreset.formula}</code>
-                      </div>
-                    </div>
+                      <span className="x51-pill x51-pill-blue">Select formula</span>
+                    </button>
                   </div>
 
                   <div className="x1-label">
-                    <span>3. TIMEFRAME</span>
+                    <span>Timeframe</span>
                     <div className="x51-chip-row" role="group" aria-label="Timeframe">
                       {TIMEFRAMES.map((tf) => (
                         <button
@@ -1215,26 +1204,23 @@ export default function ResearchWorkspace({
                     </div>
                     {(interval === "30m" || interval === "1h") && (
                       <span className="x1-caption">
-                        Note: Official ECB daily FX publishes daily closes only;
-                        intraday 30m/1h scans fail closed honestly unless
-                        intraday bars are supplied in Private CSV or an entitled
-                        intraday feed.
+                        Intraday 30m/1h requires intraday bars in Private CSV or a connected intraday feed.
                       </span>
                     )}
                   </div>
                 </>
               ) : (
-                /* ADVANCED MODE: DISCOVER | BUILD | DRAW */
+                /* ADVANCED MODE: Full-Width 33.3% / 33.3% / 33.3% SS Blue Tabs */
                 <>
                   <div
-                    className="x1-segment"
+                    className="x52-full-tabs-3"
                     role="tablist"
                     aria-label="Advanced Soul Scan modes"
-                    style={{ marginBottom: 12 }}
                   >
                     <button
                       type="button"
                       role="tab"
+                      className="x52-full-tab"
                       aria-selected={advancedTab === "DISCOVER"}
                       onClick={() => setAdvancedTab("DISCOVER")}
                     >
@@ -1243,6 +1229,7 @@ export default function ResearchWorkspace({
                     <button
                       type="button"
                       role="tab"
+                      className="x52-full-tab"
                       aria-selected={advancedTab === "BUILD"}
                       onClick={() => setAdvancedTab("BUILD")}
                     >
@@ -1251,6 +1238,7 @@ export default function ResearchWorkspace({
                     <button
                       type="button"
                       role="tab"
+                      className="x52-full-tab"
                       aria-selected={advancedTab === "DRAW"}
                       onClick={() => setAdvancedTab("DRAW")}
                     >
@@ -1259,7 +1247,7 @@ export default function ResearchWorkspace({
                   </div>
 
                   <div className="x1-label">
-                    <span>TIMEFRAME</span>
+                    <span>Timeframe</span>
                     <div className="x51-chip-row" role="group" aria-label="Advanced timeframe">
                       {TIMEFRAMES.map((tf) => (
                         <button
@@ -1919,18 +1907,91 @@ export default function ResearchWorkspace({
       {/* STANDALONE FORMULA LAB (Never nested inside Classic / Advanced!) */}
       {panel === "Formula Lab" && <FormulaLab notify={notify} />}
 
-      {/* One-Click Post Soul Modal */}
+      {/* [06] Compact Searchable 50-Formula Picker Modal */}
+      {formulaPickerOpen && (
+        <Modal
+          title="Select Classic Formula (50 Verified Rules)"
+          onClose={() => setFormulaPickerOpen(false)}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <input
+              type="search"
+              value={classicFilter}
+              onChange={(e) => setClassicFilter(e.target.value)}
+              aria-label="Search 50 Classic formulas"
+              placeholder="Search RSI, Golden Cross, MACD, Bollinger, ADX, Volume…"
+              autoFocus
+            />
+            <div className="x51-chip-row" role="group" aria-label="Formula category">
+              <button
+                type="button"
+                className={"x51-chip" + (classicCategory === "ALL" ? " is-active" : "")}
+                onClick={() => setClassicCategory("ALL")}
+              >
+                All (50)
+              </button>
+              {CLASSIC_PRESET_CATEGORIES.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  className={"x51-chip" + (classicCategory === cat ? " is-active" : "")}
+                  onClick={() => setClassicCategory(cat)}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+            <div
+              className="x51-preset-list"
+              style={{ maxHeight: "50vh" }}
+              role="listbox"
+              aria-label="50 Classic Soul Scan formulas"
+            >
+              {filteredClassicPresets.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selectedClassicId === preset.id}
+                  className={
+                    "x51-preset-option" +
+                    (selectedClassicId === preset.id ? " is-active" : "")
+                  }
+                  onClick={() => {
+                    selectClassicPreset(preset);
+                    setFormulaPickerOpen(false);
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <strong style={{ fontSize: "0.86rem" }}>
+                      #{String(preset.number).padStart(2, "0")} · {preset.label}
+                    </strong>
+                    <div className="x1-caption">
+                      <code>{preset.formula}</code> · min {preset.minBars} bars
+                    </div>
+                  </div>
+                  <span className="x51-pill">{preset.category}</span>
+                </button>
+              ))}
+              {filteredClassicPresets.length === 0 && (
+                <p className="x1-caption">No formula matched “{classicFilter}”.</p>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* One-Click Post Soul Modal with [30] Exact Server-Validated Post Preview */}
       {postTarget && (
         <Modal
-          title="Post Soul to Community Research Network"
+          title="Post Soul to Community"
           onClose={() => setPostTarget(null)}
         >
           {postedResultId ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div className="x1-callout">
                 <strong>Published cleanly!</strong> Your Soul{" "}
-                <strong>{postTarget.name}</strong> is live on the Research
-                Network.
+                <strong>{postTarget.name}</strong> is live on Community Web.
               </div>
               <div className="x1-actions">
                 {onOpenCommunityWeb && (
@@ -1957,14 +2018,6 @@ export default function ResearchWorkspace({
             </div>
           ) : (
             <form className="x1-form" onSubmit={submitPostSoul}>
-              <div className="x1-callout">
-                <strong>Sharing &amp; Source-Rights Guard:</strong> Publishes
-                your Soul name, formula, timeframe, matched symbols, and
-                evidence note. Never exposes private portfolios, emails, raw
-                private CSV price rows, or restricted owner-only broker quotes
-                (Angel One SmartAPI scans are server-blocked from public
-                sharing).
-              </div>
               <p className="x1-caption" style={{ margin: 0 }}>
                 Soul: <strong>{postTarget.name}</strong> · Formula:{" "}
                 <code>{postTarget.payload.rule.formula}</code>
@@ -1973,11 +2026,12 @@ export default function ResearchWorkspace({
                 Audience
                 <select
                   value={postAudience}
-                  onChange={(e) =>
+                  onChange={(e) => {
                     setPostAudience(
                       e.target.value as "PUBLIC" | "FOLLOWERS" | "GROUP",
-                    )
-                  }
+                    );
+                    setPostPreview(null);
+                  }}
                 >
                   <option value="PUBLIC">Public (Community Web)</option>
                   <option value="FOLLOWERS">Followers Only</option>
@@ -1990,7 +2044,10 @@ export default function ResearchWorkspace({
                   <input
                     value={postGroupId}
                     required
-                    onChange={(e) => setPostGroupId(e.target.value)}
+                    onChange={(e) => {
+                      setPostGroupId(e.target.value);
+                      setPostPreview(null);
+                    }}
                     placeholder="Enter group ID from Community → Groups"
                   />
                 </label>
@@ -2001,7 +2058,10 @@ export default function ResearchWorkspace({
                   rows={3}
                   maxLength={1200}
                   value={postSummary}
-                  onChange={(e) => setPostSummary(e.target.value)}
+                  onChange={(e) => {
+                    setPostSummary(e.target.value);
+                    setPostPreview(null);
+                  }}
                   required
                 />
               </label>
@@ -2014,16 +2074,76 @@ export default function ResearchWorkspace({
                   required
                 />
               </label>
-              <button
-                type="submit"
-                className="x51-accent-btn"
-                disabled={postBusy}
-              >
-                <Send size={15} />
-                <span>
-                  {postBusy ? "Publishing Soul…" : "Confirm & Post Soul"}
-                </span>
-              </button>
+
+              {/* [30] Exact Server-Validated Post Preview Card */}
+              {postPreview && (
+                <div
+                  className="x51-soul-card"
+                  role="region"
+                  aria-label="Server-validated post preview"
+                >
+                  <div className="x51-soul-card-head">
+                    <strong>
+                      Preview · @{postPreview.preview.authorHandle}
+                    </strong>
+                    <span
+                      className={
+                        postPreview.allowed
+                          ? "x51-pill x51-pill-green"
+                          : "x51-pill x51-pill-red"
+                      }
+                    >
+                      {postPreview.allowed
+                        ? `Ready (${postPreview.preview.audience})`
+                        : "Blocked by Data Rights"}
+                    </span>
+                  </div>
+                  {!postPreview.allowed && postPreview.blockReason ? (
+                    <p role="alert" className="x1-caption" style={{ color: "var(--x51-red)", margin: 0 }}>
+                      {postPreview.blockReason}
+                    </p>
+                  ) : (
+                    <>
+                      <strong>{postPreview.preview.title}</strong>
+                      <p className="x1-caption" style={{ margin: 0 }}>
+                        {postPreview.preview.summary}
+                      </p>
+                      <code className="x51-soul-formula">
+                        {postPreview.preview.formula}
+                      </code>
+                      <p className="x1-caption" style={{ margin: 0 }}>
+                        {postPreview.preview.mode} · {postPreview.preview.timeframe} ·{" "}
+                        {postPreview.preview.universeLabel} ·{" "}
+                        {postPreview.preview.matchedSymbols.length} matched symbol(s)
+                      </p>
+                      <p className="x1-caption" style={{ margin: 0 }}>
+                        Redactions: {postPreview.preview.redactionsApplied.join(" ")}
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+
+              <div className="x1-actions" style={{ flexWrap: "wrap", gap: 8 }}>
+                <button
+                  type="button"
+                  className="x1-secondary"
+                  disabled={previewBusy}
+                  onClick={() => void runPostPreview()}
+                >
+                  {previewBusy ? "Checking preview…" : "Preview Post"}
+                </button>
+                <button
+                  type="submit"
+                  className="x51-accent-btn"
+                  disabled={postBusy || (postPreview !== null && !postPreview.allowed)}
+                >
+                  <Send size={15} />
+                  <span>
+                    {postBusy ? "Publishing…" : "Confirm & Post Soul"}
+                  </span>
+                </button>
+              </div>
             </form>
           )}
         </Modal>

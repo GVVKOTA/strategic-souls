@@ -23,15 +23,20 @@ import {
 } from "../../../backend/engines/chart-analytics";
 import { X2_INSTRUMENTS } from "../../../backend/services/market-data/instrument-registry";
 import { getEconomicCalendarEvents } from "../../../backend/services/market-data/economic-calendar";
+import { computeEventWindowReturn } from "../../../backend/engines/analytics";
+import { getCompanyEcosystem } from "../../../backend/services/market-data/sectors-and-ecosystem";
 import type { PublishedSoulCard } from "../../../backend/services/community/research-network";
 import type { NormalizedMarketQuote } from "../../../backend/services/market-data/angelone/types";
 import { fetchMarketQuotes } from "./private-market-client";
+import type { EconomicEventChartContext } from "./economic-calendar";
 type Props = {
   id: string;
   authenticated?: boolean;
   isOwner?: boolean;
+  eventContext?: EconomicEventChartContext | null;
   onRequireAuth?: () => void;
   onClose?: () => void;
+  onSelectAsset?: (nextId: string) => void;
   onAnalyze?: (formula?: string, instrumentId?: string) => void;
   notify?: (text: string, error?: boolean) => void;
 };
@@ -57,8 +62,10 @@ export default function AssetTerminal({
   id,
   authenticated = true,
   isOwner = false,
+  eventContext = null,
   onRequireAuth,
   onClose,
+  onSelectAsset,
   onAnalyze,
   notify,
 }: Props) {
@@ -192,6 +199,23 @@ export default function AssetTerminal({
       alive = false;
     };
   }, [tab, id]);
+
+  const ecosystem = useMemo(
+    () => getCompanyEcosystem(id, asset?.name),
+    [id, asset?.name],
+  );
+
+  const eventWindow = useMemo(() => {
+    if (!eventContext) return null;
+    return computeEventWindowReturn({
+      eventDate: eventContext.eventDate,
+      announcedDateOnly: eventContext.announcedDateOnly,
+      series: (asset?.references ?? []).map((r) => ({
+        date: r.date,
+        close: r.close,
+      })),
+    });
+  }, [eventContext, asset]);
 
   const relatedMacro = useMemo(() => {
     const country = id.startsWith("NSE:") || id.startsWith("BSE:") || id.startsWith("MCX:") || id === "ECB:USDINR"
@@ -428,11 +452,30 @@ export default function AssetTerminal({
           <button onClick={() => setReload((n) => n + 1)}>Retry source</button>
         </p>
       )}
+      {eventContext && eventWindow && (
+        <div
+          className="x1-callout"
+          style={{ marginBottom: 10 }}
+          role="region"
+          aria-label="Economic event chart context"
+        >
+          <strong>
+            Event Marker: {eventContext.eventTitle} ({eventContext.eventDate})
+          </strong>
+          <p className="x1-caption" style={{ margin: "4px 0 0" }}>
+            {eventWindow.value?.observedWindowReturnPct !== null &&
+            eventWindow.value?.observedWindowReturnPct !== undefined
+              ? `${eventWindow.value.observedWindowReturnPct > 0 ? "+" : ""}${eventWindow.value.observedWindowReturnPct.toFixed(2)}% (${eventWindow.value.anchorBeforeDate} → ${eventWindow.value.anchorAfterDate}) · Observed after event (not causal).`
+              : eventWindow.value?.statusNote}
+          </p>
+        </div>
+      )}
       <nav className="x2-research-tabs" aria-label="Asset research views">
         {[
           "Chart",
           "Fundamentals",
           "Technicals",
+          "Ecosystem",
           "Analysis",
           "Ideas",
           "News",
@@ -1310,6 +1353,70 @@ export default function AssetTerminal({
                 ))
               ) : null}
             </>
+          )}
+          {tab === "Ecosystem" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <h3 style={{ margin: "0 0 4px", fontSize: "1rem", color: "var(--x1-title-blue)" }}>
+                  {ecosystem.companyName} · {ecosystem.sectorName}
+                </h3>
+                {ecosystem.groupAffiliation && (
+                  <p className="x1-caption" style={{ margin: "0 0 4px" }}>
+                    Group / Structure: <strong>{ecosystem.groupAffiliation}</strong>
+                  </p>
+                )}
+                <p className="x1-caption" style={{ margin: 0 }}>{ecosystem.overview}</p>
+              </div>
+
+              {ecosystem.edges.length > 0 ? (
+                <div className="x52-news-grid">
+                  {ecosystem.edges.map((edge, idx) => (
+                    <div key={`${edge.targetName}-${idx}`} className="x52-news-card">
+                      <div>
+                        <div className="x52-news-meta" style={{ marginBottom: 4 }}>
+                          <span className="x51-pill">{edge.relation.replaceAll("_", " ")}</span>
+                          <span
+                            className={
+                              edge.confidenceClass === "DOCUMENTED"
+                                ? "x51-pill x51-pill-green"
+                                : "x51-pill x51-pill-amber"
+                            }
+                          >
+                            {edge.confidenceClass === "DOCUMENTED" ? "Documented" : "Inferred Exposure"}
+                          </span>
+                        </div>
+                        <h3>{edge.targetName}</h3>
+                        <p className="x1-caption" style={{ margin: "4px 0" }}>{edge.summary}</p>
+                      </div>
+                      <div className="x52-news-meta" style={{ flexWrap: "wrap", gap: 6 }}>
+                        <a
+                          href={edge.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: "var(--x1-title-blue)", textDecoration: "none" }}
+                        >
+                          {edge.sourceCitation} ({edge.evidenceDate})
+                        </a>
+                        {edge.targetId && onSelectAsset && (
+                          <button
+                            type="button"
+                            className="x1-text-button"
+                            onClick={() => onSelectAsset(edge.targetId!)}
+                          >
+                            Inspect
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="x1-caption">
+                  No verified corporate peer graph is available for this instrument.
+                </p>
+              )}
+              <p className="x1-caption" style={{ margin: 0 }}>{ecosystem.disclosure}</p>
+            </div>
           )}
           {tab === "Analysis" && (
             <>
