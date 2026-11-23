@@ -143,6 +143,7 @@ export function parseAdapterConfig(
 
 export type WorkerGatewayConfig = {
   flags: MarketDataRuntimeFlags;
+  adapterBinding: { fetch(url: string, init?: RequestInit): Promise<Response> } | null;
   adapterUrl: string | null;
   adapterAuthToken: string | null;
   cfAccessClientId: string | null;
@@ -185,6 +186,13 @@ export function parseGatewayConfig(
   const allowLoopback =
     allowLoopbackHttp || parseBoolFlag(env.MARKET_DATA_ALLOW_LOOPBACK, false);
 
+  const binding = env.MARKET_DATA_ADAPTER;
+  const adapterBinding =
+    !allowLoopback && binding && typeof binding === "object" &&
+      "fetch" in binding && typeof binding.fetch === "function"
+      ? (binding as NonNullable<WorkerGatewayConfig["adapterBinding"]>)
+      : null;
+
   const rawUrl = cleanEnvValue(env.MARKET_DATA_ADAPTER_URL);
   let adapterUrl: string | null = null;
   if (rawUrl) {
@@ -222,7 +230,8 @@ export function parseGatewayConfig(
       enablePublicExchangeQuotes,
       demoMode,
     },
-    adapterUrl,
+    adapterBinding,
+    adapterUrl: adapterBinding ? "http://angelone-adapter.internal" : adapterUrl,
     adapterAuthToken,
     cfAccessClientId,
     cfAccessClientSecret,

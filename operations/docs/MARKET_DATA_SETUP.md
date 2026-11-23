@@ -88,7 +88,29 @@ node --experimental-strip-types operations/scripts/verify-angelone-live.mjs
 
 ---
 
-## 6. Remote Production Connectivity (Named Authenticated Cloudflare Tunnel)
+## 6. Remote Production Connectivity
+
+The production Worker connects to the loopback adapter through the named
+`strategic-souls-angelone` Cloudflare Tunnel and the `MARKET_DATA_ADAPTER`
+Workers VPC service binding in `vite.config.ts`. The service routes HTTP to
+`127.0.0.1:8791` on the adapter host. It has no public hostname. The Worker
+requires the verified owner account via `X2_OWNER_SUBJECT` and authenticates
+each adapter request with `MARKET_ADAPTER_AUTH_TOKEN`. Store both as encrypted
+Worker secrets. Keep the SmartAPI login credentials on the adapter host.
+
+After a host reboot, start the adapter with `npm run broker:adapter` and its
+Cloudflare connector with the protected tunnel token file:
+
+```powershell
+& .\.sites-runtime\cloudflared.exe tunnel --protocol quic run --token-file .secrets/cloudflared-angelone.token
+```
+
+In Cloudflare, verify the named tunnel is healthy. In the signed-in owner
+session, verify that Data Control Center reports a reachable, authenticated
+adapter and that Market Explorer loads a quote. The feed pauses if the host
+sleeps or either process stops.
+
+### Alternate configuration with a Cloudflare Access hostname
 
 > [!WARNING]
 > **Never use a temporary unauthenticated `cloudflared` Quick Tunnel for production.** Public exchange quotes remain locked off (`ENABLE_PUBLIC_EXCHANGE_QUOTES=false`) until formal exchange display/redistribution licences exist.
