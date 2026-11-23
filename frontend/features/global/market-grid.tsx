@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -21,7 +21,7 @@ import {
 import { api, Modal, number, type Notice } from "../../components/workspace/shared";
 
 type OverviewResponse = {
-  asOfUTC: string;
+  asOf: string;
   layout: MarketLayoutRecord;
   cards: MarketOverviewCard[];
   disclosure: string;
@@ -42,6 +42,8 @@ function qualityBadgeLabel(quality: MarketOverviewCard["quality"]): string {
       return "Live";
     case "DELAYED":
       return "Delayed";
+    case "LAST_AVAILABLE":
+      return "Last available";
     case "PUBLISHED_EOD":
       return "EOD";
     case "REFERENCE":
@@ -125,6 +127,7 @@ export default function MarketOverviewGrid({
   const [catalogQuery, setCatalogQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveBadge, setSaveBadge] = useState("");
+  const overviewRequest = useRef(0);
 
   useEffect(() => {
     if (!saveBadge) return;
@@ -133,11 +136,13 @@ export default function MarketOverviewGrid({
   }, [saveBadge]);
 
   const loadOverview = useCallback(async () => {
+    const request = ++overviewRequest.current;
     setLoading(true);
     setError("");
     try {
       const res = await api<OverviewResponse>("/api/markets/overview");
-      setAsOfUTC(res.asOfUTC);
+      if (request !== overviewRequest.current) return;
+      setAsOfUTC(res.asOf);
       setLayout(res.layout);
       if (!authenticated) {
         try {
@@ -167,7 +172,7 @@ export default function MarketOverviewGrid({
                   provider: "Local guest layout",
                   sourceUrl: "",
                   sourceObservedAtUTC: null,
-                  ingestedAtUTC: res.asOfUTC,
+                  ingestedAtUTC: res.asOf,
                   quality: "NOT_CONNECTED" as const,
                   marketSession: "UNKNOWN" as const,
                   sessionLabel: "Sign in to sync",
@@ -188,11 +193,13 @@ export default function MarketOverviewGrid({
       setCards(res.cards);
       setDraftIds(res.layout.ids);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not load 9-card market overview.",
-      );
+      if (request === overviewRequest.current) {
+        setError(
+          err instanceof Error ? err.message : "Could not load 9-card market overview.",
+        );
+      }
     } finally {
-      setLoading(false);
+      if (request === overviewRequest.current) setLoading(false);
     }
   }, [authenticated]);
 
@@ -203,6 +210,7 @@ export default function MarketOverviewGrid({
     });
     return () => {
       alive = false;
+      overviewRequest.current += 1;
     };
   }, [loadOverview]);
 

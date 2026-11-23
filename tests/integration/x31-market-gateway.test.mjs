@@ -345,6 +345,21 @@ test("full local loopback adapter + Cloudflare Worker route authorization, multi
     assert.equal((await boundResponse.json()).quotes[0].id, "NSE:SBIN");
     assert.equal(binding.requests, 1);
 
+    const overview = await boundHarness.load("backend/services/market-data/nine-card-markets.ts");
+    const snapshot = { asOf: new Date().toISOString(), quotes: [], yields: [], fxHistory: [] };
+    const layoutIds = ["NSE:SBIN", ...overview.DEFAULT_NINE_CARD_IDS.slice(1)];
+    await overview.saveUserMarketLayout("owner", 0, layoutIds);
+    await overview.saveUserMarketLayout("alice", 0, layoutIds);
+    const memberCards = (await overview.getMarketOverviewPayload("alice", snapshot)).cards;
+    assert.equal(memberCards[0].value, null);
+    assert.equal(binding.requests, 1);
+    const ownerCards = (await overview.getMarketOverviewPayload("owner", snapshot)).cards;
+    assert.equal(ownerCards[0].value, 1165.1);
+    assert.equal(ownerCards[0].redistributable, false);
+    assert.equal(ownerCards[0].currency, "INR");
+    assert.equal(ownerCards[0].quoteUnit, "INR per share");
+    assert.equal(binding.requests, 2);
+
     const ownerAsset = await dataService.assetResearch("NSE:SBIN", "owner");
     assert.equal(ownerAsset.candles.length, 25);
     assert.equal(ownerAsset.provider, "Angel One SmartAPI (Private Owner)");
