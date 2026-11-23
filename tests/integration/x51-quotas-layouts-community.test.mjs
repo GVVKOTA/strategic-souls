@@ -194,8 +194,9 @@ function load(path) {
     }
     if (normalized.endsWith("/backend/services/market-data/data-service.ts")) {
       return new vm.SyntheticModule(
-        ["researchUniverse", "currentDisplayRights"],
+        ["researchUniverse", "currentDisplayRights", "isDataOwner"],
         function () {
+          this.setExport("isDataOwner", () => false);
           this.setExport("currentDisplayRights", async () => ({
             displayAllowed: true,
             derivedDisplayAllowed: true,

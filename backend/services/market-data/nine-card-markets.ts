@@ -8,6 +8,13 @@ import { HttpError } from "../../middleware/security";
 import { EXCHANGES, exchangeSession } from "./exchanges";
 import { X2_INSTRUMENTS, registryInstrument } from "./instrument-registry";
 import { marketSnapshot, type MarketSnapshot } from "./market-data";
+import { isDataOwner } from "./data-service";
+import { gatewayQuotes } from "./angelone/gateway";
+import type {
+  DataQualityState,
+  ExchangeSessionState,
+  NormalizedMarketQuote,
+} from "./angelone/types";
 import {
   DEFAULT_NINE_CARD_IDS,
   type MarketLayoutRecord,
@@ -25,6 +32,27 @@ export {
 };
 
 export const MARKET_LAYOUT_RECORD_KIND = "market-layout";
+
+const BROKER_QUOTE_QUALITY: Record<DataQualityState, QuoteQuality | null> = {
+  VERIFIED_REAL_LIVE: "REAL_TIME",
+  VERIFIED_REAL_DELAYED: "DELAYED",
+  VERIFIED_LAST_AVAILABLE: "LAST_AVAILABLE",
+  MARKET_CLOSED_LAST: "LAST_AVAILABLE",
+  REAL_BUT_STALE: "STALE",
+  NO_DATA: null,
+  DEMO: null,
+};
+
+const BROKER_SESSIONS: Record<
+  ExchangeSessionState,
+  { state: MarketSessionState; label: string }
+> = {
+  OPEN: { state: "OPEN", label: "Session open" },
+  CLOSED: { state: "CLOSED", label: "Market closed" },
+  HOLIDAY: { state: "CLOSED", label: "Exchange holiday" },
+  PRE_OPEN: { state: "PREMARKET", label: "Pre-open" },
+  SCHEDULE_UNKNOWN: { state: "UNKNOWN", label: "Schedule unknown" },
+};
 
 const VENUE_EXCHANGE_MAP: Record<string, string> = {
   NSE: "XNSE",
@@ -235,13 +263,47 @@ export async function saveUserMarketLayout(
 export function buildMarketOverviewCards(
   ids: readonly string[],
   snapshot: MarketSnapshot,
+  privateQuotes: readonly NormalizedMarketQuote[] = [],
 ): MarketOverviewCard[] {
   const allPoints = [...snapshot.quotes, ...snapshot.yields];
   const pointMap = new Map(allPoints.map((p) => [p.id.toUpperCase(), p]));
   const histMap = new Map(snapshot.fxHistory.map((h) => [h.id.toUpperCase(), h]));
+  const privateQuoteMap = new Map(privateQuotes.map((quote) => [quote.id, quote]));
 
   return ids.map((canonicalId) => {
     const entry = registryInstrument(canonicalId);
+    const privateQuote = privateQuoteMap.get(canonicalId);
+    if (privateQuote?.sourceMode === "PRIVATE_OWNER_FEED" && privateQuote.ltp !== null) {
+      const quality = BROKER_QUOTE_QUALITY[privateQuote.quality];
+      if (quality) {
+        const session = BROKER_SESSIONS[privateQuote.marketState];
+        return {
+          canonicalId,
+          shortLabel: entry?.label ?? privateQuote.symbol,
+          name: entry?.name ?? privateQuote.name,
+          venue: privateQuote.exchange,
+          assetClass: entry?.assetClass ?? privateQuote.segment,
+          currency: privateQuote.currency,
+          quoteUnit: privateQuote.unit,
+          value: privateQuote.ltp,
+          absoluteChange: privateQuote.change,
+          percentChange: privateQuote.changePct,
+          previousClose: privateQuote.prevClose,
+          changeUnit: "%",
+          sparkline: null,
+          provider: privateQuote.provider,
+          sourceUrl: privateQuote.sourceUrl,
+          sourceObservedAtUTC: privateQuote.exchangeTimestampUTC,
+          sourceObservedPrecision: privateQuote.exchangeTimestampUTC ? "TIMESTAMP" : "UNAVAILABLE",
+          ingestedAtUTC: privateQuote.retrievalTimestampUTC,
+          quality,
+          marketSession: session.state,
+          sessionLabel: session.label,
+          reasonCode: privateQuote.freshnessReason,
+          redistributable: false,
+        };
+      }
+    }
     const point = pointMap.get(canonicalId.toUpperCase());
     const hist = histMap.get(canonicalId.toUpperCase());
     const market = entry?.market ?? canonicalId.split(":")[0] ?? "GLOBAL";
@@ -347,14 +409,26 @@ export async function getMarketOverviewPayload(
   subject: string | null,
   overrideSnapshot?: MarketSnapshot,
 ) {
-  const [layout, snapshot] = await Promise.all([
-    getUserMarketLayout(subject),
+  const layoutPromise = getUserMarketLayout(subject);
+  const ownerQuotes = layoutPromise.then(async ({ ids }) => {
+    if (!subject || !isDataOwner(subject)) return [];
+    const brokerIds = ids.filter((id) => /^(NSE|BSE|MCX):/.test(id));
+    if (brokerIds.length === 0) return [];
+    try {
+      return (await gatewayQuotes({ authenticated: true, isOwner: true, ids: brokerIds })).quotes;
+    } catch {
+      return [];
+    }
+  });
+  const [layout, snapshot, privateQuotes] = await Promise.all([
+    layoutPromise,
     overrideSnapshot ? Promise.resolve(overrideSnapshot) : marketSnapshot(),
+    ownerQuotes,
   ]);
   return {
     asOf: snapshot.asOf,
     layout,
-    cards: buildMarketOverviewCards(layout.ids, snapshot),
+    cards: buildMarketOverviewCards(layout.ids, snapshot, privateQuotes),
     catalog: X2_INSTRUMENTS.map((i) => ({
       id: i.id,
       label: i.label,

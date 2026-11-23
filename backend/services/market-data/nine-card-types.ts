@@ -18,6 +18,7 @@ export const DEFAULT_NINE_CARD_IDS: readonly string[] = Object.freeze([
 export type QuoteQuality =
   | "REAL_TIME"
   | "DELAYED"
+  | "LAST_AVAILABLE"
   | "PUBLISHED_EOD"
   | "REFERENCE"
   | "STALE"
