@@ -492,9 +492,23 @@ export function preflightResearch(
   datasets: ScanDataset[],
   asOf: string,
   sourceExclusions: { id: string; reason: string }[] = [],
+  minimumBars: number | null = null,
 ) {
   const rule = compileFormula(definition.formula),
     result = evaluateScan(rule, datasets, asOf);
+  const observationsById = new Map(datasets.map((d) => [d.instrumentId, d.observations]));
+  const cutoff = Date.parse(asOf);
+  const exclusions = result.results.filter((row) => row.status === "UNKNOWN").map((row) => {
+    const available = observationsById.get(row.instrumentId)?.filter(
+      (bar) => Date.parse(bar.eventAt) <= cutoff && Date.parse(bar.knownAt) <= cutoff,
+    ).length;
+    return {
+      id: row.instrumentId,
+      reasons: minimumBars !== null && available !== undefined && available < minimumBars
+        ? [`Preset minimum ${minimumBars} bars · ${available} available.`, ...row.reasons]
+        : row.reasons,
+    };
+  });
   const blocked =
     !datasets.length ||
     result.eligible === 0 ||
@@ -531,17 +545,16 @@ export function preflightResearch(
     total: result.total,
     unknown: result.unknown,
     requiredFields: rule.dependencies,
+    minimumBars,
     blocked,
     reason: !datasets.length
-      ? "Connect an entitled source for this universe and timeframe."
+      ? sourceExclusions[0]?.reason ?? "Connect an entitled source for this universe and timeframe."
       : !result.eligible
         ? "No instrument has all required fields/history. No scan will be saved."
         : blocked
           ? "Some instruments have missing inputs. Explicitly allow UNKNOWN results or narrow the universe."
           : null,
-    exclusions: result.results
-      .filter((r) => r.status === "UNKNOWN")
-      .map((r) => ({ id: r.instrumentId, reasons: r.reasons })),
+    exclusions,
     results: result,
     accounting,
     batchPlan,

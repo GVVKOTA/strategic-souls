@@ -207,34 +207,27 @@ export function normalizedComparison(a: Reference[], b: Reference[]) {
       }))
     : [];
 }
+export function calendarPeriodKey(date: string, interval: Exclude<Interval, "1d">) {
+  if (interval === "1mo") return date.slice(0, 7);
+  const monday = new Date(date);
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+  return monday.toISOString().slice(0, 10);
+}
+
 export function aggregateReferences(
   rows: Reference[],
   interval: Interval,
 ): Reference[] {
   if (interval === "1d") return rows;
   const groups = new Map<string, Reference>();
-  for (const row of rows) {
-    const date = new Date(row.date);
-    let key = row.date.slice(0, 7);
-    if (interval === "1wk") {
-      const d = (date.getUTCDay() + 6) % 7;
-      date.setUTCDate(date.getUTCDate() - d);
-      key = date.toISOString().slice(0, 10);
-    }
-    groups.set(key, row);
-  }
+  for (const row of rows) groups.set(calendarPeriodKey(row.date, interval), row);
   return [...groups.values()];
 }
 export function aggregateCandles(rows: Candle[], interval: Interval): Candle[] {
   if (interval === "1d") return rows;
   const groups = new Map<string, Candle[]>();
   for (const row of rows) {
-    const d = new Date(row.date);
-    let key = row.date.slice(0, 7);
-    if (interval === "1wk") {
-      d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-      key = d.toISOString().slice(0, 10);
-    }
+    const key = calendarPeriodKey(row.date, interval);
     groups.set(key, [...(groups.get(key) || []), row]);
   }
   return [...groups.values()].map((g) => ({

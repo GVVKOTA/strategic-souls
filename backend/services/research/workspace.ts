@@ -7,7 +7,7 @@ import {
   summarizePortfolio,
   type Transaction,
 } from "../../engines/portfolio";
-import { compileFormula, evaluateScan } from "../../engines/scan";
+import { compileFormula } from "../../engines/scan";
 import { researchUniverse } from "../market-data/data-service";
 import { backtestResearch } from "../../engines/backtest";
 import {
@@ -34,6 +34,7 @@ import {
 import { parseDiscoverQuery } from "./discover-parser";
 import { matchDrawnPattern, type DrawPoint } from "../../engines/pattern-draw";
 import { runSoulGenomeEvidence } from "../../engines/soul-genome";
+import { findClassicPresetByFormula } from "./classic-presets";
 type RawRecord = {
   id: string;
   subject: string;
@@ -387,8 +388,32 @@ async function scanSource(
   subject: string,
   definition: ResearchDefinition,
   customCsv?: unknown,
+  minimumBars?: number,
 ) {
-  if (typeof customCsv === "string" && customCsv.trim().length > 0) {
+  const hasCsv = typeof customCsv === "string" && customCsv.trim().length > 0;
+  if (definition.interval === "30m" || definition.interval === "1h") {
+    const source = hasCsv
+      ? "Private CSV"
+      : definition.universe === "ECB_DAILY"
+        ? "ECB Daily Reference FX"
+        : "Connected Markets";
+    return {
+      datasets: [],
+      excluded: [
+        {
+          id: source,
+          reason: `${source} does not supply ${definition.interval} observations to Soul Scan. Choose Daily, Weekly, or Monthly.`,
+        },
+      ],
+      source,
+      pointInTime: false,
+      adjusted: false,
+      rights: { analysis: false, storage: false },
+      asOf: new Date().toISOString(),
+      lineage: [],
+    };
+  }
+  if (hasCsv) {
     let parsed;
     try {
       parsed = parsePrivateCsvDataset(customCsv);
@@ -423,48 +448,12 @@ async function scanSource(
       })),
     };
   }
-  if (
-    (definition.interval === "30m" || definition.interval === "1h") &&
-    definition.universe === "ECB_DAILY"
-  ) {
-    return {
-      datasets: [],
-      excluded: [
-        {
-          id: "ECB_DAILY",
-          reason: `Official ECB FX reference publishes daily closing rates only and cannot supply ${definition.interval} intraday bars. Switch to Daily/Weekly/Monthly or upload a private intraday CSV.`,
-        },
-      ],
-      source: "ECB Daily Reference FX (Daily-Only)",
-      pointInTime: false,
-      adjusted: false,
-      rights: { analysis: false, storage: false },
-      asOf: new Date().toISOString(),
-      lineage: [],
-    };
-  }
-  const backendInterval =
-    definition.interval === "30m" || definition.interval === "1h"
-      ? "1d"
-      : definition.interval;
   const data = await researchUniverse(subject, {
     provider: definition.universe === "ECB_DAILY" ? "ECB" : "CONNECTED_MARKETS",
     instrumentIds: definition.instrumentIds,
-    interval: backendInterval,
+    interval: definition.interval,
+    minimumBars,
   });
-  if (definition.interval === "30m" || definition.interval === "1h") {
-    return {
-      ...data,
-      datasets: [],
-      excluded: [
-        ...data.excluded,
-        ...data.datasets.map((d) => ({
-          id: d.instrumentId,
-          reason: `Connected feed provides daily observations only; ${definition.interval} intraday bars are not relabeled from daily closes.`,
-        })),
-      ],
-    };
-  }
   const datasets =
     definition.universe === "CONNECTED_MARKETS"
       ? data.datasets.filter((d) => !d.instrumentId.startsWith("ECB:"))
@@ -588,13 +577,20 @@ export async function mutateWorkspace(
     return { id, version: 1 };
   }
   if (action === "preflight-scan") {
-    const definition = researchDefinition(input),
-      source = await scanSource(subject, definition, input.customCsv);
+    const definition = researchDefinition(input);
+    const minimumBars = findClassicPresetByFormula(definition.formula)?.minBars;
+    const source = await scanSource(
+      subject,
+      definition,
+      input.customCsv,
+      minimumBars,
+    );
     const preflight = preflightResearch(
       definition,
       source.datasets,
       source.asOf,
       source.excluded,
+      minimumBars,
     );
     const projection = await projectResearchSnapshot(
       {
@@ -1025,6 +1021,7 @@ export async function mutateWorkspace(
   }
   if (action === "run-scan") {
     const definition = researchDefinition(input);
+    const minimumBars = findClassicPresetByFormula(definition.formula)?.minBars;
     const requestId = retryKey(input.requestId),
       mode = definition.mode,
       name = definition.name,
@@ -1068,31 +1065,36 @@ export async function mutateWorkspace(
       // Only swallow missing-table errors in isolated legacy harnesses without 0008
     }
     try {
-      const data = await scanSource(subject, definition, input.customCsv);
+      const data = await scanSource(
+        subject,
+        definition,
+        input.customCsv,
+        minimumBars,
+      );
       const datasets = data.datasets;
       if (!datasets.length) {
-        if (reservationId) await releaseScanReservation(db, reservationId, subject, "FAILED");
         throw new HttpError(
           503,
-          "Eligible historical data is unavailable. No run or credit charge was created.",
+          data.excluded[0]?.reason ??
+            "Eligible historical data is unavailable. No run or credit charge was created.",
         );
       }
       await rate(subject + ":x1scans", 30, 86400000);
-      const asOf = new Date().toISOString(),
-        results = evaluateScan(rule, datasets, asOf);
+      const asOf = new Date().toISOString();
       const preflight = preflightResearch(
         definition,
         datasets,
         asOf,
         data.excluded,
+        minimumBars,
       );
       if (preflight.blocked) {
-        if (reservationId) await releaseScanReservation(db, reservationId, subject, "FAILED");
         throw new HttpError(
           422,
           preflight.reason || "Preflight blocked this scan.",
         );
       }
+      const results = preflight.results;
       const replay =
         datasets.length === 1
           ? replayResearch(definition, datasets[0], asOf, {

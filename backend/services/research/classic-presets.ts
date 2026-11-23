@@ -11,6 +11,7 @@
  * Every preset compiles deterministically through the SINGLE canonical AST in backend/engines/scan.ts.
  * Editorial priority numbers (01–50) reflect navigation familiarity only, never investment ranking.
  */
+import { compileFormula } from "../../engines/scan";
 
 export type ClassicPresetCategory =
   | "Moving Averages"
@@ -1143,11 +1144,16 @@ export function findClassicPresetById(id: string): ClassicPreset | undefined {
 export function findClassicPresetByFormula(
   formula: string,
 ): ClassicPreset | undefined {
-  const norm = formula.trim().toLowerCase().replace(/\s+/g, " ");
-  return CLASSIC_50_PRESETS.find(
-    (p) => p.formula.trim().toLowerCase().replace(/\s+/g, " ") === norm,
-  );
+  try {
+    return classicPresetsByCanonicalFormula.get(compileFormula(formula).formula);
+  } catch {
+    return undefined;
+  }
 }
+
+const classicPresetsByCanonicalFormula = new Map(
+  CLASSIC_50_PRESETS.map((preset) => [compileFormula(preset.formula).formula, preset]),
+);
 
 export function searchClassicPresets(
   query = "",

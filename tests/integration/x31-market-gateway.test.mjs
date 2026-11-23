@@ -22,6 +22,8 @@ import ts from "typescript";
 const { startMarketAdapterServer } = await import(
   "../../backend/services/market-data/angelone/adapter-server.ts"
 );
+const { InstrumentMaster } = await import("../../backend/services/market-data/angelone/instrument-master.ts");
+const { normalizeAngelOneCandles } = await import("../../backend/services/market-data/angelone/normalizer.ts");
 
 const FAKE_API_KEY = "FAKE_ANGEL_API_KEY_99";
 const FAKE_CLIENT_ID = "FAKECLT999";
@@ -223,6 +225,106 @@ function buildWorkerHarness(env, getUser) {
   }
   return { load };
 }
+
+test("owner Classic coverage uses longer candle history and saves a daily scan only with eligible bars", async () => {
+  const master = new InstrumentMaster();
+  const requests = [];
+  const nowMs = Date.now();
+  const env = {
+    X2_OWNER_SUBJECT: "owner",
+    MARKET_DATA_PROVIDER: "angelone",
+    MARKET_DATA_MODE: "private",
+    ENABLE_PRIVATE_BROKER_DATA: "true",
+    ENABLE_PUBLIC_EXCHANGE_QUOTES: "false",
+    MARKET_ADAPTER_AUTH_TOKEN: FAKE_SERVICE_TOKEN,
+    MARKET_DATA_ADAPTER: {
+      async fetch(url) {
+        const { pathname, searchParams } = new URL(url);
+        assert.equal(pathname, "/internal/candles");
+        const id = searchParams.get("id");
+        const days = Number(searchParams.get("days"));
+        assert.equal(searchParams.get("interval"), "1d");
+        requests.push({ id, days });
+        if (id === "NSE:RELIANCE") {
+          return Response.json({
+            errorCode: "BROKER_TOTP_REQUIRED",
+            actionHint: "Reconnect the owner broker session.",
+          }, { status: 401 });
+        }
+        const count = id === "BSE:SBIN" ? 124 : 215;
+        const rows = [];
+        for (let offset = 1; offset <= days && rows.length < count; offset++) {
+          const date = new Date(nowMs - offset * 86_400_000);
+          if ([0, 6].includes(date.getUTCDay())) continue;
+          const close = 500 - rows.length;
+          rows.push([`${date.toISOString().slice(0, 10)}T00:00:00+05:30`, close, close + 1, close - 1, close, 100]);
+        }
+        return Response.json(normalizeAngelOneCandles(master.resolve(id, nowMs), "1d", rows, nowMs));
+      },
+    },
+  };
+  let activeUser = { userId: "owner" };
+  const harness = buildWorkerHarness(env, () => activeUser);
+  const route = await harness.load("app/api/strategy/scan/route.ts");
+  const base = "https://example.invalid";
+  const call = async (action, id, extra = {}) => {
+    const response = await route.POST(new Request(`${base}/api/strategy/scan`, {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({
+        action,
+        name: "Golden Cross study",
+        description: "Daily Golden Cross fixture study.",
+        formula: "crossesAbove(sma(close, 50), sma(close, 200))",
+        mode: "SIMPLE",
+        universe: "CONNECTED_MARKETS",
+        instrumentIds: [id],
+        ...extra,
+      }),
+    }));
+    return { status: response.status, body: await response.json() };
+  };
+  const ready = await call("preflight-scan", "NSE:SBIN");
+  assert.equal(ready.status, 200);
+  assert.equal(ready.body.preflight.minimumBars, 201);
+  assert.equal(ready.body.preflight.eligible, 1);
+  assert.ok(requests[0].days > 300 && requests[0].days <= 365);
+
+  const short = await call("preflight-scan", "BSE:SBIN");
+  assert.equal(short.body.preflight.blocked, true);
+  assert.match(short.body.preflight.exclusions[0].reasons[0], /201 bars.*124 available/);
+  const unavailable = await call("preflight-scan", "NSE:RELIANCE");
+  assert.match(unavailable.body.preflight.reason, /BROKER_TOTP_REQUIRED/);
+
+  const requestCount = requests.length;
+  const intraday = await call("preflight-scan", "NSE:SBIN", { interval: "30m" });
+  assert.match(intraday.body.preflight.reason, /30m/);
+  const mislabeledCsv = await call("preflight-scan", "CSV:SBIN", {
+    interval: "1h",
+    customCsv: "symbol,date,close\nSBIN,2026-11-20,500",
+  });
+  assert.match(mislabeledCsv.body.preflight.reason, /Private CSV.*1h/);
+  activeUser = { userId: "alice" };
+  const member = await call("preflight-scan", "NSE:SBIN");
+  assert.equal(member.body.preflight.blocked, true);
+  assert.equal(requests.length, requestCount);
+
+  activeUser = { userId: "owner" };
+  const blocked = await call("run-scan", "BSE:SBIN", { requestId: webcrypto.randomUUID() });
+  assert.equal(blocked.status, 422);
+  assert.equal((await env.DB.prepare("SELECT count(*) AS count FROM x1_scans").first()).count, 0);
+  const requestId = webcrypto.randomUUID();
+  const saved = await call("run-scan", "NSE:SBIN", { requestId });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.results.eligible, 1);
+  assert.equal(saved.body.results.matches, 0);
+  const row = await env.DB.prepare("SELECT payload FROM x1_scans WHERE id=?").bind(saved.body.id).first();
+  assert.equal(JSON.parse(row.payload).datasets[0].observations.length, 215);
+  assert.equal(saved.body.scanQuota.classic.used, 1);
+  const replay = await call("run-scan", "NSE:SBIN", { requestId });
+  assert.equal(replay.body.id, saved.body.id);
+  assert.equal(replay.body.replayed, true);
+});
 
 test("full local loopback adapter + Cloudflare Worker route authorization, multi-exchange quotes, candles, offline degradation & zero leak", async () => {
   const adapter = await startMarketAdapterServer({

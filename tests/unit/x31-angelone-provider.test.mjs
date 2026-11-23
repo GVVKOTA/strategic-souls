@@ -41,6 +41,44 @@ const { BrokerAuthSession } = await import(
 const { AngelOneReadOnlyProvider } = await import(
   "../../backend/services/market-data/angelone/provider.ts"
 );
+const { brokerScanLookbackDays, completedBrokerObservations } = await import(
+  "../../backend/services/market-data/angelone/scan-history.ts"
+);
+const { CLASSIC_50_PRESETS, findClassicPresetByFormula } = await import(
+  "../../backend/services/research/classic-presets.ts"
+);
+const { compileFormula } = await import("../../backend/engines/scan.ts");
+
+test("Classic candle lookback uses each canonical preset's published minimum", () => {
+  for (const preset of CLASSIC_50_PRESETS) {
+    assert.equal(findClassicPresetByFormula(compileFormula(preset.formula).formula), preset);
+  }
+  assert.ok(brokerScanLookbackDays("1d", 201) > 300);
+  assert.ok(brokerScanLookbackDays("1d", 201) <= 365);
+  assert.ok(brokerScanLookbackDays("1d", 16) < brokerScanLookbackDays("1d", 201));
+});
+
+test("broker scan history preserves source timestamps and drops developing periods", () => {
+  const days = ["2026-09-30", "2026-10-19", "2026-10-23", "2026-11-10", "2026-11-16", "2026-11-20", "2026-11-23"];
+  const rows = days.map((day, index) => [
+    `${day}T00:00:00+05:30`, 100 + index, 115 + index, 95, 105 + index, 10,
+  ]);
+  const instrument = new InstrumentMaster().resolve("NSE:SBIN");
+  const seriesAt = (time) => normalizeAngelOneCandles(
+    instrument, "1d", rows, Date.parse(`2026-11-23T${time}+05:30`),
+  );
+  const during = seriesAt("15:29:59");
+  const after = seriesAt("15:30:00");
+  assert.equal(completedBrokerObservations(during, "1d").at(-1).eventAt, during.candles.at(-2).timestampUTC);
+  assert.equal(completedBrokerObservations(after, "1d").at(-1).eventAt, after.candles.at(-1).timestampUTC);
+  const weekly = completedBrokerObservations(during, "1wk");
+  assert.equal(weekly.at(-1).eventAt, during.candles.at(-2).timestampUTC);
+  assert.equal(weekly.at(-1).volume, 20);
+  const monthly = completedBrokerObservations(after, "1mo");
+  assert.equal(monthly.length, 1);
+  assert.equal(monthly[0].eventAt, during.candles[2].timestampUTC);
+  assert.equal(monthly[0].knownAt, after.retrievalTimestampUTC);
+});
 
 test("RFC 6238 SHA-1 TOTP matches official test vector and validates 6-digit manual codes", async () => {
   // RFC 6238 test secret ASCII "12345678901234567890" -> Base32 GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ

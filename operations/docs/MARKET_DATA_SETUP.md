@@ -141,3 +141,9 @@ To connect the deployed Cloudflare Worker (`https://strategic-souls.vishnukota20
 | `BROKER_STATIC_IP_BLOCKED` | Angel One rejected your outbound IPv4 with HTTP `403`. | Check your public IPv4 vs. registered Primary Static IPv4 in SmartAPI portal. |
 | `RATE_LIMITED` | Local safety guard or Angel One per-second/minute limit hit. | Wait 5–15 seconds and click Refresh once. |
 | `SEGMENT_NOT_ENTITLED` | Requested exchange (e.g., MCX) is not active on your Angel One account. | Verify segment activation in Angel One profile; NSE/BSE continue working independently. |
+
+## 8. Soul Scan candle coverage
+
+Use **Check coverage** to verify historical candles for the selected symbols and timeframe. An available dashboard quote only verifies the quote path. Soul Scan requests a separate candle window for Classic presets, up to 365 calendar days. Coverage shows the preset's minimum and the available bars when there is too little history.
+
+Broker scans exclude developing daily bars and the current calendar week or month from grouped history. The first weekly or monthly group is also omitted because the request can start partway through it. An owner scan requests up to 24 broker instruments at a time and lists any deferred symbols. The 30-minute and hourly Soul Scan options remain unavailable.

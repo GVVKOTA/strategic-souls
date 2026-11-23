@@ -1346,6 +1346,8 @@ export default function ResearchWorkspace({
                             "x54-chip" + (interval === tf.id ? " is-active" : "")
                           }
                           aria-pressed={interval === tf.id}
+                          disabled={tf.id === "30m" || tf.id === "1h"}
+                          title={tf.id === "30m" || tf.id === "1h" ? "Intraday history is unavailable for Soul Scan." : undefined}
                           onClick={() => {
                             setInterval(tf.id);
                             setPreflight(null);
@@ -1355,11 +1357,6 @@ export default function ResearchWorkspace({
                         </button>
                       ))}
                     </div>
-                    {(interval === "30m" || interval === "1h") && (
-                      <span className="x1-caption">
-                        Intraday 30m/1h requires intraday bars in Private CSV or a connected feed.
-                      </span>
-                    )}
                   </div>
                 </div>
 
@@ -1712,11 +1709,26 @@ export default function ResearchWorkspace({
                         : "Data coverage ready"}
                     </strong>
                     <p>
-                      {coverage.preflight.eligible}/{coverage.preflight.total}{" "}
+                      {coverage.preflight.eligible}/{coverage.preflight.accounting.discovered}{" "}
                       eligible · {coverage.preflight.unknown} UNKNOWN ·{" "}
-                      {coverage.source}
+                      {coverage.source} · {TIMEFRAMES.find((tf) => tf.id === interval)?.label}
+                      {coverage.preflight.minimumBars !== null &&
+                        ` · Preset minimum ${coverage.preflight.minimumBars} bars`}
                     </p>
-                    <p>{coverage.preflight.reason}</p>
+                    {coverage.preflight.reason && <p>{coverage.preflight.reason}</p>}
+                    {(coverage.sourceExclusions.length > 0 || coverage.preflight.exclusions.length > 0) && (
+                      <details>
+                        <summary>Data exclusions</summary>
+                        <ul>
+                          {coverage.sourceExclusions.map(({ id, reason }) => (
+                            <li key={`source:${id}`}>{id} · {reason}</li>
+                          ))}
+                          {coverage.preflight.exclusions.map(({ id, reasons }) => (
+                            <li key={`evaluation:${id}`}>{id} · {reasons.join(" ")}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                   </div>
                 )}
               </div>
