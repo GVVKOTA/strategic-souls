@@ -11,12 +11,13 @@ export function GET(request: Request) {
       release: "X5.5",
       releaseName:
         "APEX Stability, Mobile & Desktop Clarity, Brand Language & Market-Data Readiness",
-      revisionMarker: "x5.5-apex-clarity-stability-2026-11-22",
+      revisionMarker: "x5.6-classic50-banners8-states36-chats-2026-11-23",
       dashboards: ["Global", "Strategy", "Community"],
       exchangeVenues: 24,
       classicPresets: 50,
       avatarPresets: 50,
       bannerPresets: 8,
+      indianStatesAndUts: 36,
       earthMapBasemap: "NASA Blue Marble Next Generation & VIIRS Black Marble 3D Perspective Earth (Public Domain)",
       auth: "Cloudflare Workers D1 session authentication (email/password; optional Google OAuth)",
       marketData: {
