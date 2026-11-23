@@ -311,6 +311,40 @@ test("full local loopback adapter + Cloudflare Worker route authorization, multi
     const candleBody = await candleRes.json();
     assert.equal(candleBody.candles.length, 25);
 
+    // A production VPC binding routes through the private service and keeps its receiver.
+    const binding = {
+      requests: 0,
+      async fetch(url, init) {
+        this.requests += 1;
+        const target = new URL(url);
+        assert.equal(target.origin, "http://angelone-adapter.internal");
+        assert.equal(init.headers["X-SS-Adapter-Token"], FAKE_SERVICE_TOKEN);
+        assert.equal(init.headers["CF-Access-Client-Secret"], undefined);
+        return fetch(`http://127.0.0.1:${adapter.port}${target.pathname}${target.search}`, init);
+      },
+    };
+    const boundHarness = buildWorkerHarness(
+      {
+        ...workerEnv,
+        MARKET_DATA_ALLOW_LOOPBACK: "false",
+        MARKET_DATA_ADAPTER_URL: undefined,
+        MARKET_DATA_ADAPTER: binding,
+        CF_ACCESS_CLIENT_ID: "test",
+        CF_ACCESS_CLIENT_SECRET: "test",
+      },
+      () => activeUser,
+    );
+    const boundRoute = await boundHarness.load("app/api/market/quote/route.ts");
+    const boundRequest = new Request("https://example.invalid/api/market/quote?ids=NSE:SBIN");
+    activeUser = { userId: "alice" };
+    assert.equal((await boundRoute.GET(boundRequest)).status, 403);
+    assert.equal(binding.requests, 0);
+    activeUser = { userId: "owner" };
+    const boundResponse = await boundRoute.GET(boundRequest);
+    assert.equal(boundResponse.status, 200);
+    assert.equal((await boundResponse.json()).quotes[0].id, "NSE:SBIN");
+    assert.equal(binding.requests, 1);
+
     const ownerAsset = await dataService.assetResearch("NSE:SBIN", "owner");
     assert.equal(ownerAsset.candles.length, 25);
     assert.equal(ownerAsset.provider, "Angel One SmartAPI (Private Owner)");

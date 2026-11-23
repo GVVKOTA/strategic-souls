@@ -200,7 +200,7 @@ async function callPrivateAdapter<T>(
       503,
       "ADAPTER_NOT_CONFIGURED",
       "Private broker adapter URL or service token is not configured on this runtime.",
-      "Configure MARKET_DATA_ADAPTER_URL and MARKET_ADAPTER_AUTH_TOKEN (see operations/docs/MARKET_DATA_SETUP.md).",
+      "Configure the private adapter connection and MARKET_ADAPTER_AUTH_TOKEN (see operations/docs/MARKET_DATA_SETUP.md).",
     );
   }
 
@@ -213,7 +213,7 @@ async function callPrivateAdapter<T>(
     Accept: "application/json",
     "X-SS-Adapter-Token": config.adapterAuthToken,
   };
-  if (config.cfAccessClientId && config.cfAccessClientSecret) {
+  if (!config.adapterBinding && config.cfAccessClientId && config.cfAccessClientSecret) {
     headers["CF-Access-Client-Id"] = config.cfAccessClientId;
     headers["CF-Access-Client-Secret"] = config.cfAccessClientSecret;
   }
@@ -224,7 +224,9 @@ async function callPrivateAdapter<T>(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 12_000);
   try {
-    const fetcher = options.fetcher ?? fetch;
+    const fetcher = config.adapterBinding
+      ? config.adapterBinding.fetch.bind(config.adapterBinding)
+      : options.fetcher ?? fetch;
     const res = await fetcher(`${config.adapterUrl}${path}`, {
       method: options.method ?? "GET",
       headers,
