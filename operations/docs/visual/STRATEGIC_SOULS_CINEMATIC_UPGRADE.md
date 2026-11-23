@@ -1,6 +1,6 @@
 # Strategic Souls — Cinematic UI, Typography, Motion, Loader & Natural-Color Earth Upgrade
 
-**Status:** Implemented & verified on feature branch `feat/x3-strategic-souls-upgrade` (see [`../X2_RELEASE_REPORT.md`](../X2_RELEASE_REPORT.md) for live deployment status).
+**Status:** Implemented & verified (see [`../X5_5_THREE_PHASE_AUDIT_RELEASE.md`](../X5_5_THREE_PHASE_AUDIT_RELEASE.md) and archived [`../../archive/docs/reports/x2/X2_RELEASE_REPORT.md`](../../archive/docs/reports/x2/X2_RELEASE_REPORT.md)).
 
 ---
 
