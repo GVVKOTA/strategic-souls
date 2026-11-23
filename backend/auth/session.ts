@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { database } from "../../database/queries/repository";
 import { HttpError } from "../middleware/security";
+import { pickRandomAvatarId } from "../services/profile/avatars";
 
 export type AuthenticatedUser = {
   userId: string;
@@ -289,14 +290,35 @@ export async function registerEmailUser(input: {
   const { hashHex, saltHex } = await hashPassword(password);
   const id = "usr_" + crypto.randomUUID();
   const now = new Date().toISOString();
+  const recentAvatars = await db
+    .prepare(
+      "SELECT avatar_id FROM auth_users WHERE avatar_id IS NOT NULL ORDER BY created_at DESC LIMIT 8",
+    )
+    .all<{ avatar_id: string }>()
+    .then((r) => (r.results ?? []).map((x) => x.avatar_id))
+    .catch(() => [] as string[]);
+  const initialAvatarId = pickRandomAvatarId(recentAvatars);
 
   try {
-    await db
-      .prepare(
-        "INSERT INTO auth_users (id, email, display_name, password_hash, password_salt, auth_provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'email', ?, ?)",
-      )
-      .bind(id, email, displayName, hashHex, saltHex, now, now)
-      .run();
+    try {
+      await db
+        .prepare(
+          "INSERT INTO auth_users (id, email, display_name, password_hash, password_salt, auth_provider, avatar_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'email', ?, ?, ?)",
+        )
+        .bind(id, email, displayName, hashHex, saltHex, initialAvatarId, now, now)
+        .run();
+    } catch (colErr) {
+      if (/no column named avatar_id/i.test(String(colErr))) {
+        await db
+          .prepare(
+            "INSERT INTO auth_users (id, email, display_name, password_hash, password_salt, auth_provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'email', ?, ?)",
+          )
+          .bind(id, email, displayName, hashHex, saltHex, now, now)
+          .run();
+      } else {
+        throw colErr;
+      }
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (/unique/i.test(message)) {
@@ -485,12 +507,33 @@ export async function findOrCreateGoogleUser(profile: {
   const id = "usr_" + crypto.randomUUID();
   const displayName = validateDisplayName(profile.name, email);
   const now = new Date().toISOString();
-  await db
+  const recentAvatars = await db
     .prepare(
-      "INSERT INTO auth_users (id, email, display_name, password_hash, password_salt, auth_provider, google_sub, created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, 'google', ?, ?, ?)",
+      "SELECT avatar_id FROM auth_users WHERE avatar_id IS NOT NULL ORDER BY created_at DESC LIMIT 8",
     )
-    .bind(id, email, displayName, profile.sub, now, now)
-    .run();
+    .all<{ avatar_id: string }>()
+    .then((r) => (r.results ?? []).map((x) => x.avatar_id))
+    .catch(() => [] as string[]);
+  const initialAvatarId = pickRandomAvatarId(recentAvatars);
+  try {
+    await db
+      .prepare(
+        "INSERT INTO auth_users (id, email, display_name, password_hash, password_salt, auth_provider, google_sub, avatar_id, created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, 'google', ?, ?, ?, ?)",
+      )
+      .bind(id, email, displayName, profile.sub, initialAvatarId, now, now)
+      .run();
+  } catch (colErr) {
+    if (/no column named avatar_id/i.test(String(colErr))) {
+      await db
+        .prepare(
+          "INSERT INTO auth_users (id, email, display_name, password_hash, password_salt, auth_provider, google_sub, created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, 'google', ?, ?, ?)",
+        )
+        .bind(id, email, displayName, profile.sub, now, now)
+        .run();
+    } else {
+      throw colErr;
+    }
+  }
 
   return {
     userId: id,

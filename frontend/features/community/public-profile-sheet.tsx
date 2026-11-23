@@ -58,6 +58,8 @@ export type CanonicalPublicProfile = {
   displayName: string;
   bio: string;
   avatarId: string;
+  stateCode?: string | null;
+  stateName?: string | null;
   age: number | null;
   genderSymbol: "MALE" | "FEMALE" | "HIDDEN";
   bannerPresetId: string;
@@ -681,11 +683,21 @@ export default function PublicProfileSheet({
               {/* Hero Banner + Overlapping Ringed Avatar */}
               <div
                 className="x54-profile-banner"
-                style={{ background: banner.gradient }}
+                style={{
+                  backgroundImage: banner.gradient,
+                  backgroundSize: "cover",
+                  backgroundPosition: profile.bannerPosition || "center",
+                }}
               >
                 <div
                   className="x54-profile-banner-veil"
-                  style={{ opacity: Math.max(0.25, Math.min(0.75, profile.bannerOverlay * 0.65)) }}
+                  style={{
+                    background: banner.safeZoneScrim,
+                    opacity: Math.max(
+                      0.35,
+                      Math.min(0.88, profile.bannerOverlay * 0.8),
+                    ),
+                  }}
                 />
               </div>
 
@@ -777,33 +789,48 @@ export default function PublicProfileSheet({
                   </div>
                 </div>
 
-                {/* Name + @handle + optional opt-in details */}
+                {/* Name + @handle + optional opt-in details + Top-Right State Capsule */}
                 <div className="x54-profile-name-block">
-                  <div className="x54-profile-name-line">
-                    <h2 className="x54-profile-display-name">
-                      {profile.displayName}
-                    </h2>
-                    {genderGlyph(profile.genderSymbol) && (
+                  <div className="x56-profile-identity-head">
+                    <div className="x56-profile-identity-main">
+                      <div className="x54-profile-name-line">
+                        <h2 className="x54-profile-display-name">
+                          {profile.displayName}
+                        </h2>
+                        {genderGlyph(profile.genderSymbol) && (
+                          <span
+                            className="x54-profile-meta-chip"
+                            aria-label={
+                              profile.genderSymbol === "MALE" ? "Male" : "Female"
+                            }
+                          >
+                            {genderGlyph(profile.genderSymbol)}
+                          </span>
+                        )}
+                        {profile.age !== null && (
+                          <span className="x54-profile-meta-chip">
+                            {profile.age}y
+                          </span>
+                        )}
+                      </div>
+                      <div className="x54-profile-handle-line">
+                        <span className="x54-profile-handle">
+                          @{profile.handle}
+                        </span>
+                        {!profile.discoverable && profile.isMe && (
+                          <span className="x54-profile-private-pill">
+                            Legacy private
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {profile.stateCode && (
                       <span
-                        className="x54-profile-meta-chip"
-                        aria-label={
-                          profile.genderSymbol === "MALE" ? "Male" : "Female"
-                        }
+                        className="x56-profile-state-capsule"
+                        title={profile.stateName ?? profile.stateCode}
+                        aria-label={`State or Union Territory: ${profile.stateName ?? profile.stateCode}`}
                       >
-                        {genderGlyph(profile.genderSymbol)}
-                      </span>
-                    )}
-                    {profile.age !== null && (
-                      <span className="x54-profile-meta-chip">
-                        {profile.age}y
-                      </span>
-                    )}
-                  </div>
-                  <div className="x54-profile-handle-line">
-                    <span className="x54-profile-handle">@{profile.handle}</span>
-                    {!profile.discoverable && profile.isMe && (
-                      <span className="x54-profile-private-pill">
-                        Legacy private
+                        {profile.stateCode}
                       </span>
                     )}
                   </div>

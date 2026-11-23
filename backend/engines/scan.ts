@@ -138,6 +138,10 @@ const FUNCTIONS = new Set([
   "minusdi",
   "stochk",
   "stochd",
+  "obv",
+  "mfi",
+  "supertrend",
+  "supertrenddir",
   "abs",
   "min",
   "max",
@@ -471,6 +475,32 @@ function inspectAst(ast: Ast): {
       for (const field of ["high", "low", "close"]) dependencies.add(field);
       categories.add("Technical");
       return "percent";
+    }
+    if (a.name === "obv") {
+      if (n !== 0) throw new Error("obv() takes no arguments.");
+      for (const field of ["close", "volume"]) dependencies.add(field);
+      categories.add("Technical");
+      return "volume";
+    }
+    if (a.name === "mfi") {
+      if (n !== 1) throw new Error("mfi(lookback) requires one argument.");
+      lookback(args[0], 2);
+      for (const field of ["high", "low", "close", "volume"])
+        dependencies.add(field);
+      categories.add("Technical");
+      return "percent";
+    }
+    if (a.name === "supertrend" || a.name === "supertrenddir") {
+      if (n !== 2 || u[1] === "boolean")
+        throw new Error(
+          `${a.name}(atrPeriod, multiplier) requires two arguments.`,
+        );
+      lookback(args[0], 2);
+      if (args[1].kind !== "number" || args[1].value <= 0 || args[1].value > 10)
+        throw new Error("Supertrend multiplier must be a number in (0, 10].");
+      for (const field of ["high", "low", "close"]) dependencies.add(field);
+      categories.add("Technical");
+      return a.name === "supertrend" ? "price" : "scalar";
     }
     throw new Error("Unsupported function.");
   }
@@ -807,7 +837,9 @@ export function evaluateScan(
           throw new MissingData(`${name}: source field is unavailable.`);
         if (["open", "high", "low", "close"].includes(name) && v <= 0)
           throw new MissingData(`${name}: price must be positive.`);
-        if (["volume", "openinterest"].includes(name) && v < 0)
+        if (name === "volume" && v <= 0)
+          throw new MissingData("volume: positive volume is required.");
+        if (name === "openinterest" && v < 0)
           throw new MissingData(`${name}: value cannot be negative.`);
         return v;
       };
@@ -1159,6 +1191,110 @@ export function evaluateScan(
             for (let j = i - smoothD + 1; j <= i; j++) sumD += smoothKAt(j);
             value = sumD / smoothD;
           }
+        } else if (name === "obv") {
+          if (i < 1)
+            throw new MissingData(
+              "OBV requires at least 2 eligible price and volume observations.",
+            );
+          field("close", 0);
+          field("volume", 0);
+          let obvVal = 0;
+          for (let j = 1; j <= i; j++) {
+            const cNow = field("close", j),
+              cPrev = field("close", j - 1),
+              vol = field("volume", j);
+            if (cNow > cPrev) obvVal += vol;
+            else if (cNow < cPrev) obvVal -= vol;
+          }
+          value = obvVal;
+        } else if (name === "mfi") {
+          const n = lookback(args[0], 2);
+          if (i < n)
+            throw new MissingData(
+              `MFI(${n}) requires at least ${n + 1} eligible OHLCV observations.`,
+            );
+          const tpAt = (at: number): number => {
+            const h = field("high", at),
+              l = field("low", at),
+              c = field("close", at);
+            if (h < l) throw new MissingData("OHLC high cannot be below low.");
+            return (h + l + c) / 3;
+          };
+          field("volume", i - n);
+          let posFlow = 0;
+          let negFlow = 0;
+          let prevTp = tpAt(i - n);
+          for (let j = i - n + 1; j <= i; j++) {
+            const curTp = tpAt(j);
+            const vol = field("volume", j);
+            const rawFlow = curTp * vol;
+            if (curTp > prevTp) posFlow += rawFlow;
+            else if (curTp < prevTp) negFlow += rawFlow;
+            prevTp = curTp;
+          }
+          value =
+            posFlow === 0 && negFlow === 0
+              ? 50
+              : negFlow === 0
+                ? 100
+                : 100 - 100 / (1 + posFlow / negFlow);
+        } else if (name === "supertrend" || name === "supertrenddir") {
+          const n = lookback(args[0], 2);
+          const mult = (args[1] as { kind: "number"; value: number }).value;
+          if (i < n)
+            throw new MissingData(
+              `Supertrend(${n},${mult}) requires at least ${n + 1} eligible OHLC observations.`,
+            );
+          const trs: number[] = [];
+          for (let at = 1; at <= i; at++) {
+            const h = field("high", at),
+              l = field("low", at),
+              prevC = field("close", at - 1);
+            if (h < l) throw new MissingData("OHLC high cannot be below low.");
+            trs.push(Math.max(h - l, Math.abs(h - prevC), Math.abs(l - prevC)));
+          }
+          let atrVal = trs.slice(0, n).reduce((s, x) => s + x, 0) / n;
+          const hSeed = field("high", n),
+            lSeed = field("low", n),
+            cSeed = field("close", n),
+            prevSeed = field("close", n - 1),
+            hl2Seed = (hSeed + lSeed) / 2;
+          let finalUpper = hl2Seed + mult * atrVal;
+          let finalLower = hl2Seed - mult * atrVal;
+          let dir =
+            cSeed > hl2Seed
+              ? 1
+              : cSeed < hl2Seed
+                ? -1
+                : cSeed >= prevSeed
+                  ? 1
+                  : -1;
+          let st = dir === 1 ? finalLower : finalUpper;
+          for (let at = n + 1; at <= i; at++) {
+            atrVal = (atrVal * (n - 1) + trs[at - 1]) / n;
+            const h = field("high", at),
+              l = field("low", at),
+              c = field("close", at),
+              prevC = field("close", at - 1),
+              hl2 = (h + l) / 2,
+              basicUpper = hl2 + mult * atrVal,
+              basicLower = hl2 - mult * atrVal;
+            finalUpper =
+              basicUpper < finalUpper || prevC > finalUpper
+                ? basicUpper
+                : finalUpper;
+            finalLower =
+              basicLower > finalLower || prevC < finalLower
+                ? basicLower
+                : finalLower;
+            if (dir === -1 && c > finalUpper) {
+              dir = 1;
+            } else if (dir === 1 && c < finalLower) {
+              dir = -1;
+            }
+            st = dir === 1 ? finalLower : finalUpper;
+          }
+          value = name === "supertrend" ? st : dir;
         } else {
           const n = lookback(
             args[1],

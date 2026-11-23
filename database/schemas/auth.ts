@@ -16,6 +16,7 @@ export const authUsers = sqliteTable(
     passwordSalt: text("password_salt"),
     authProvider: text("auth_provider").notNull().default("email"),
     googleSub: text("google_sub"),
+    avatarId: text("avatar_id"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },

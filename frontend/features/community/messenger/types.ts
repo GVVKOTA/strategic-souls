@@ -29,6 +29,7 @@ export type InboxThread = {
   lastMessageText?: string | null;
   lastMessageAt?: string | null;
   lastMessageRetracted?: number | null;
+  lastMessageHasReference?: number | null;
   lastMessageIsMine?: number | null;
 };
 
@@ -156,9 +157,22 @@ export function dateDividerLabel(iso: string): string {
 
 export function inboxPreviewText(item: InboxThread): string {
   if (item.lastMessageRetracted) return "Message retracted";
-  if (item.lastMessageText && item.lastMessageText.trim().length > 0) {
-    const prefix = item.lastMessageIsMine ? "You: " : "";
-    return prefix + item.lastMessageText.replace(/\s+/g, " ").trim();
+  const prefix = item.lastMessageIsMine ? "You: " : "";
+  const cleaned =
+    typeof item.lastMessageText === "string"
+      ? item.lastMessageText
+          .replace(/[\u200B-\u200D\uFEFF]/g, "")
+          .replace(/\s+/g, " ")
+          .trim()
+      : "";
+  if (item.lastMessageHasReference && (!cleaned || cleaned === ".")) {
+    return `${prefix}Shared a Soul`;
+  }
+  if (cleaned.length > 0) {
+    return prefix + cleaned;
+  }
+  if (item.lastMessageHasReference) {
+    return `${prefix}Shared a Soul`;
   }
   if (item.state === "REQUESTED") {
     return item.requestedByMe ? "Message request sent" : "Message request";

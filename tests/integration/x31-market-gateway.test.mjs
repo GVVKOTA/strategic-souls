@@ -112,9 +112,12 @@ function createMockAngelOneFetcher() {
     if (u.includes("getCandleData")) {
       const req = JSON.parse(String(init?.body ?? "{}"));
       const base = req.exchange === "MCX" ? 120000 : 1140;
+      const anchorMs = Date.now() - 86_400_000;
       const rows = Array.from({ length: 25 }, (_, i) => {
-        const day = String(i + 1).padStart(2, "0");
-        return [`2026-10-${day}T00:00:00+05:30`, base + i, base + i + 10, base + i - 5, base + i + 5, 10000 + i * 100];
+        const dayIso = new Date(anchorMs - (24 - i) * 86_400_000)
+          .toISOString()
+          .slice(0, 10);
+        return [`${dayIso}T00:00:00+05:30`, base + i, base + i + 10, base + i - 5, base + i + 5, 10000 + i * 100];
       });
       return Response.json({ status: true, message: "SUCCESS", data: rows });
     }

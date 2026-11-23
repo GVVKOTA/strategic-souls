@@ -124,3 +124,40 @@ export function resolveAvatarPreset(value: unknown): AvatarPreset {
   const id = normalizeAvatarId(value);
   return AVATAR_BY_ID.get(id) ?? AVATAR_CATALOG[0];
 }
+
+/**
+ * Cryptographically secure random selection across all 50 active avatar IDs (a01–e10).
+ * Uses unbiased 32-bit rejection sampling over crypto.getRandomValues(Uint8Array(4)).
+ */
+export function pickRandomAvatarId(
+  excludeIds: readonly string[] = [],
+): string {
+  const excluded = new Set(
+    excludeIds
+      .filter((x): x is string => typeof x === "string")
+      .map((x) => x.trim().toLowerCase()),
+  );
+  const filtered = AVATAR_CATALOG.filter((item) => !excluded.has(item.id));
+  const candidates = filtered.length > 0 ? filtered : AVATAR_CATALOG;
+  const count = candidates.length;
+  const maxUnbiased = Math.floor(0x1_0000_0000 / count) * count;
+
+  if (
+    typeof globalThis.crypto !== "undefined" &&
+    typeof globalThis.crypto.getRandomValues === "function"
+  ) {
+    const buf = new Uint8Array(4);
+    for (let attempt = 0; attempt < 16; attempt++) {
+      globalThis.crypto.getRandomValues(buf);
+      const rand =
+        ((buf[0]! << 24) >>> 0) +
+        ((buf[1]! << 16) >>> 0) +
+        ((buf[2]! << 8) >>> 0) +
+        (buf[3]! >>> 0);
+      if (rand < maxUnbiased) {
+        return candidates[rand % count]!.id;
+      }
+    }
+  }
+  return candidates[Math.floor(Math.random() * count)]!.id;
+}

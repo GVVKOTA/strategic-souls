@@ -157,13 +157,18 @@ export default function ChatInbox({
       <div className="x54-inbox-list" role="list">
         {filtered.map((c) => {
           const isActive = activeThreadId === c.id;
+          const isUnread = c.unread > 0;
           const stamp = inboxTimeLabel(c.lastMessageAt || c.updatedAt);
           const preview = inboxPreviewText(c);
           return (
             <div
               key={c.id}
               role="listitem"
-              className={"x54-inbox-row" + (isActive ? " is-active" : "")}
+              className={
+                "x54-inbox-row" +
+                (isActive ? " is-active" : "") +
+                (isUnread ? " is-unread" : "")
+              }
             >
               <button
                 type="button"
@@ -177,7 +182,7 @@ export default function ChatInbox({
                 <AvatarBadge
                   avatarId={c.avatar}
                   displayName={c.displayName}
-                  size={44}
+                  size={46}
                 />
               </button>
               <button
@@ -188,15 +193,18 @@ export default function ChatInbox({
               >
                 <div className="x54-inbox-row-top">
                   <span className="x54-inbox-name-wrap">
-                    <strong>{c.displayName || `@${c.handle}`}</strong>
+                    <strong className="x54-inbox-display-name">
+                      {c.displayName || `@${c.handle}`}
+                    </strong>
                     <span className="x54-inbox-handle">@{c.handle}</span>
                   </span>
-                  <span className="x54-inbox-time">{stamp}</span>
+                  {stamp && <span className="x54-inbox-time">{stamp}</span>}
                 </div>
                 <div className="x54-inbox-row-bottom">
                   <span
                     className={
                       "x54-inbox-preview" +
+                      (isUnread ? " is-unread" : "") +
                       (c.lastMessageRetracted ? " is-retracted" : "") +
                       (c.state === "REQUESTED" && !c.requestedByMe ? " is-request" : "")
                     }
@@ -211,7 +219,7 @@ export default function ChatInbox({
                         aria-label="Muted"
                       />
                     )}
-                    {c.unread > 0 && (
+                    {isUnread && (
                       <span
                         className="x54-unread-pill"
                         aria-label={`${c.unread} unread`}

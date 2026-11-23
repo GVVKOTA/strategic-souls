@@ -41,7 +41,9 @@
 
 .x54-inbox-title-row h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.32rem;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
   font-weight: 700;
   color: var(--x1-title-blue);
 }
@@ -157,32 +159,48 @@
 
 .x54-inbox-list {
   flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 14px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 
 .x54-inbox-row {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  transition: background 120ms ease;
+  gap: 12px;
+  min-height: 66px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--x51-hairline-strong);
+  background: var(--x1-surface-2);
+  box-sizing: border-box;
+  transition: background 120ms ease, border-color 120ms ease;
 }
 
 .x54-inbox-row:hover {
-  background: var(--x1-surface-2);
+  background: var(--x1-surface-3);
+  border-color: rgba(118, 192, 255, 0.38);
+}
+
+.x54-inbox-row.is-unread {
+  border-color: rgba(118, 192, 255, 0.52);
+  background: var(--x1-surface-3);
 }
 
 .x54-inbox-row.is-active {
-  background: rgba(118, 192, 255, 0.12);
+  border-color: var(--x1-title-blue);
+  background: rgba(118, 192, 255, 0.14);
 }
 
 .x1-app .x2-social .x54-inbox-avatar-btn,
 .x54-inbox-avatar-btn {
   padding: 0;
-  min-width: 44px;
-  min-height: 44px;
+  min-width: 46px;
+  min-height: 46px;
   border: 0;
   background: transparent;
   border-radius: 999px;
@@ -195,7 +213,7 @@
 .x54-inbox-main-btn {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 4px 0;
+  padding: 2px 0;
   border: 0;
   background: transparent;
   color: inherit;
@@ -204,7 +222,7 @@
   flex-direction: column;
   align-items: stretch;
   justify-content: center;
-  gap: 3px;
+  gap: 4px;
   cursor: pointer;
 }
 
@@ -212,19 +230,22 @@
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
 }
 
 .x54-inbox-name-wrap {
   display: flex;
   align-items: baseline;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
 }
 
-.x54-inbox-name-wrap strong {
-  font-size: 0.92rem;
+.x54-inbox-name-wrap strong,
+.x54-inbox-display-name {
+  font-size: 1.05rem;
+  line-height: 1.3;
   font-weight: 600;
   color: var(--x1-text-primary);
   white-space: nowrap;
@@ -233,16 +254,16 @@
 }
 
 .x54-inbox-handle {
-  font-size: 0.76rem;
-  color: var(--x1-text-muted);
+  font-size: 0.8rem;
+  color: var(--x1-text-tertiary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .x54-inbox-time {
-  font-size: 0.75rem;
-  color: var(--x1-text-muted);
+  font-size: 0.78rem;
+  color: var(--x1-text-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
@@ -256,12 +277,18 @@
 }
 
 .x54-inbox-preview {
-  font-size: 0.82rem;
+  font-size: 0.86rem;
+  line-height: 1.38;
   color: var(--x1-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+.x54-inbox-preview.is-unread {
+  color: var(--x1-text-primary);
+  font-weight: 600;
 }
 
 .x54-inbox-preview.is-retracted {
@@ -851,7 +878,7 @@
   .x54-messenger-shell {
     grid-template-columns: 1fr;
     height: auto;
-    min-height: 420px;
+    min-height: 0;
     border-radius: 14px;
   }
 

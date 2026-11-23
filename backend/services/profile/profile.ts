@@ -5,12 +5,18 @@ import {
   DEFAULT_AVATAR_ID,
   isValidAvatarPresetId,
   normalizeAvatarId,
+  pickRandomAvatarId,
 } from "./avatars";
 import {
   DEFAULT_BANNER_ID,
   isValidBannerPresetId,
   resolveBannerPreset,
 } from "./banners";
+import {
+  getIndianStateByCode,
+  normalizeStoredStateCode,
+  parseIndianStateCode,
+} from "./indian-states";
 
 async function getSocialCounts(subject: string): Promise<{
   followers: number;
@@ -79,6 +85,7 @@ export type StoredProfileRecord = {
   bannerPresetId?: string;
   bannerPosition?: BannerPosition;
   bannerOverlay?: number;
+  stateCode?: string | null;
   age?: number | null;
   showAge?: boolean;
   genderSymbol?: GenderSymbolOption;
@@ -109,6 +116,8 @@ export type UserProfileSnapshot = {
   bannerPresetId: string;
   bannerPosition: BannerPosition;
   bannerOverlay: number;
+  stateCode: string | null;
+  stateName: string | null;
   age: number | null;
   showAge: boolean;
   genderSymbol: GenderSymbolOption;
@@ -296,6 +305,7 @@ async function readStoredProfileRecord(
         Number.isFinite(parsed.bannerOverlay)
           ? Math.max(0.35, Math.min(0.92, parsed.bannerOverlay))
           : 0.65,
+      stateCode: normalizeStoredStateCode(parsed.stateCode),
       age: parseStoredAge(parsed.age),
       showAge: parsed.showAge === true,
       genderSymbol: parseGenderSymbol(parsed.genderSymbol),
@@ -367,6 +377,82 @@ async function ensureConsentAccount(
   void fallbackDisplayName;
 }
 
+async function resolveOrBackfillAvatarId(
+  subject: string,
+  storedAvatar?: string | null,
+  bodyAvatar?: string | null,
+): Promise<string> {
+  if (storedAvatar && isValidAvatarPresetId(storedAvatar.trim().toLowerCase())) {
+    return normalizeAvatarId(storedAvatar);
+  }
+  if (bodyAvatar && isValidAvatarPresetId(bodyAvatar.trim().toLowerCase())) {
+    return normalizeAvatarId(bodyAvatar);
+  }
+  const db = database();
+  const authRow = await db
+    .prepare("SELECT avatar_id FROM auth_users WHERE id = ?")
+    .bind(subject)
+    .first<{ avatar_id: string | null }>()
+    .catch(() => null);
+  if (
+    authRow?.avatar_id &&
+    isValidAvatarPresetId(authRow.avatar_id.trim().toLowerCase())
+  ) {
+    return normalizeAvatarId(authRow.avatar_id);
+  }
+
+  // Safe, idempotent one-time backfill for existing accounts without a stored avatar.
+  const assigned = pickRandomAvatarId();
+  const now = new Date().toISOString();
+  await db
+    .prepare(
+      "UPDATE auth_users SET avatar_id = COALESCE(avatar_id, ?) WHERE id = ?",
+    )
+    .bind(assigned, subject)
+    .run()
+    .catch(() => {});
+
+  const initialRecord: StoredProfileRecord = {
+    avatarKind: "preset",
+    avatarPresetId: assigned,
+    bannerPresetId: DEFAULT_BANNER_ID,
+    bannerPosition: "center",
+    bannerOverlay: 0.65,
+    stateCode: null,
+    preferences: { ...DEFAULT_UI_PREFERENCES },
+    updatedAt: now,
+  };
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO x1_records (id, subject, kind, name, payload, version, archived, last_write, created_at, updated_at)
+       VALUES (?, ?, ?, 'Account Profile', ?, 1, 0, ?, ?, ?)`,
+    )
+    .bind(
+      profileRecordId(subject),
+      subject,
+      PROFILE_RECORD_KIND,
+      JSON.stringify(initialRecord),
+      crypto.randomUUID(),
+      now,
+      now,
+    )
+    .run()
+    .catch(() => {});
+
+  const afterAuth = await db
+    .prepare("SELECT avatar_id FROM auth_users WHERE id = ?")
+    .bind(subject)
+    .first<{ avatar_id: string | null }>()
+    .catch(() => null);
+  if (
+    afterAuth?.avatar_id &&
+    isValidAvatarPresetId(afterAuth.avatar_id.trim().toLowerCase())
+  ) {
+    return normalizeAvatarId(afterAuth.avatar_id);
+  }
+  return assigned;
+}
+
 /** Fast summary used by /api/auth/session so top-right header renders real persisted avatar immediately. */
 export async function getSessionProfileMeta(subject: string): Promise<{
   avatarId: string;
@@ -375,11 +461,14 @@ export async function getSessionProfileMeta(subject: string): Promise<{
   discoverable: boolean;
   legacyPrivateProfile: boolean;
   unreadNotifications: number;
+  stateCode: string | null;
+  stateName: string | null;
   age: number | null;
   showAge: boolean;
   genderSymbol: GenderSymbolOption;
   instagramHandle: string;
   bannerPresetId: string;
+  bannerPosition: BannerPosition;
   portfolioBackdrop: PortfolioBackdropSettings;
   defaultPostAudience: "PUBLIC" | "FOLLOWERS" | "GROUP";
   counts: { followers: number; following: number; publishedSouls: number };
@@ -410,22 +499,28 @@ export async function getSessionProfileMeta(subject: string): Promise<{
     getSocialCounts(subject),
   ]);
 
-  // Prefer the dedicated account-profile preset when saved; fall back to x1_bodies.avatar, then default a01.
-  const rawAvatar =
-    stored?.avatarPresetId ?? bodyRow?.avatar ?? DEFAULT_AVATAR_ID;
+  const avatarId = await resolveOrBackfillAvatarId(
+    subject,
+    stored?.avatarPresetId,
+    bodyRow?.avatar,
+  );
+  const stateEntry = getIndianStateByCode(stored?.stateCode ?? null);
 
   return {
-    avatarId: normalizeAvatarId(rawAvatar),
+    avatarId,
     handle: bodyRow?.handle ?? null,
     bio: bodyRow?.bio ?? "",
     discoverable: !!prefsRow?.discoverable,
     legacyPrivateProfile: !!bodyRow && !prefsRow?.discoverable,
     unreadNotifications: Number(unreadRow?.count ?? 0),
+    stateCode: stateEntry?.code ?? null,
+    stateName: stateEntry?.name ?? null,
     age: stored?.age ?? null,
     showAge: stored?.showAge === true,
     genderSymbol: stored?.genderSymbol ?? "HIDDEN",
     instagramHandle: stored?.instagramHandle ?? "",
     bannerPresetId: stored?.bannerPresetId ?? DEFAULT_BANNER_ID,
+    bannerPosition: stored?.bannerPosition ?? "center",
     portfolioBackdrop:
       stored?.portfolioBackdrop ?? { ...DEFAULT_PORTFOLIO_BACKDROP },
     defaultPostAudience: stored?.defaultPostAudience ?? "PUBLIC",
@@ -497,9 +592,12 @@ export async function getPrivateProfile(user: {
 
   const notifications = notificationsRes.results ?? [];
   const unreadNotifications = notifications.filter((n) => !n.readAt).length;
-  const avatarId = normalizeAvatarId(
-    stored?.avatarPresetId ?? bodyRow?.avatar ?? DEFAULT_AVATAR_ID,
+  const avatarId = await resolveOrBackfillAvatarId(
+    subject,
+    stored?.avatarPresetId,
+    bodyRow?.avatar,
   );
+  const stateEntry = getIndianStateByCode(stored?.stateCode ?? null);
   const social: SocialSettingsSnapshot = socialRow
     ? {
         discoverable: !!socialRow.discoverable,
@@ -523,6 +621,8 @@ export async function getPrivateProfile(user: {
     bannerPresetId: stored?.bannerPresetId ?? DEFAULT_BANNER_ID,
     bannerPosition: stored?.bannerPosition ?? "center",
     bannerOverlay: stored?.bannerOverlay ?? 0.65,
+    stateCode: stateEntry?.code ?? null,
+    stateName: stateEntry?.name ?? null,
     age: stored?.age ?? null,
     showAge: stored?.showAge === true,
     genderSymbol: stored?.genderSymbol ?? "HIDDEN",
@@ -595,13 +695,20 @@ export async function mutatePrivateProfile(
 
     await upsertStoredProfileRecord(subject, nextRecord);
 
-    // Keep Community x1_bodies.avatar synchronized if the user already has a Community profile
-    await db
-      .prepare(
-        "UPDATE x1_bodies SET avatar = ?, updated_at = ? WHERE subject = ?",
-      )
-      .bind(rawId, now, subject)
-      .run();
+    // Keep auth_users.avatar_id and Community x1_bodies.avatar synchronized
+    await Promise.all([
+      db
+        .prepare("UPDATE auth_users SET avatar_id = ?, updated_at = ? WHERE id = ?")
+        .bind(rawId, now, subject)
+        .run()
+        .catch(() => {}),
+      db
+        .prepare(
+          "UPDATE x1_bodies SET avatar = ?, updated_at = ? WHERE subject = ?",
+        )
+        .bind(rawId, now, subject)
+        .run(),
+    ]);
 
     return getPrivateProfile(user);
   }
@@ -622,12 +729,14 @@ export async function mutatePrivateProfile(
       .bind(subject)
       .first<{ handle: string; bio: string; avatar: string }>();
 
-    const currentAvatarId = normalizeAvatarId(
-      input.avatarPresetId ??
-        existingRecord?.avatarPresetId ??
-        existingBody?.avatar ??
-        DEFAULT_AVATAR_ID,
-    );
+    const currentAvatarId =
+      input.avatarPresetId !== undefined
+        ? normalizeAvatarId(input.avatarPresetId)
+        : await resolveOrBackfillAvatarId(
+            subject,
+            existingRecord?.avatarPresetId,
+            existingBody?.avatar,
+          );
     if (
       input.avatarPresetId !== undefined &&
       !isValidAvatarPresetId(
@@ -774,6 +883,41 @@ export async function mutatePrivateProfile(
         ? sanitizeInterests(input.researchInterests)
         : existingRecord?.researchInterests ?? [];
 
+    let nextStateCode: string | null = existingRecord?.stateCode ?? null;
+    if (input.stateCode !== undefined) {
+      try {
+        nextStateCode = parseIndianStateCode(input.stateCode);
+      } catch (err) {
+        throw new HttpError(
+          400,
+          err instanceof Error
+            ? err.message
+            : "Choose a valid Indian State or Union Territory, or select 'Prefer not to show'.",
+        );
+      }
+    }
+
+    await Promise.all([
+      db
+        .prepare("UPDATE auth_users SET avatar_id = ?, updated_at = ? WHERE id = ?")
+        .bind(currentAvatarId, now, subject)
+        .run()
+        .catch(() => {}),
+      db
+        .prepare(
+          `INSERT INTO x56_profile_metadata (subject, state_code, banner_id, banner_align, updated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(subject) DO UPDATE SET
+             state_code = excluded.state_code,
+             banner_id = excluded.banner_id,
+             banner_align = excluded.banner_align,
+             updated_at = excluded.updated_at`,
+        )
+        .bind(subject, nextStateCode, nextBannerId, nextBannerPos, now)
+        .run()
+        .catch(() => {}),
+    ]);
+
     await upsertStoredProfileRecord(subject, {
       ...(existingRecord ?? {
         avatarKind: "preset",
@@ -786,6 +930,7 @@ export async function mutatePrivateProfile(
       bannerPresetId: nextBannerId,
       bannerPosition: nextBannerPos,
       bannerOverlay: nextBannerOverlay,
+      stateCode: nextStateCode,
       age: nextAge,
       showAge: nextShowAge,
       genderSymbol: nextGenderSymbol,
@@ -826,15 +971,21 @@ export async function mutatePrivateProfile(
         ? input.defaultPostAudience
         : existingRecord?.defaultPostAudience ?? "PUBLIC";
 
+    const currentPrefAvatarId = await resolveOrBackfillAvatarId(
+      subject,
+      existingRecord?.avatarPresetId,
+      null,
+    );
+
     await upsertStoredProfileRecord(subject, {
       ...(existingRecord ?? {
         avatarKind: "preset",
-        avatarPresetId: DEFAULT_AVATAR_ID,
+        avatarPresetId: currentPrefAvatarId,
         preferences: nextPrefs,
         updatedAt: now,
       }),
       avatarKind: "preset",
-      avatarPresetId: existingRecord?.avatarPresetId ?? DEFAULT_AVATAR_ID,
+      avatarPresetId: currentPrefAvatarId,
       portfolioBackdrop: nextPortfolioBackdrop,
       defaultPostAudience: nextAudience,
       preferences: nextPrefs,

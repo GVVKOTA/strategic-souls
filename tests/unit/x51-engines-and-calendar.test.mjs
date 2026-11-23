@@ -5,7 +5,12 @@ import assert from "node:assert/strict";
 const { compileFormula, evaluateScan } = await import("../../backend/engines/scan.ts");
 const {
   CLASSIC_50_PRESETS,
+  CLASSIC_CATEGORY_COUNTS,
   CLASSIC_PRESET_CATEGORIES,
+  LEGACY_CLASSIC_PRESET_ALIASES,
+  findClassicPresetById,
+  resolveClassicPresetId,
+  searchClassicPresets,
 } = await import("../../backend/services/research/classic-presets.ts");
 const {
   DISCOVER_EXAMPLES,
@@ -64,7 +69,7 @@ function buildSyntheticDataset(
   };
 }
 
-test("Classic Soul Scan catalog has exactly 50 unique presets across 5 categories x 10 rules, all compiling and evaluating deterministically", () => {
+test("Classic Soul Scan catalog has exactly 50 unique presets across 5 categories (14 MA, 8 RSI, 6 MACD, 11 Volatility, 11 Trend & Volume), all compiling and evaluating deterministically", () => {
   assert.equal(CLASSIC_50_PRESETS.length, 50);
   assert.equal(CLASSIC_PRESET_CATEGORIES.length, 5);
 
@@ -81,6 +86,10 @@ test("Classic Soul Scan catalog has exactly 50 unique presets across 5 categorie
   for (const preset of CLASSIC_50_PRESETS) {
     assert.ok(!ids.has(preset.id), `Duplicate preset id: ${preset.id}`);
     assert.ok(!numbers.has(preset.number), `Duplicate preset number: ${preset.number}`);
+    assert.equal(preset.rankCode, String(preset.number).padStart(2, "0"));
+    assert.ok(preset.shortDescription && preset.shortDescription.length >= 20);
+    assert.ok(["event", "state"].includes(preset.ruleType));
+    assert.ok(["bullish", "bearish", "neutral"].includes(preset.signalBias));
     ids.add(preset.id);
     numbers.add(preset.number);
     byCat.set(preset.category, (byCat.get(preset.category) ?? 0) + 1);
@@ -96,12 +105,40 @@ test("Classic Soul Scan catalog has exactly 50 unique presets across 5 categorie
     );
   }
 
+  const expectedCounts = {
+    "Moving Averages": 14,
+    RSI: 8,
+    MACD: 6,
+    "Volatility & Breakouts": 11,
+    "Trend & Volume": 11,
+  };
   for (const cat of CLASSIC_PRESET_CATEGORIES) {
-    assert.equal(byCat.get(cat), 10, `Category ${cat} must contain exactly 10 rules`);
+    assert.equal(
+      byCat.get(cat),
+      expectedCounts[cat],
+      `Category ${cat} must contain exactly ${expectedCounts[cat]} rules`,
+    );
+    assert.equal(CLASSIC_CATEGORY_COUNTS[cat], expectedCounts[cat]);
   }
   for (let n = 1; n <= 50; n++) {
     assert.ok(numbers.has(n), `Missing preset #${n}`);
   }
+
+  // Legacy X5.1 preset aliases resolve cleanly to valid canonical presets
+  for (const [legacyId, canonicalId] of Object.entries(
+    LEGACY_CLASSIC_PRESET_ALIASES,
+  )) {
+    assert.equal(resolveClassicPresetId(legacyId), canonicalId);
+    const resolved = findClassicPresetById(legacyId);
+    assert.ok(resolved, `Legacy preset ${legacyId} failed to resolve`);
+    assert.equal(resolved.id, canonicalId);
+  }
+
+  // Search by synonym ("golden cross", "supertrend", "oversold") and category filter
+  const golden = searchClassicPresets("golden cross", "ALL");
+  assert.ok(golden.some((p) => p.number === 18));
+  const stMatches = searchClassicPresets("supertrend", "Volatility & Breakouts");
+  assert.equal(stMatches.length, 2);
 });
 
 test("Zero-volume protection: volume ratio preset yields UNKNOWN (never division by zero or Infinity) when average volume is 0", () => {

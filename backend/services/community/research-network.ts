@@ -14,6 +14,10 @@ import {
   resolveBannerPreset,
 } from "../profile/banners";
 import { normalizeAvatarId } from "../profile/avatars";
+import {
+  getIndianStateByCode,
+  normalizeStoredStateCode,
+} from "../profile/indian-states";
 
 const CONSENT_VERSION = "2026-11-14-v4";
 
@@ -136,6 +140,8 @@ async function readExtendedProfileMeta(subject: string): Promise<{
   age: number | null;
   showAge: boolean;
   genderSymbol: "MALE" | "FEMALE" | "HIDDEN";
+  stateCode: string | null;
+  stateName: string | null;
   bannerPresetId: string;
   bannerPosition: "top" | "center" | "bottom";
   bannerOverlay: number;
@@ -144,19 +150,40 @@ async function readExtendedProfileMeta(subject: string): Promise<{
   researchInterests: string[];
 }> {
   try {
-    const row = await database()
-      .prepare(
-        "SELECT payload FROM x1_records WHERE subject=? AND kind='account-profile' AND archived=0 ORDER BY updated_at DESC LIMIT 1",
-      )
-      .bind(subject)
-      .first<{ payload: string }>();
+    const [row, bodyMeta] = await Promise.all([
+      database()
+        .prepare(
+          "SELECT payload FROM x1_records WHERE subject=? AND kind='account-profile' AND archived=0 ORDER BY updated_at DESC LIMIT 1",
+        )
+        .bind(subject)
+        .first<{ payload: string }>()
+        .catch(() => null),
+      database()
+        .prepare(
+          "SELECT state_code, banner_id, banner_align FROM x56_profile_metadata WHERE subject=?",
+        )
+        .bind(subject)
+        .first<{
+          state_code: string | null;
+          banner_id: string | null;
+          banner_align: string | null;
+        }>()
+        .catch(() => null),
+    ]);
     if (!row) {
+      const bodyState = getIndianStateByCode(bodyMeta?.state_code ?? null);
+      const bodyAlign =
+        bodyMeta?.banner_align === "top" || bodyMeta?.banner_align === "bottom"
+          ? bodyMeta.banner_align
+          : "center";
       return {
         age: null,
         showAge: false,
         genderSymbol: "HIDDEN",
-        bannerPresetId: DEFAULT_BANNER_ID,
-        bannerPosition: "center",
+        stateCode: bodyState?.code ?? null,
+        stateName: bodyState?.name ?? null,
+        bannerPresetId: resolveBannerPreset(bodyMeta?.banner_id ?? null).id,
+        bannerPosition: bodyAlign,
         bannerOverlay: 0.65,
         instagramHandle: "",
         websiteUrl: "",
@@ -171,7 +198,10 @@ async function readExtendedProfileMeta(subject: string): Promise<{
     const bp =
       p.bannerPosition === "top" || p.bannerPosition === "bottom"
         ? p.bannerPosition
-        : "center";
+        : bodyMeta?.banner_align === "top" ||
+            bodyMeta?.banner_align === "bottom"
+          ? bodyMeta.banner_align
+          : "center";
     const bo =
       typeof p.bannerOverlay === "number" && Number.isFinite(p.bannerOverlay)
         ? Math.max(0.35, Math.min(0.92, p.bannerOverlay))
@@ -181,12 +211,19 @@ async function readExtendedProfileMeta(subject: string): Promise<{
         ? p.age
         : null;
     const showAge = p.showAge === true;
+    const stateEntry = getIndianStateByCode(
+      normalizeStoredStateCode(p.stateCode) ?? bodyMeta?.state_code ?? null,
+    );
     return {
       age: rawAge,
       showAge,
       genderSymbol: gs,
+      stateCode: stateEntry?.code ?? null,
+      stateName: stateEntry?.name ?? null,
       bannerPresetId: resolveBannerPreset(
-        typeof p.bannerPresetId === "string" ? p.bannerPresetId : null,
+        typeof p.bannerPresetId === "string"
+          ? p.bannerPresetId
+          : bodyMeta?.banner_id ?? null,
       ).id,
       bannerPosition: bp,
       bannerOverlay: bo,
@@ -202,6 +239,8 @@ async function readExtendedProfileMeta(subject: string): Promise<{
       age: null,
       showAge: false,
       genderSymbol: "HIDDEN",
+      stateCode: null,
+      stateName: null,
       bannerPresetId: DEFAULT_BANNER_ID,
       bannerPosition: "center",
       bannerOverlay: 0.65,
@@ -1031,6 +1070,8 @@ export async function getPublicResearcherProfile(
       displayName: target.display_name,
       bio: target.bio,
       avatarId: normalizeAvatarId(target.avatar),
+      stateCode: ext.stateCode,
+      stateName: ext.stateName,
       age: ext.showAge ? ext.age : null,
       genderSymbol: ext.genderSymbol,
       bannerPresetId: ext.bannerPresetId,

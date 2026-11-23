@@ -296,6 +296,7 @@ async function inbox(subject: string, q = "") {
             (SELECT CASE WHEN x.retracted_at IS NOT NULL THEN '' ELSE x.content END FROM x2_messages x WHERE x.conversation_id=c.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1) AS lastMessageText,
             (SELECT x.created_at FROM x2_messages x WHERE x.conversation_id=c.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1) AS lastMessageAt,
             (SELECT CASE WHEN x.retracted_at IS NOT NULL THEN 1 ELSE 0 END FROM x2_messages x WHERE x.conversation_id=c.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1) AS lastMessageRetracted,
+            (SELECT CASE WHEN x.retracted_at IS NULL AND x.reference_soul IS NOT NULL THEN 1 ELSE 0 END FROM x2_messages x WHERE x.conversation_id=c.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1) AS lastMessageHasReference,
             (SELECT CASE WHEN x.sender=? THEN 1 ELSE 0 END FROM x2_messages x WHERE x.conversation_id=c.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1) AS lastMessageIsMine
      FROM x2_conversations c
      JOIN x1_bodies b ON b.subject=CASE WHEN c.first_subject=? THEN c.second_subject ELSE c.first_subject END

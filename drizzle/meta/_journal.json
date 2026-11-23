@@ -71,6 +71,13 @@
       "when": 1795320000000,
       "tag": "0009_x52_intelligence_and_pulse",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1795420000000,
+      "tag": "0010_x56_profile_state_and_banner",
+      "breakpoints": true
     }
   ]
 }

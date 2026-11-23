@@ -20,7 +20,11 @@ import { compileFormula } from "../../../backend/engines/scan";
 import type { SoulGenomeReport } from "../../../backend/engines/soul-genome";
 import {
   CLASSIC_50_PRESETS,
+  CLASSIC_CATEGORY_COUNTS,
   CLASSIC_PRESET_CATEGORIES,
+  findClassicPresetByFormula,
+  findClassicPresetById,
+  searchClassicPresets,
   type ClassicPreset,
   type ClassicPresetCategory,
 } from "../../../backend/services/research/classic-presets";
@@ -395,12 +399,18 @@ export default function ResearchWorkspace({
 
   // Classic 50-preset state (selection-only — no freeform typing in Classic!)
   const [selectedClassicId, setSelectedClassicId] = useState<string>(
-    CLASSIC_50_PRESETS[10].id, // Default: Close above SMA(20)
+    CLASSIC_50_PRESETS[0].id, // Default #01: Close crosses above EMA(20)
   );
   const [classicFilter, setClassicFilter] = useState("");
   const [classicCategory, setClassicCategory] = useState<
     "ALL" | ClassicPresetCategory
   >("ALL");
+  const [expandedClassicDetailsId, setExpandedClassicDetailsId] = useState<
+    string | null
+  >(null);
+  const [preModalClassicId, setPreModalClassicId] = useState<string>(
+    CLASSIC_50_PRESETS[0].id,
+  );
 
   // Discover state
   const [discoverQuery, setDiscoverQuery] = useState("");
@@ -410,7 +420,7 @@ export default function ResearchWorkspace({
 
   // Shared Soul definition state — name ALWAYS starts blank for every new Soul
   const [formula, setFormula] = useState(
-    initialFormula || CLASSIC_50_PRESETS[10].formula,
+    initialFormula || CLASSIC_50_PRESETS[0].formula,
   );
   const [tree, setTree] = useState<RuleTree>(defaultTree);
   const [name, setName] = useState("");
@@ -535,27 +545,15 @@ export default function ResearchWorkspace({
 
   const activeClassicPreset = useMemo(
     () =>
-      CLASSIC_50_PRESETS.find((p) => p.id === selectedClassicId) ??
-      CLASSIC_50_PRESETS[10],
+      findClassicPresetById(selectedClassicId) ??
+      CLASSIC_50_PRESETS[0],
     [selectedClassicId],
   );
 
-  const filteredClassicPresets = useMemo(() => {
-    const q = classicFilter.trim().toLowerCase();
-    return CLASSIC_50_PRESETS.filter((p) => {
-      if (classicCategory !== "ALL" && p.category !== classicCategory) {
-        return false;
-      }
-      if (!q) return true;
-      return (
-        p.label.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q) ||
-        p.note.toLowerCase().includes(q) ||
-        p.formula.toLowerCase().includes(q) ||
-        String(p.number) === q
-      );
-    });
-  }, [classicFilter, classicCategory]);
+  const filteredClassicPresets = useMemo(
+    () => searchClassicPresets(classicFilter, classicCategory),
+    [classicFilter, classicCategory],
+  );
 
   const pickerMatches = useMemo(() => {
     if (!pickerQuery.trim()) return [];
@@ -778,7 +776,7 @@ export default function ResearchWorkspace({
     setFormula(value.formula);
     const matchedPreset =
       value.mode === "SIMPLE"
-        ? CLASSIC_50_PRESETS.find((p) => p.formula === value.formula)
+        ? findClassicPresetByFormula(value.formula)
         : undefined;
     if (matchedPreset) {
       setSelectedClassicId(matchedPreset.id);
@@ -1228,17 +1226,34 @@ export default function ResearchWorkspace({
                       type="button"
                       className="x54-formula-card"
                       aria-haspopup="dialog"
-                      aria-label={`Selected rule #${activeClassicPreset.number} ${activeClassicPreset.label}. Tap to change formula.`}
-                      onClick={() => setFormulaPickerOpen(true)}
+                      aria-label={`Selected rule #${activeClassicPreset.rankCode} ${activeClassicPreset.label}. Tap to choose from 50 classic formulas.`}
+                      onClick={() => {
+                        setPreModalClassicId(activeClassicPreset.id);
+                        setFormulaPickerOpen(true);
+                      }}
                     >
                       <div className="x54-formula-card-main">
-                        <strong className="x54-formula-card-title">
-                          #{String(activeClassicPreset.number).padStart(2, "0")} ·{" "}
-                          {activeClassicPreset.label}
-                        </strong>
-                        <code className="x54-formula-card-code">
-                          {activeClassicPreset.formula}
-                        </code>
+                        <div className="x54-formula-card-head">
+                          <span className="x54-formula-rank-badge">
+                            {activeClassicPreset.rankCode}
+                          </span>
+                          <strong className="x54-formula-card-title">
+                            {activeClassicPreset.label}
+                          </strong>
+                        </div>
+                        <span className="x54-formula-card-desc">
+                          {activeClassicPreset.shortDescription}
+                        </span>
+                        <div className="x54-formula-card-meta">
+                          <span className="x51-pill">
+                            {activeClassicPreset.category}
+                          </span>
+                          <span className="x56-rule-type-pill">
+                            {activeClassicPreset.ruleType === "event"
+                              ? "Event rule"
+                              : "State filter"}
+                          </span>
+                        </div>
                       </div>
                       <span className="x54-formula-card-cue" aria-hidden="true">
                         <span>50 rules</span>
@@ -2089,75 +2104,243 @@ export default function ResearchWorkspace({
         </Suspense>
       )}
 
-      {/* [06] Compact Searchable 50-Formula Picker Modal */}
+      {/* [06] Redesigned Zero-Overlap 50-Formula Picker Modal */}
       {formulaPickerOpen && (
         <Modal
-          title="Select Classic Formula (50 Verified Rules)"
+          title="Choose a Formula"
           onClose={() => setFormulaPickerOpen(false)}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <input
-              type="search"
-              value={classicFilter}
-              onChange={(e) => setClassicFilter(e.target.value)}
-              aria-label="Search 50 Classic formulas"
-              placeholder="Search RSI, Golden Cross, MACD, Bollinger, ADX, Volume…"
-              autoFocus
-            />
-            <div className="x51-chip-row" role="group" aria-label="Formula category">
+          <div className="x56-formula-modal-shell">
+            <div className="x56-formula-modal-subhead">
+              <p className="x56-formula-modal-subtitle">
+                {CLASSIC_50_PRESETS.length} beginner-friendly rules · evaluated on completed bars
+              </p>
+              <span className="x56-formula-count-badge" aria-live="polite">
+                Showing {filteredClassicPresets.length} of {CLASSIC_50_PRESETS.length}
+              </span>
+            </div>
+
+            <div className="x56-formula-search-row">
+              <input
+                type="search"
+                className="x56-formula-search-input"
+                value={classicFilter}
+                onChange={(e) => setClassicFilter(e.target.value)}
+                aria-label="Search 50 Classic formulas"
+                placeholder="Search Golden Cross, RSI, MACD, Bollinger, Supertrend, OBV, MFI…"
+                autoFocus
+              />
+              {classicFilter.trim().length > 0 && (
+                <button
+                  type="button"
+                  className="x56-formula-search-clear"
+                  onClick={() => setClassicFilter("")}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            <div
+              className="x56-formula-chip-bar"
+              role="group"
+              aria-label="Filter formulas by indicator category"
+            >
               <button
                 type="button"
-                className={"x51-chip" + (classicCategory === "ALL" ? " is-active" : "")}
+                aria-pressed={classicCategory === "ALL"}
+                className={
+                  "x51-chip" + (classicCategory === "ALL" ? " is-active" : "")
+                }
                 onClick={() => setClassicCategory("ALL")}
               >
-                All (50)
+                All ({CLASSIC_50_PRESETS.length})
               </button>
               {CLASSIC_PRESET_CATEGORIES.map((cat) => (
                 <button
                   key={cat}
                   type="button"
-                  className={"x51-chip" + (classicCategory === cat ? " is-active" : "")}
+                  aria-pressed={classicCategory === cat}
+                  className={
+                    "x51-chip" + (classicCategory === cat ? " is-active" : "")
+                  }
                   onClick={() => setClassicCategory(cat)}
                 >
-                  {cat}
+                  {cat} ({CLASSIC_CATEGORY_COUNTS[cat]})
                 </button>
               ))}
             </div>
+
             <div
-              className="x51-preset-list"
-              style={{ maxHeight: "50vh" }}
+              className="x56-formula-list"
               role="listbox"
               aria-label="50 Classic Soul Scan formulas"
             >
-              {filteredClassicPresets.map((preset) => (
+              {filteredClassicPresets.map((preset) => {
+                const isSelected = activeClassicPreset.id === preset.id;
+                const isExpanded = expandedClassicDetailsId === preset.id;
+                return (
+                  <div
+                    key={preset.id}
+                    role="option"
+                    aria-selected={isSelected}
+                    className={
+                      "x56-formula-item x51-preset-option" +
+                      (isSelected ? " is-active" : "")
+                    }
+                  >
+                    <div className="x56-formula-item-top">
+                      <button
+                        type="button"
+                        className="x56-formula-select-btn"
+                        onClick={() => selectClassicPreset(preset)}
+                        onDoubleClick={() => {
+                          selectClassicPreset(preset);
+                          setFormulaPickerOpen(false);
+                        }}
+                      >
+                        <div className="x56-formula-title-row">
+                          <span className="x54-formula-rank-badge">
+                            {preset.rankCode}
+                          </span>
+                          <strong className="x56-formula-title">
+                            {preset.label}
+                          </strong>
+                        </div>
+                        <p className="x56-formula-meaning">
+                          {preset.shortDescription}
+                        </p>
+                        <div className="x56-formula-badges">
+                          <span className="x51-pill">{preset.category}</span>
+                          <span className="x56-rule-type-pill">
+                            {preset.ruleType === "event"
+                              ? "Event"
+                              : "State"}
+                          </span>
+                          {preset.requiresVolume && (
+                            <span className="x56-rule-type-pill">
+                              Requires Volume
+                            </span>
+                          )}
+                        </div>
+                      </button>
+
+                      <div className="x56-formula-actions-col">
+                        {isSelected && (
+                          <span className="x56-formula-selected-pill">
+                            <Check size={12} aria-hidden="true" />
+                            <span>Selected</span>
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          className="x56-formula-details-btn"
+                          aria-expanded={isExpanded}
+                          aria-label={`Technical details for ${preset.label}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setExpandedClassicDetailsId((prev) =>
+                              prev === preset.id ? null : preset.id,
+                            );
+                          }}
+                        >
+                          {isExpanded ? "Hide details" : "Details"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="x56-formula-drawer">
+                        <code className="x56-formula-drawer-code">
+                          {preset.formula}
+                        </code>
+                        <div className="x56-formula-drawer-grid">
+                          <span>
+                            Type:{" "}
+                            <strong>
+                              {preset.ruleType === "event"
+                                ? "Bar-close transition event"
+                                : "Sustained state filter"}
+                            </strong>
+                          </span>
+                          <span>
+                            Context:{" "}
+                            <strong>{preset.signalBias}</strong>
+                          </span>
+                          <span>
+                            Warm-up:{" "}
+                            <strong>{preset.minBars} completed bars</strong>
+                          </span>
+                          <span>
+                            Inputs:{" "}
+                            <strong>{preset.prerequisites.join(", ")}</strong>
+                          </span>
+                          <span>
+                            Timeframes:{" "}
+                            <strong>
+                              {preset.supportedTimeframes.join(", ")}
+                            </strong>
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {filteredClassicPresets.length === 0 && (
+                <div className="x56-formula-empty">
+                  <p className="x1-caption" style={{ margin: 0 }}>
+                    No Classic formulas matched &ldquo;{classicFilter.trim()}&rdquo;
+                    {classicCategory !== "ALL"
+                      ? ` in ${classicCategory}`
+                      : ""}
+                    .
+                  </p>
+                  <button
+                    type="button"
+                    className="x1-secondary"
+                    onClick={() => {
+                      setClassicFilter("");
+                      setClassicCategory("ALL");
+                    }}
+                  >
+                    Clear search &amp; filters
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="x56-formula-modal-footer">
+              <span className="x56-formula-footer-summary">
+                Active:{" "}
+                <strong>
+                  #{activeClassicPreset.rankCode} · {activeClassicPreset.label}
+                </strong>
+              </span>
+              <div className="x56-formula-footer-actions">
                 <button
-                  key={preset.id}
                   type="button"
-                  role="option"
-                  aria-selected={selectedClassicId === preset.id}
-                  className={
-                    "x51-preset-option" +
-                    (selectedClassicId === preset.id ? " is-active" : "")
-                  }
+                  className="x1-secondary"
                   onClick={() => {
-                    selectClassicPreset(preset);
+                    const prev =
+                      findClassicPresetById(preModalClassicId) ??
+                      CLASSIC_50_PRESETS[0];
+                    selectClassicPreset(prev);
                     setFormulaPickerOpen(false);
                   }}
                 >
-                  <div style={{ minWidth: 0 }}>
-                    <strong style={{ fontSize: "0.86rem" }}>
-                      #{String(preset.number).padStart(2, "0")} · {preset.label}
-                    </strong>
-                    <div className="x1-caption">
-                      <code>{preset.formula}</code> · min {preset.minBars} bars
-                    </div>
-                  </div>
-                  <span className="x51-pill">{preset.category}</span>
+                  Cancel
                 </button>
-              ))}
-              {filteredClassicPresets.length === 0 && (
-                <p className="x1-caption">No matching formulas found.</p>
-              )}
+                <button
+                  type="button"
+                  className="x51-accent-btn"
+                  onClick={() => setFormulaPickerOpen(false)}
+                >
+                  <Check size={15} aria-hidden="true" />
+                  <span>Use formula</span>
+                </button>
+              </div>
             </div>
           </div>
         </Modal>

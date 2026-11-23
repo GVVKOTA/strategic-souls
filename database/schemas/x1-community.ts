@@ -9,6 +9,14 @@ export const x1Bodies = sqliteTable('x1_bodies', {
   avatar: text('avatar').notNull(), createdAt: text('created_at').notNull(), updatedAt: text('updated_at').notNull(),
 }, t => [uniqueIndex('x1_body_handle_unique').on(t.handle)]);
 
+export const x56ProfileMetadata = sqliteTable('x56_profile_metadata', {
+  subject: text('subject').primaryKey().references(() => accounts.subject, { onDelete: 'cascade' }),
+  stateCode: text('state_code'),
+  bannerId: text('banner_id'),
+  bannerAlign: text('banner_align'),
+  updatedAt: text('updated_at').notNull(),
+});
+
 export const x1Groups = sqliteTable('x1_groups', {
   id: text('id').primaryKey(), ownerSubject: text('owner_subject').notNull().references(() => x1Bodies.subject, { onDelete: 'cascade' }),
   name: text('name').notNull(), description: text('description').notNull(), createdAt: text('created_at').notNull(),

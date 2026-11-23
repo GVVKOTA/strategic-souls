@@ -29,6 +29,10 @@ import {
   BANNER_PRESETS,
   resolveBannerPreset,
 } from "../../../backend/services/profile/banners";
+import {
+  INDIAN_STATES_AND_UTS,
+  getIndianStateByCode,
+} from "../../../backend/services/profile/indian-states";
 import { api, Modal, moment, type Notice } from "../../components/workspace/shared";
 import AvatarBadge from "./avatar-badge";
 import AvatarStudio from "./avatar-studio";
@@ -106,6 +110,7 @@ export default function SettingsView({
   const [bannerPresetId, setBannerPresetId] = useState("b01");
   const [bannerPosition, setBannerPosition] = useState<BannerPosition>("center");
   const [bannerOverlay, setBannerOverlay] = useState(0.65);
+  const [stateCode, setStateCode] = useState<string>("");
   const [genderSymbol, setGenderSymbol] = useState<GenderSymbolOption>("HIDDEN");
   const [instagramHandle, setInstagramHandle] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
@@ -149,6 +154,7 @@ export default function SettingsView({
         setBannerPresetId(res.profile.bannerPresetId ?? "b01");
         setBannerPosition(res.profile.bannerPosition ?? "center");
         setBannerOverlay(res.profile.bannerOverlay ?? 0.65);
+        setStateCode(res.profile.stateCode ?? "");
         setGenderSymbol(res.profile.genderSymbol ?? "HIDDEN");
         setInstagramHandle(res.profile.instagramHandle ?? "");
         setWebsiteUrl(res.profile.websiteUrl ?? "");
@@ -201,6 +207,7 @@ export default function SettingsView({
           bannerPresetId,
           bannerPosition,
           bannerOverlay,
+          stateCode: stateCode.trim() ? stateCode.trim() : null,
           genderSymbol,
           instagramHandle: instagramHandle.trim(),
           websiteUrl: websiteUrl.trim(),
@@ -216,6 +223,7 @@ export default function SettingsView({
       setBannerPresetId(res.profile.bannerPresetId ?? "b01");
       setBannerPosition(res.profile.bannerPosition ?? "center");
       setBannerOverlay(res.profile.bannerOverlay ?? 0.65);
+      setStateCode(res.profile.stateCode ?? "");
       setGenderSymbol(res.profile.genderSymbol ?? "HIDDEN");
       setInstagramHandle(res.profile.instagramHandle ?? "");
       setWebsiteUrl(res.profile.websiteUrl ?? "");
@@ -321,6 +329,14 @@ export default function SettingsView({
   }
 
   const currentPreset = resolveAvatarPreset(profile?.avatarId);
+  const activeBanner = resolveBannerPreset(bannerPresetId);
+  const activeState = getIndianStateByCode(stateCode || null);
+  const indianStatesOnly = INDIAN_STATES_AND_UTS.filter(
+    (s) => s.kind === "STATE",
+  );
+  const indianUtsOnly = INDIAN_STATES_AND_UTS.filter(
+    (s) => s.kind === "UNION_TERRITORY",
+  );
 
   return (
     <section className="x6-settings" aria-label="Settings and preferences">
@@ -418,11 +434,15 @@ export default function SettingsView({
                     <div
                       className="x54-settings-banner"
                       style={{
-                        background: resolveBannerPreset(bannerPresetId).gradient,
+                        backgroundImage: activeBanner.gradient,
+                        backgroundSize: "cover",
                         backgroundPosition: bannerPosition,
                       }}
                     >
-                      <div className="x54-settings-banner-veil" />
+                      <div
+                        className="x54-settings-banner-veil"
+                        style={{ background: activeBanner.safeZoneScrim }}
+                      />
                     </div>
                     <div className="x54-settings-preview-body">
                       <div className="x54-settings-avatar-ring">
@@ -433,11 +453,24 @@ export default function SettingsView({
                         />
                       </div>
                       <div className="x54-settings-preview-meta">
-                        <h2>{displayName || profile.displayName}</h2>
-                        <p className="x1-caption">
-                          {handle ? `@${handle}` : "No Body ID set yet"} ·{" "}
-                          {currentPreset.name}
-                        </p>
+                        <div className="x54-settings-meta-top">
+                          <div>
+                            <h2>{displayName || profile.displayName}</h2>
+                            <p className="x1-caption">
+                              {handle ? `@${handle}` : "No Body ID set yet"} ·{" "}
+                              {currentPreset.name} · {activeBanner.name}
+                            </p>
+                          </div>
+                          {activeState && (
+                            <span
+                              className="x56-state-capsule"
+                              title={activeState.name}
+                              aria-label={`State or Union Territory: ${activeState.name}`}
+                            >
+                              {activeState.code}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="x54-settings-preview-actions">
                         <button
@@ -554,6 +587,38 @@ export default function SettingsView({
 
                     <fieldset className="x54-settings-group">
                       <legend>Optional details (hidden by default)</legend>
+                      <label>
+                        State / Union Territory (optional)
+                        <select
+                          value={stateCode}
+                          aria-label="State or Union Territory"
+                          onChange={(e) => setStateCode(e.target.value)}
+                        >
+                          <option value="">Prefer not to show (Default)</option>
+                          <optgroup label="States (28)">
+                            {indianStatesOnly.map((st) => (
+                              <option key={st.code} value={st.code}>
+                                {st.name} ({st.code})
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Union Territories (8)">
+                            {indianUtsOnly.map((ut) => (
+                              <option key={ut.code} value={ut.code}>
+                                {ut.name} ({ut.code})
+                              </option>
+                            ))}
+                          </optgroup>
+                        </select>
+                        <span className="x1-caption">
+                          Voluntary opt-in location badge. Displays as a compact
+                          2-letter code (for example,{" "}
+                          <strong>{activeState ? activeState.code : "AP"}</strong>{" "}
+                          for {activeState ? activeState.name : "Andhra Pradesh"})
+                          at the top right of your public profile header.
+                        </span>
+                      </label>
+
                       <div className="x54-optional-grid">
                         <label>
                           Age
@@ -604,58 +669,166 @@ export default function SettingsView({
                     </div>
                   </form>
 
-                  {/* Banner Preset Modal — honest R2 status */}
+                  {/* 8 Visual Artwork Banner Presets Modal (6 Dark + 2 Light Themes) */}
                   {bannerModalOpen && (
                     <Modal
-                      title="Profile Banner"
+                      title="Choose Profile Banner"
                       onClose={() => setBannerModalOpen(false)}
                     >
-                      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                        <div className="x51-backdrop-swatches">
-                          {BANNER_PRESETS.map((b) => (
-                            <button
-                              key={b.id}
-                              type="button"
-                              className={
-                                "x51-backdrop-swatch" +
-                                (bannerPresetId === b.id ? " is-active" : "")
-                              }
-                              style={{ background: b.gradient }}
-                              onClick={() => setBannerPresetId(b.id)}
-                            >
-                              {b.name}
-                            </button>
-                          ))}
-                        </div>
-                        <label>
-                          Banner alignment
-                          <select
-                            value={bannerPosition}
-                            onChange={(e) =>
-                              setBannerPosition(e.target.value as BannerPosition)
-                            }
+                      <div className="x56-banner-modal-body">
+                        {/* Live Safe-Zone Header Preview */}
+                        <div
+                          className="x56-banner-live-preview"
+                          aria-label="Live profile banner preview"
+                        >
+                          <div
+                            className="x56-banner-live-stage"
+                            style={{
+                              backgroundImage: activeBanner.gradient,
+                              backgroundSize: "cover",
+                              backgroundPosition: bannerPosition,
+                            }}
                           >
-                            <option value="top">Top</option>
-                            <option value="center">Center</option>
-                            <option value="bottom">Bottom</option>
-                          </select>
-                        </label>
-                        <div className="x54-r2-status-note" role="note">
-                          <strong>Custom image upload unavailable</strong>
-                          <span>
-                            Custom photo uploads require Cloudflare R2 object
-                            storage, which is not enabled on this deployment.
-                            Select any of the 8 built-in banner presets above and
-                            click Save profile.
-                          </span>
+                            <div
+                              className="x56-banner-live-scrim"
+                              style={{ background: activeBanner.safeZoneScrim }}
+                            />
+                            <span
+                              className="x56-banner-live-theme-tag"
+                              style={{
+                                background: activeBanner.badgeBg,
+                                color: activeBanner.badgeText,
+                              }}
+                            >
+                              {activeBanner.name} ·{" "}
+                              {activeBanner.theme === "light"
+                                ? "Light Artwork"
+                                : "Dark Artwork"}
+                            </span>
+                          </div>
+                          <div className="x56-banner-live-identity">
+                            <div className="x56-banner-live-left">
+                              <div className="x56-banner-live-avatar">
+                                <AvatarBadge
+                                  avatarId={profile.avatarId}
+                                  size={56}
+                                  alt=""
+                                />
+                              </div>
+                              <div className="x56-banner-live-text">
+                                <strong>
+                                  {displayName || profile.displayName}
+                                </strong>
+                                <span>
+                                  {handle ? `@${handle}` : "No Body ID set yet"}
+                                </span>
+                              </div>
+                            </div>
+                            {activeState && (
+                              <span
+                                className="x56-state-capsule"
+                                title={activeState.name}
+                                aria-label={`State or Union Territory: ${activeState.name}`}
+                              >
+                                {activeState.code}
+                              </span>
+                            )}
+                          </div>
                         </div>
+
+                        {/* 2-Column Visual Artwork Preset Grid */}
+                        <div
+                          className="x56-banner-grid"
+                          role="listbox"
+                          aria-label="8 built-in profile banner artwork designs"
+                        >
+                          {BANNER_PRESETS.map((b) => {
+                            const selected = bannerPresetId === b.id;
+                            return (
+                              <button
+                                key={b.id}
+                                type="button"
+                                role="option"
+                                aria-selected={selected}
+                                className={
+                                  "x56-banner-card x51-backdrop-swatch" +
+                                  (selected ? " is-active" : "")
+                                }
+                                onClick={() => setBannerPresetId(b.id)}
+                              >
+                                <div
+                                  className="x56-banner-thumb"
+                                  style={{
+                                    backgroundImage: b.gradient,
+                                    backgroundSize: "cover",
+                                    backgroundPosition: bannerPosition,
+                                  }}
+                                >
+                                  {selected && (
+                                    <span
+                                      className="x56-banner-check"
+                                      aria-hidden="true"
+                                    >
+                                      <Check size={13} />
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="x56-banner-card-meta">
+                                  <span className="x56-banner-card-title">
+                                    {b.name}
+                                  </span>
+                                  <span className="x56-banner-theme-pill">
+                                    {b.theme === "light" ? "Light" : "Dark"}
+                                  </span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Crop / Vertical Alignment Control */}
+                        <div className="x56-banner-align-row">
+                          <span className="x56-banner-align-label">
+                            Focal alignment
+                          </span>
+                          <div
+                            className="x1-segment"
+                            role="group"
+                            aria-label="Banner vertical alignment"
+                          >
+                            {(
+                              [
+                                ["top", "Top"],
+                                ["center", "Center"],
+                                ["bottom", "Bottom"],
+                              ] as const
+                            ).map(([pos, label]) => (
+                              <button
+                                key={pos}
+                                type="button"
+                                aria-pressed={bannerPosition === pos}
+                                onClick={() => setBannerPosition(pos)}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <p className="x56-banner-subtle-note">
+                          {activeBanner.description} Click{" "}
+                          <strong>Save profile</strong> after closing to persist
+                          your banner across Community.
+                        </p>
+
                         <div className="x1-actions">
                           <button
                             type="button"
                             className="x1-primary"
                             onClick={() => setBannerModalOpen(false)}
                           >
-                            Done
+                            <Check size={15} />
+                            <span>Apply banner</span>
                           </button>
                         </div>
                       </div>
@@ -672,29 +845,46 @@ export default function SettingsView({
                         <div
                           className="x54-settings-banner"
                           style={{
-                            background: resolveBannerPreset(bannerPresetId).gradient,
+                            backgroundImage: activeBanner.gradient,
+                            backgroundSize: "cover",
                             backgroundPosition: bannerPosition,
                           }}
                         >
-                          <div className="x54-settings-banner-veil" />
+                          <div
+                            className="x54-settings-banner-veil"
+                            style={{ background: activeBanner.safeZoneScrim }}
+                          />
                         </div>
                         <div className="x54-settings-preview-body">
                           <div className="x54-settings-avatar-ring">
                             <AvatarBadge avatarId={profile.avatarId} size={72} alt="" />
                           </div>
                           <div className="x54-settings-preview-meta">
-                            <h3 style={{ margin: 0 }}>
-                              {displayName || profile.displayName}
-                              {genderSymbol === "MALE"
-                                ? " ♂"
-                                : genderSymbol === "FEMALE"
-                                  ? " ♀"
-                                  : ""}
-                              {showAge && age ? ` · ${age}y` : ""}
-                            </h3>
-                            <p className="x1-caption" style={{ color: "var(--x1-title-blue)" }}>
-                              {handle ? `@${handle}` : "No Body ID yet"}
-                            </p>
+                            <div className="x54-settings-meta-top">
+                              <div>
+                                <h3 style={{ margin: 0 }}>
+                                  {displayName || profile.displayName}
+                                  {genderSymbol === "MALE"
+                                    ? " ♂"
+                                    : genderSymbol === "FEMALE"
+                                      ? " ♀"
+                                      : ""}
+                                  {showAge && age ? ` · ${age}y` : ""}
+                                </h3>
+                                <p className="x1-caption" style={{ color: "var(--x1-title-blue)" }}>
+                                  {handle ? `@${handle}` : "No Body ID yet"}
+                                </p>
+                              </div>
+                              {activeState && (
+                                <span
+                                  className="x56-state-capsule"
+                                  title={activeState.name}
+                                  aria-label={`State or Union Territory: ${activeState.name}`}
+                                >
+                                  {activeState.code}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           {bio.trim() && (
                             <p className="x1-caption" style={{ margin: 0 }}>

@@ -670,6 +670,6 @@ test("X5.4 UI source invariants: dashboard copy removed, Soul name blank, no sea
 
   const settingsSrc = readFileSync("frontend/features/account/settings-view.tsx", "utf8");
   assert.match(settingsSrc, /x54-optional-grid/);
-  assert.match(settingsSrc, /Custom image upload unavailable/);
+  assert.match(settingsSrc, /x56-banner-grid/);
   assert.match(settingsSrc, /legacyPrivateProfile/);
 });

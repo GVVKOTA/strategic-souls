@@ -144,16 +144,16 @@
 /* Single unified Classic rule selector card */
 .x54-formula-card {
   width: 100%;
-  min-height: 54px;
-  padding: 10px 12px;
-  border-radius: 11px;
-  border: 1px solid var(--x51-hairline);
+  min-height: 68px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--x51-hairline-strong);
   background: var(--x1-surface-2);
   color: var(--x1-text-primary);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
   text-align: left;
   cursor: pointer;
   transition: border-color 140ms ease, background 140ms ease;
@@ -168,22 +168,58 @@
 .x54-formula-card-main {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
   flex: 1 1 auto;
 }
 
+.x54-formula-card-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.x54-formula-rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  border: 1px solid var(--x51-hairline-strong);
+  background: rgba(118, 192, 255, 0.1);
+  color: var(--x1-title-blue);
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
 .x54-formula-card-title {
-  font-size: 0.92rem;
+  font-size: 0.96rem;
   font-weight: 600;
+  line-height: 1.35;
   color: var(--x1-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.x54-formula-card-desc {
+  font-size: 0.82rem;
+  line-height: 1.42;
+  color: var(--x1-text-secondary);
+}
+
+.x54-formula-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
 }
 
 .x54-formula-card-code {
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   color: var(--x1-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -193,11 +229,331 @@
 .x54-formula-card-cue {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   flex-shrink: 0;
-  font-size: 0.8rem;
-  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(118, 192, 255, 0.28);
+  background: rgba(118, 192, 255, 0.08);
+  font-size: 0.78rem;
+  font-weight: 600;
   color: var(--x1-title-blue);
+}
+
+/* ==========================================================================
+   X5.6 — Classic Formula Picker Modal (Zero-Overlap Card Architecture)
+   ========================================================================== */
+
+.x56-formula-modal-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.x56-formula-modal-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: -4px;
+}
+
+.x56-formula-modal-subtitle {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--x1-text-secondary);
+}
+
+.x56-formula-count-badge {
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--x1-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.x56-formula-search-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.x56-formula-search-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 36px 10px 13px;
+  border-radius: 10px;
+  border: 1px solid var(--x51-hairline-strong);
+  background: var(--x1-bg);
+  color: var(--x1-text-primary);
+  font-size: 0.94rem;
+  line-height: 1.35;
+}
+
+.x56-formula-search-input:focus {
+  outline: 2px solid var(--x1-title-blue);
+  outline-offset: 1px;
+  border-color: var(--x1-title-blue);
+}
+
+.x56-formula-search-clear {
+  position: absolute;
+  right: 8px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--x51-hairline);
+  background: var(--x1-surface-2);
+  color: var(--x1-text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.x56-formula-chip-bar {
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+
+.x56-formula-chip-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.x56-formula-chip-bar > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+@media (min-width: 640px) {
+  .x56-formula-chip-bar {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+}
+
+.x56-formula-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(44dvh, 420px);
+  overflow-y: auto;
+  padding: 2px 2px 4px;
+  overscroll-behavior: contain;
+}
+
+.x56-formula-item {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-height: 76px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--x51-hairline-strong);
+  background: var(--x1-surface-2);
+  color: var(--x1-text-primary);
+  box-sizing: border-box;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.x56-formula-item:hover {
+  border-color: rgba(118, 192, 255, 0.45);
+  background: var(--x1-surface-3);
+}
+
+.x56-formula-item.is-active {
+  border-color: var(--x51-green-border);
+  background: rgba(25, 195, 125, 0.1);
+}
+
+.x56-formula-item-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+
+.x56-formula-select-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.x56-formula-select-btn:focus-visible {
+  outline: 2px solid var(--x1-title-blue);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+.x56-formula-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.x56-formula-title {
+  font-size: 0.96rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--x1-text-primary);
+  word-break: break-word;
+}
+
+.x56-formula-meaning {
+  margin: 0;
+  font-size: 0.83rem;
+  line-height: 1.45;
+  color: var(--x1-text-secondary);
+  word-break: break-word;
+}
+
+.x56-formula-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.x56-rule-type-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--x51-hairline);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--x1-text-tertiary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.x56-formula-actions-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.x56-formula-selected-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--x51-green-border);
+  background: var(--x51-green-soft);
+  color: var(--x1-text-primary);
+  font-size: 0.73rem;
+  font-weight: 600;
+}
+
+.x56-formula-details-btn {
+  min-height: 30px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid var(--x51-hairline);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--x1-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.x56-formula-details-btn:hover,
+.x56-formula-details-btn:focus-visible {
+  border-color: var(--x1-title-blue);
+  color: var(--x1-text-primary);
+}
+
+.x56-formula-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--x51-hairline);
+  background: rgba(8, 10, 14, 0.65);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--x1-text-secondary);
+}
+
+.x56-formula-drawer-code {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--x1-bg);
+  border: 1px solid var(--x51-hairline);
+  color: var(--x1-text-primary);
+  font-size: 0.78rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.x56-formula-drawer-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 0.75rem;
+  color: var(--x1-text-tertiary);
+}
+
+.x56-formula-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px 16px;
+  border-radius: 12px;
+  border: 1px dashed var(--x51-hairline-strong);
+  text-align: center;
+}
+
+.x56-formula-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--x51-hairline);
+}
+
+.x56-formula-footer-summary {
+  min-width: 0;
+  flex: 1 1 180px;
+  font-size: 0.8rem;
+  color: var(--x1-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.x56-formula-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 /* Compact market & timeframe selector chips */

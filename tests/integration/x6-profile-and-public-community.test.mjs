@@ -177,8 +177,20 @@ test('/api/profile rejects unauthenticated and cross-origin requests', async () 
 test('/api/profile persists avatar selection from 50 presets, rejects invalid IDs, and resists IDOR', async () => {
   const initial = await callProfile();
   assert.equal(initial.status, 200);
-  assert.equal(initial.data.profile.avatarId, 'a01');
+  assert.match(initial.data.profile.avatarId, /^[a-e](?:0[1-9]|10)$/);
   assert.equal(initial.headers.get('cache-control'), 'private, no-store');
+
+  // Idempotent one-time backfill: second read returns the exact same assigned avatar
+  const initialRepeat = await callProfile();
+  assert.equal(initialRepeat.data.profile.avatarId, initial.data.profile.avatarId);
+
+  const bobInitial = await callProfile(undefined, {
+    userId: 'user_bob',
+    email: 'bob@example.invalid',
+    displayName: 'Bob Analyst',
+    authProvider: 'password',
+  });
+  assert.match(bobInitial.data.profile.avatarId, /^[a-e](?:0[1-9]|10)$/);
 
   // Invalid external URL or arbitrary preset ID rejected with 400
   const bad1 = await callProfile({ action: 'update-avatar', avatarId: 'https://evil.invalid/a.svg' });
@@ -187,25 +199,29 @@ test('/api/profile persists avatar selection from 50 presets, rejects invalid ID
   assert.equal(bad2.status, 400);
 
   // Valid update persists and ignores forged target userId (IDOR protection)
+  const targetAvatar = bobInitial.data.profile.avatarId === 'e07' ? 'e08' : 'e07';
   const ok = await callProfile({
     action: 'update-avatar',
-    avatarId: 'e07',
+    avatarId: targetAvatar,
     userId: 'user_bob',
     subject: 'user_bob',
   });
   assert.equal(ok.status, 200);
-  assert.equal(ok.data.profile.avatarId, 'e07');
+  assert.equal(ok.data.profile.avatarId, targetAvatar);
 
   // Verify Alice updated & Bob untouched
   const aliceAfter = await callProfile();
-  assert.equal(aliceAfter.data.profile.avatarId, 'e07');
+  assert.equal(aliceAfter.data.profile.avatarId, targetAvatar);
   const bobAfter = await callProfile(undefined, {
     userId: 'user_bob',
     email: 'bob@example.invalid',
     displayName: 'Bob Analyst',
     authProvider: 'password',
   });
-  assert.equal(bobAfter.data.profile.avatarId, 'a01');
+  assert.equal(bobAfter.data.profile.avatarId, bobInitial.data.profile.avatarId);
+  if (targetAvatar !== 'e07') {
+    await callProfile({ action: 'update-avatar', avatarId: 'e07' });
+  }
 });
 
 test('/api/profile updates handle, displayName, bio, preferences and syncs x1_bodies', async () => {

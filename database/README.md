@@ -36,13 +36,14 @@
 
 ## 3. Applied Migrations & Production D1 Safety Contract
 
-- **Applied Cloudflare D1 migrations live in root [`drizzle/`](../drizzle/) (`0000`–`0009`, 10 SQL migration files, 57 indexes):**
+- **Applied Cloudflare D1 migrations live in root [`drizzle/`](../drizzle/) (`0000`–`0010`, 11 SQL migration files):**
   - `0000`–`0003`: Core tables, ownership uniqueness, `workspace_records`, legacy notebook + immutability triggers.
   - `0004`–`0005`: 14 `x1_*` workspace/community tables + immutability triggers preventing edits to `x1_scans`, `x1_ledger`, `x1_scan_events`, and `x1_soul_revisions`.
   - `0006`: 14 `x2_*` market-data and social tables.
   - `0007_standalone_auth.sql`: Standalone authentication tables (`auth_users`, `auth_sessions`).
   - `0008_x51_foundation.sql`: X5.1 scan quota ledger, calendar reminders, and Soul Network tables.
   - `0009_x52_intelligence_and_pulse.sql`: Market Vox polls/votes, pinned Room research, search history, watch regions, and intelligence event cache.
+  - `0010_x56_profile_state_and_banner.sql`: Additive `auth_users.avatar_id` column for cryptographically random initial avatar persistence and `x56_profile_metadata` table (`state_code`, `banner_id`, `banner_align`).
 - **Live Production Database:** Cloudflare D1 database `ss`, runtime binding `DB`, UUID `1cda2b05-6b99-4d04-896f-b3542ad2ce7f`.
 - **NEVER edit, reorder, renumber, squash, or delete applied migrations `0000`–`0009`**, and **never reset or wipe live D1 user tables**.
 
