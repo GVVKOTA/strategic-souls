@@ -6,6 +6,7 @@ import {
   renderFormula,
   toSimpleRules,
   evaluateScan,
+  requiredScanBars,
   RULE_VERSION,
   FormulaError,
 } from "../../backend/engines/scan.ts";
@@ -30,6 +31,25 @@ const status = (rule, d, asOf = day(100)) =>
     [d],
     asOf,
   ).results[0].status;
+
+test("Wilder RSI crosses 30 at the inclusive prior boundary and needs a completed extra bar", () => {
+  // The first 14 changes total +3 and -7, so the seed RSI is exactly 30.
+  const prices = [100, 103, ...Array(13).fill(96)];
+  const cross = compileFormula("crossesabove(rsi(close, 14), 30)");
+  assert.equal(requiredScanBars(cross.ast), 16);
+  assert.equal(status(cross, data(prices)), "UNKNOWN");
+  assert.equal(status(cross, data([...prices, 97])), "PASS");
+  assert.equal(status(cross, data([...prices, 97, 98])), "FAIL");
+  assert.equal(status(cross, data([...prices, 97]), day(14)), "UNKNOWN");
+});
+
+test("nested EMA seeds from the first valid child observation", () => {
+  const rule = compileFormula("ema(lag(close, 1), 2) == 4");
+  assert.equal(requiredScanBars(rule.ast), 3);
+  assert.equal(status(rule, data([3, 5])), "UNKNOWN");
+  assert.equal(status(rule, data([3, 5, 9])), "PASS");
+  assert.equal(requiredScanBars(compileFormula("crossesabove(sma(close, 50), sma(close, 200))").ast), 201);
+});
 
 test("one canonical engine: 80 varied Simple rules compile to equivalent Advanced outcomes", () => {
   for (let i = 0; i < 80; i++) {

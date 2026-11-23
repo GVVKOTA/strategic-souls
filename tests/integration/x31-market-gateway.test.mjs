@@ -249,6 +249,8 @@ test("owner Classic coverage uses longer candle history and saves a daily scan o
         const days = Number(searchParams.get("days"));
         assert.equal(searchParams.get("interval"), "1d");
         requests.push({ id, days });
+        if (id.startsWith("NSE:X7CAP"))
+          return Response.json({ errorCode: "INVALID_SYMBOL", actionHint: "Fixture symbol unavailable." }, { status: 404 });
         if (id === "NSE:RELIANCE") {
           return Response.json({
             errorCode: "BROKER_TOTP_REQUIRED",
@@ -294,6 +296,21 @@ test("owner Classic coverage uses longer candle history and saves a daily scan o
   assert.equal(ready.body.preflight.eligible, 1);
   assert.ok(requests[0].days > 300 && requests[0].days <= 365);
 
+  const beforeScopeChecks = requests.length;
+  const noScope = await call("preflight-scan", "NSE:SBIN", { scanRequestVersion: 2 });
+  assert.equal(noScope.status, 400);
+  const wrongSource = await call("preflight-scan", "NSE:SBIN", {
+    scanRequestVersion: 2, universePreset: "INDIAN_EQUITIES", universe: "ECB_DAILY",
+  });
+  assert.equal(wrongSource.status, 400);
+  const unsupportedRun = await call("run-scan", "NSE:SBIN", {
+    scanRequestVersion: 2, universePreset: "INDIAN_EQUITIES",
+    interval: "30m", requestId: webcrypto.randomUUID(),
+  });
+  assert.equal(unsupportedRun.status, 422);
+  assert.equal((await env.DB.prepare("SELECT count(*) AS count FROM x51_scan_reservations").first()).count, 0);
+  assert.equal(requests.length, beforeScopeChecks);
+
   const short = await call("preflight-scan", "BSE:SBIN");
   assert.equal(short.body.preflight.blocked, true);
   assert.match(short.body.preflight.exclusions[0].reasons[0], /201 bars.*124 available/);
@@ -330,11 +347,32 @@ test("owner Classic coverage uses longer candle history and saves a daily scan o
   assert.equal(replay.body.replayed, true);
 
   const equities = await call("preflight-scan", "NSE:SBIN", {
+    scanRequestVersion: 2,
     universePreset: "INDIAN_EQUITIES",
     instrumentIds: ["NSE:SBIN", "NSE:NIFTY", "MCX:GOLD04DEC26FUT"],
   });
   assert.deepEqual(equities.body.preflight.results.results.map((row) => row.instrumentId), ["NSE:SBIN"]);
   assert.deepEqual(new Set(equities.body.sourceExclusions.map(({ id }) => id)), new Set(["NSE:NIFTY", "MCX:GOLD04DEC26FUT"]));
+  assert.equal(equities.body.preflight.accounting.requested, 3);
+  assert.equal(equities.body.preflight.accounting.eligible, 1);
+  assert.equal(equities.body.preflight.accounting.excluded, 2);
+  assert.equal(equities.body.preflight.accounting.coveragePct, 33.3);
+
+  for (const size of [25, 51, 501, 1_000]) {
+    const start = requests.length;
+    const capped = await call("preflight-scan", "NSE:SBIN", {
+      scanRequestVersion: 2,
+      universePreset: "INDIAN_EQUITIES",
+      formula: "close > 0",
+      instrumentIds: Array.from({ length: size }, (_, index) => `NSE:X7CAP${index}`),
+    });
+    assert.equal(capped.status, 200);
+    assert.equal(requests.length - start, 24);
+    assert.equal(capped.body.preflight.accounting.requested, size);
+    assert.equal(capped.body.preflight.accounting.deferred, size - 24);
+    assert.equal(capped.body.preflight.accounting.excluded, size);
+    assert.equal(capped.body.preflight.accounting.coveragePct, 0);
+  }
 
   const mcx = await call("preflight-scan", "NSE:SBIN", {
     universePreset: "MCX_FUTURES",
@@ -359,6 +397,11 @@ test("owner Classic coverage uses longer candle history and saves a daily scan o
   activeUser = { userId: "alice" };
   const other = await call("preflight-scan", "NSE:SBIN", { universePreset: "MY_WATCHLIST" });
   assert.match(other.body.preflight.reason, /Add instruments to your active watchlist/);
+  const otherList = await call("preflight-scan", "NSE:SBIN", {
+    scanRequestVersion: 2, universePreset: "MY_WATCHLIST", watchlistId: "wl-fixture",
+  });
+  assert.match(otherList.body.preflight.reason, /selected watchlist is unavailable/);
+  assert.equal(otherList.body.preflight.accounting.discovered, 0);
 });
 
 test("full local loopback adapter + Cloudflare Worker route authorization, multi-exchange quotes, candles, offline degradation & zero leak", async () => {

@@ -1,4 +1,5 @@
 import vinext from "vinext";
+import { execFileSync } from "node:child_process";
 import { defineConfig } from "vite";
 import { readExecutionProfile } from "./operations/scripts/execution-profile.mjs";
 import { configureToolEnvironment } from "./operations/scripts/tool-environment.mjs";
@@ -11,6 +12,19 @@ const CLOUDFLARE_D1_DATABASE_ID = "1cda2b05-6b99-4d04-896f-b3542ad2ce7f";
 // macOS Seatbelt blocks FSEvents, so sandboxed previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const managedLinux = readExecutionProfile() === "managed-linux";
+
+function cleanBuildCommit(): string | null {
+  const git = (...args: string[]) => execFileSync("git", args, {
+    encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+  }).trim();
+  try {
+    if (git("status", "--porcelain")) return null;
+    const commit = git("rev-parse", "HEAD");
+    return /^[0-9a-f]{40}$/.test(commit) ? commit : null;
+  } catch {
+    return null;
+  }
+}
 
 const cloudflareWorkerConfig = {
   name: CLOUDFLARE_WORKER_NAME,
@@ -41,6 +55,9 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    define: {
+      "process.env.STRATEGIC_SOULS_BUILD_SHA": JSON.stringify(cleanBuildCommit()),
+    },
     server: {
       ...(managedLinux
         ? { host: "0.0.0.0", allowedHosts: ["terminal.local"] }

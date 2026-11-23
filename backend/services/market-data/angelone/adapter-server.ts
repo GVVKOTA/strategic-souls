@@ -219,6 +219,8 @@ export async function startMarketAdapterServer(options: {
   }
 
   const server = createServer(async (req, res) => {
+    const startedAt = Date.now();
+    let scanTrace: string | undefined;
     try {
       const providedToken = String(req.headers["x-ss-adapter-token"] ?? "");
       if (!providedToken || !constantTimeMatch(providedToken, config.authToken)) {
@@ -289,6 +291,8 @@ export async function startMarketAdapterServer(options: {
       }
 
       if (method === "GET" && url.pathname === "/internal/candles") {
+        const trace = req.headers["x-ss-scan-trace"];
+        if (typeof trace === "string" && /^[a-f0-9-]{36}$/.test(trace)) scanTrace = trace;
         const id = (url.searchParams.get("id") ?? "").trim();
         const intervalRaw = (url.searchParams.get("interval") ?? "1d").trim();
         const daysRaw = Number(url.searchParams.get("days") ?? "90");
@@ -301,14 +305,21 @@ export async function startMarketAdapterServer(options: {
           });
           return;
         }
-        const interval = (
-          ["1d", "1h", "15m", "5m"].includes(intervalRaw) ? intervalRaw : "1d"
-        ) as CandleInterval;
+        if (!["1d", "1h", "15m", "5m"].includes(intervalRaw)) {
+          sendJson(res, 400, { error: "Unsupported candle interval.", errorCode: "UPSTREAM_ERROR" });
+          return;
+        }
+        const interval = intervalRaw as CandleInterval;
         const result = await provider.getCandles(
           id,
           interval,
           Number.isFinite(daysRaw) ? daysRaw : 90,
         );
+        if (scanTrace) console.info({
+          event: "soul_scan_broker_candles", traceId: scanTrace, interval,
+          candles: result.candles.length, quality: result.quality,
+          durationMs: Date.now() - startedAt,
+        });
         sendJson(res, 200, result);
         return;
       }
@@ -332,6 +343,12 @@ export async function startMarketAdapterServer(options: {
         serverTimestampUTC: new Date().toISOString(),
       });
     } catch (error) {
+      if (scanTrace) console.warn({
+        event: "soul_scan_broker_candles", traceId: scanTrace,
+        errorCode: error instanceof ProviderRequestError || error instanceof BrokerAuthError
+          ? error.code : "UPSTREAM_ERROR",
+        durationMs: Date.now() - startedAt,
+      });
       if (error instanceof ProviderRequestError) {
         sendJson(res, error.httpStatus, {
           error: redactText(error.message, knownSecrets),

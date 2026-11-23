@@ -290,19 +290,42 @@ export async function reserveScanSlot(
   return { id: reservationId, tier, reusedCompletedScanId: null };
 }
 
-export async function completeScanReservation(
+export async function persistReservedScan(
   db: QuotaDb,
-  reservationId: string,
-  subject: string,
-  scanId: string,
-  completedAtIso: string,
+  scan: {
+    reservationId: string;
+    subject: string;
+    id: string;
+    requestKey: string;
+    mode: string;
+    name: string;
+    payload: string;
+    digest: string;
+    completedAt: string;
+  },
 ): Promise<void> {
-  await db
-    .prepare(
-      "UPDATE x51_scan_reservations SET state='COMPLETED', completed_at=?, scan_id=? WHERE id=? AND subject=?",
-    )
-    .bind(completedAtIso, scanId, reservationId, subject)
-    .run();
+  if (new TextEncoder().encode(scan.payload).byteLength > 1_500_000)
+    throw new HttpError(413, "This scan snapshot is too large. Narrow the instrument selection and retry.");
+  // A Worker/DB failure cannot leave a saved result and an uncharged reservation.
+  const [stored, completed] = await db.batch([
+    db.prepare(`
+      INSERT INTO x1_scans (id,subject,request_key,mode,name,payload,digest,created_at)
+      SELECT ?,?,?,?,?,?,?,?
+      WHERE EXISTS (
+        SELECT 1 FROM x51_scan_reservations WHERE id=? AND subject=? AND idempotency_key=?
+          AND state IN ('RESERVED','RUNNING') AND lease_expires_at >= ?
+      )
+    `).bind(scan.id, scan.subject, scan.requestKey, scan.mode, scan.name, scan.payload,
+      scan.digest, scan.completedAt, scan.reservationId, scan.subject, scan.requestKey, scan.completedAt),
+    db.prepare(`
+      UPDATE x51_scan_reservations SET state='COMPLETED', completed_at=?, scan_id=?
+      WHERE id=? AND subject=? AND idempotency_key=? AND state IN ('RESERVED','RUNNING')
+        AND EXISTS (SELECT 1 FROM x1_scans WHERE id=? AND subject=? AND request_key=?)
+    `).bind(scan.completedAt, scan.id, scan.reservationId, scan.subject, scan.requestKey,
+      scan.id, scan.subject, scan.requestKey),
+  ]);
+  if (stored.meta.changes !== 1 || completed.meta.changes !== 1)
+    throw new HttpError(409, "The scan reservation expired before the result could be saved. Retry the scan.");
 }
 
 export async function releaseScanReservation(

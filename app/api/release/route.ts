@@ -8,10 +8,11 @@ export function GET(request: Request) {
   return Response.json(
     {
       product: "Strategic Souls",
-      release: "X5.5",
+      release: "X7",
       releaseName:
-        "APEX Stability, Mobile & Desktop Clarity, Brand Language & Market-Data Readiness",
-      revisionMarker: "x5.6-classic50-banners8-states36-chats-2026-11-23",
+        "Strategic Souls Market Data and Soul Scan Reliability",
+      revisionMarker: "x7-scan-scope-2026-11-24",
+      buildCommit: typeof process === "undefined" ? null : process.env.STRATEGIC_SOULS_BUILD_SHA ?? null,
       dashboards: ["Global", "Strategy", "Community"],
       exchangeVenues: 24,
       classicPresets: 50,

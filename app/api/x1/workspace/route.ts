@@ -14,6 +14,7 @@ import {
 } from "../../../../backend/services/research/workspace";
 export const dynamic = "force-dynamic";
 async function handle(request: Request) {
+  let traceId: string | undefined;
   try {
     const user = await getAuthenticatedUser(request);
     if (!user)
@@ -45,11 +46,13 @@ async function handle(request: Request) {
       );
     }
     protectMutation(request, 16384);
-    const result = await mutateWorkspace(
-      user.userId,
-      await body(request, 16384),
-    );
-    return Response.json({ ok: true, ...result });
+    const input = await body(request, 16384);
+    const isScan = ["preflight-scan", "run-scan", "run-draw-scan"].includes(String(input.action));
+    traceId = isScan ? crypto.randomUUID() : undefined;
+    const result = await mutateWorkspace(user.userId, input, traceId);
+    return Response.json({ ok: true, ...result }, traceId
+      ? { headers: { "X-Scan-Trace-Id": traceId, "Cache-Control": "private, no-store" } }
+      : undefined);
   } catch (e) {
     return Response.json(
       {
@@ -58,7 +61,10 @@ async function handle(request: Request) {
             ? e.message
             : "Workspace unavailable. No successful save is implied.",
       },
-      { status: e instanceof HttpError ? e.status : 503 },
+      {
+        status: e instanceof HttpError ? e.status : 503,
+        headers: traceId ? { "X-Scan-Trace-Id": traceId, "Cache-Control": "private, no-store" } : undefined,
+      },
     );
   }
 }

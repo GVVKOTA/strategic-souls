@@ -3,7 +3,7 @@ import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import { loadMarketData, type DataPoint } from "./market-data";
 import type { ScanDataset } from "../../engines/scan";
-import { matchesScanMarketPreset, type ScanUniversePreset } from "../research/research";
+import { matchesScanMarketPreset, type ScanSourceExclusion, type ScanUniversePreset } from "../research/research";
 import type {
   AssetResearch,
   ChartLayout,
@@ -769,7 +769,7 @@ export async function currentDisplayRights(
 }
 export type ResearchUniverse = {
   datasets: ScanDataset[];
-  excluded: { id: string; reason: string }[];
+  excluded: ScanSourceExclusion[];
   discoveredCount?: number;
   authorizedCount?: number;
   source: string;
@@ -821,11 +821,12 @@ export async function researchUniverse(
     limit?: number;
     minimumBars?: number;
     universePreset?: ScanUniversePreset;
+    traceId?: string;
   } = {},
 ): Promise<ResearchUniverse> {
   if (options.interval && !["1d", "1wk", "1mo"].includes(options.interval))
     throw new HttpError(400, "Use a supported scan interval.");
-  const maxLimit = Math.max(1, Math.min(1000, options.limit ?? 500));
+  const maxLimit = Math.max(1, Math.min(24, options.limit ?? 24));
   const interval = options.interval ?? "1d";
   const out: ResearchUniverse = {
     datasets: [],
@@ -916,6 +917,7 @@ export async function researchUniverse(
   for (const deferredId of allCommercialIds.slice(maxLimit)) {
     out.excluded.push({
       id: deferredId,
+      kind: "deferred",
       reason: `Deferred beyond single-batch scan cap (${maxLimit} instruments).`,
     });
   }
@@ -1008,11 +1010,16 @@ export async function researchUniverse(
           })
         : brokerUniverse.filter((i) => matchesScanMarketPreset(preset, i.exchange, i.segment, i.expiry)).map((i) => i.id)
     )].filter((id) => !loadedIds.has(id));
-    const remainingBudget = Math.min(24, Math.max(0, maxLimit - out.datasets.length));
+    const targetBars = Math.min(1_500, Math.max(100, (options.minimumBars ?? 0) + 60));
+    const remainingBudget = Math.min(
+      Math.floor(5_500 / targetBars),
+      Math.max(0, maxLimit - ids.length),
+    );
     const candidateIds = rawBrokerCandidates.slice(0, remainingBudget);
     for (const deferredId of rawBrokerCandidates.slice(remainingBudget)) {
       out.excluded.push({
         id: deferredId,
+        kind: "deferred",
         reason: `Deferred beyond this run's broker request budget (${remainingBudget} instruments). Narrow the selection.`,
       });
     }
@@ -1031,13 +1038,14 @@ export async function researchUniverse(
               id,
               interval: "1d",
               days,
+              traceId: options.traceId,
               runtimeEnv: environment(),
             });
             const instrument = series.instrument;
             if (!matchesScanMarketPreset(preset, instrument.exchange, instrument.segment, instrument.expiry))
               return { id, reason: "Instrument is outside the selected universe or its contract has expired." };
             const observations = series.sourceMode === "PRIVATE_OWNER_FEED"
-              ? completedBrokerObservations(series, interval)
+              ? completedBrokerObservations(series, interval).slice(-targetBars)
               : [];
             const latest = observations.at(-1);
             if (!latest) return { id, reason: "No completed broker candles for the selected timeframe." };
@@ -1047,6 +1055,9 @@ export async function researchUniverse(
           } catch (error) {
             return {
               id,
+              kind: error instanceof MarketGatewayError &&
+                (error.code === "SEGMENT_NOT_ENTITLED" || error.code === "PUBLIC_LICENSE_REQUIRED")
+                ? "denied" as const : "error" as const,
               reason: error instanceof MarketGatewayError
                 ? `${error.code}: ${error.actionHint}`
                 : "Broker historical candles could not be loaded. Retry the coverage check.",
@@ -1056,7 +1067,7 @@ export async function researchUniverse(
       );
       for (const result of batchResults) {
         if (!result.series) {
-          out.excluded.push({ id: result.id, reason: result.reason });
+          out.excluded.push({ id: result.id, reason: result.reason, kind: result.kind });
           continue;
         }
         const { series, observations, latest } = result;
@@ -1097,7 +1108,7 @@ export async function researchUniverse(
   out.asOf = new Date().toISOString();
   for (const id of options.instrumentIds ?? []) {
     if (!loadedIds.has(id) && !out.excluded.some((entry) => entry.id === id))
-      out.excluded.push({ id, reason: "No authorized historical source for this instrument in the selected universe." });
+      out.excluded.push({ id, kind: "unavailable", reason: "No authorized historical source for this instrument in the selected universe." });
   }
   out.excluded = [...new Map(out.excluded
     .filter(({ id }) => !loadedIds.has(id))

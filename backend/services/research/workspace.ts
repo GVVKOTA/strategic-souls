@@ -7,7 +7,7 @@ import {
   summarizePortfolio,
   type Transaction,
 } from "../../engines/portfolio";
-import { compileFormula } from "../../engines/scan";
+import { compileFormula, requiredScanBars } from "../../engines/scan";
 import { researchUniverse, type ResearchUniverse } from "../market-data/data-service";
 import { backtestResearch } from "../../engines/backtest";
 import {
@@ -17,6 +17,8 @@ import {
 } from "./scan-projection";
 import {
   validateResearch,
+  validateScanRequestScope,
+  SCAN_REQUEST_VERSION,
   isScanUniversePreset,
   preflightResearch,
   parsePrivateCsvDataset,
@@ -26,7 +28,7 @@ import {
   type EvidenceCase,
 } from "./research";
 import {
-  completeScanReservation,
+  persistReservedScan,
   getScanQuotaSummary,
   releaseScanReservation,
   reserveScanSlot,
@@ -35,7 +37,6 @@ import {
 import { parseDiscoverQuery } from "./discover-parser";
 import { matchDrawnPattern, type DrawPoint } from "../../engines/pattern-draw";
 import { runSoulGenomeEvidence } from "../../engines/soul-genome";
-import { findClassicPresetByFormula } from "./classic-presets";
 type RawRecord = {
   id: string;
   subject: string;
@@ -385,18 +386,34 @@ function researchDefinition(input: Record<string, unknown>) {
     throw new HttpError(400, (error as Error).message);
   }
 }
+async function replayOwnedScan(
+  db: ReturnType<typeof database>,
+  subject: string,
+  requestId: string,
+  signature: string,
+) {
+  const prior = await db
+    .prepare("SELECT id,payload FROM x1_scans WHERE subject=? AND request_key=?")
+    .bind(subject, requestId)
+    .first<{ id: string; payload: string }>();
+  if (!prior) return null;
+  if (JSON.parse(prior.payload).requestDigest !== signature)
+    throw new HttpError(409, "Scan retry ID already used for different inputs.");
+  return { id: prior.id, replayed: true };
+}
 async function scanSource(
   subject: string,
   definition: ResearchDefinition,
   customCsv?: unknown,
   minimumBars?: number,
+  traceId?: string,
 ) {
   const preset = definition.universePreset;
   const hasCsv = typeof customCsv === "string" && customCsv.trim().length > 0 &&
     (preset === undefined || preset === "CUSTOM_CSV");
   const unavailable = (source: string, reason: string): ResearchUniverse => ({
     datasets: [],
-    excluded: [{ id: source, reason }],
+    excluded: [{ id: source, reason, kind: "scope" }],
     source,
     pointInTime: false,
     adjusted: false,
@@ -451,19 +468,21 @@ async function scanSource(
       })),
     };
   }
-  const options = { interval: definition.interval, minimumBars, universePreset: preset };
+  const options = { interval: definition.interval, minimumBars, universePreset: preset, traceId };
   if (preset === "MY_WATCHLIST") {
     const watchlist = await database()
-      .prepare("SELECT payload FROM x1_records WHERE subject=? AND kind='watchlist' AND archived=0 ORDER BY created_at,id LIMIT 1")
-      .bind(subject)
+      .prepare("SELECT payload FROM x1_records WHERE subject=? AND kind='watchlist' AND archived=0 AND (? IS NULL OR id=?) ORDER BY created_at,id LIMIT 1")
+      .bind(subject, definition.watchlistId ?? null, definition.watchlistId ?? null)
       .first<{ payload: string }>();
+    if (!watchlist && definition.watchlistId)
+      return unavailable("Watchlist", "The selected watchlist is unavailable. Choose one of your active watchlists.");
     const saved = watchlist ? JSON.parse(watchlist.payload).items as string[] : [];
     if (!saved.length)
       return unavailable("Watchlist", "Add instruments to your active watchlist before scanning.");
     const requested = new Set(definition.instrumentIds);
     const members = [...new Set(saved)].filter((id) => !requested.size || requested.has(id));
     const excluded = definition.instrumentIds.filter((id) => !saved.includes(id))
-      .map((id) => ({ id, reason: "Instrument is outside your active watchlist." }));
+      .map((id) => ({ id, kind: "denied" as const, reason: "Instrument is outside your active watchlist." }));
     const ecb = members.filter((id) => id.startsWith("ECB:"));
     const connected = members.filter((id) => !id.startsWith("ECB:"));
     const sources = await Promise.all([
@@ -500,10 +519,21 @@ async function scanSource(
 export async function mutateWorkspace(
   subject: string,
   input: Record<string, unknown>,
+  traceId?: string,
 ) {
   const db = database(),
     action = input.action,
     now = new Date().toISOString();
+  if (action === "preflight-scan" || action === "run-scan" || action === "run-draw-scan") {
+    try {
+      validateScanRequestScope(input);
+    } catch (error) {
+      throw new HttpError(400, (error as Error).message);
+    }
+    if (action !== "preflight-scan" && input.scanRequestVersion === SCAN_REQUEST_VERSION &&
+      (input.interval === "30m" || input.interval === "1h"))
+      throw new HttpError(422, "Intraday history is unavailable for Soul Scan. Choose Daily, Weekly, or Monthly.");
+  }
   await rate(subject + ":x1write", 120, 60000);
   if (action === "research-preferences") {
     if (typeof input.reusePersonal !== "boolean")
@@ -615,12 +645,13 @@ export async function mutateWorkspace(
   }
   if (action === "preflight-scan") {
     const definition = researchDefinition(input);
-    const minimumBars = findClassicPresetByFormula(definition.formula)?.minBars;
+    const minimumBars = requiredScanBars(compileFormula(definition.formula).ast);
     const source = await scanSource(
       subject,
       definition,
       input.customCsv,
       minimumBars,
+      traceId,
     );
     const preflight = preflightResearch(
       definition,
@@ -923,6 +954,8 @@ export async function mutateWorkspace(
       mode: "ADVANCED",
       universe,
       ...(isScanUniversePreset(input.universePreset) ? { universePreset: input.universePreset } : {}),
+      ...(input.universePreset === "MY_WATCHLIST" && typeof input.watchlistId === "string"
+        ? { watchlistId: input.watchlistId } : {}),
       interval,
       partialPolicy: "ALLOW_UNKNOWN",
       outcome: {
@@ -946,20 +979,16 @@ export async function mutateWorkspace(
       ...(definition.universePreset === "CUSTOM_CSV" && typeof input.customCsv === "string"
         ? { csvDigest: await digest(input.customCsv) } : {}),
     });
-    const prior = await db
-      .prepare("SELECT id, payload FROM x1_scans WHERE subject=? AND request_key=?")
-      .bind(subject, requestId)
-      .first<{ id: string; payload: string }>();
-    if (prior) {
-      if (JSON.parse(prior.payload).requestDigest !== signature) {
-        throw new HttpError(409, "Scan retry ID already used for different inputs.");
-      }
-      return { id: prior.id, replayed: true };
-    }
-
+    const prior = await replayOwnedScan(db, subject, requestId, signature);
+    if (prior) return prior;
     const reservation = await reserveScanSlot(db, subject, "ADVANCED", requestId);
+    if (reservation.reusedCompletedScanId) {
+      const completed = await replayOwnedScan(db, subject, requestId, signature);
+      if (completed) return completed;
+      throw new HttpError(503, "The prior scan could not be confirmed.");
+    }
     try {
-      const data = await scanSource(subject, definition, input.customCsv);
+      const data = await scanSource(subject, definition, input.customCsv, windowBars, traceId);
       if (!data.datasets.length) {
         await releaseScanReservation(db, reservation.id, subject, "FAILED");
         throw new HttpError(
@@ -1024,6 +1053,7 @@ export async function mutateWorkspace(
         results,
         datasets: data.datasets,
         sourceSnapshot: data.asOf,
+        ...(traceId ? { traceId } : {}),
         sourceLineage: data.lineage ?? [],
         source: data.source,
         knownAtPolicy:
@@ -1031,22 +1061,13 @@ export async function mutateWorkspace(
         billing: { charged: 0 },
       };
       const id = crypto.randomUUID();
-      await db
-        .prepare(
-          "INSERT OR IGNORE INTO x1_scans (id,subject,request_key,mode,name,payload,digest,created_at) VALUES (?,?,?,?,?,?,?,?)",
-        )
-        .bind(
-          id,
-          subject,
-          requestId,
-          "ADVANCED",
-          name,
-          JSON.stringify(payload),
-          await digest(payload),
-          asOf,
-        )
-        .run();
-      await completeScanReservation(db, reservation.id, subject, id, asOf);
+      await persistReservedScan(db, {
+        reservationId: reservation.id,
+        subject, id, requestKey: requestId, mode: "ADVANCED", name,
+        payload: JSON.stringify(payload),
+        digest: await digest(payload),
+        completedAt: asOf,
+      });
       return {
         id,
         results,
@@ -1061,7 +1082,6 @@ export async function mutateWorkspace(
   }
   if (action === "run-scan") {
     const definition = researchDefinition(input);
-    const minimumBars = findClassicPresetByFormula(definition.formula)?.minBars;
     const requestId = retryKey(input.requestId),
       mode = definition.mode,
       name = definition.name,
@@ -1077,36 +1097,19 @@ export async function mutateWorkspace(
     } catch (e) {
       throw new HttpError(400, (e as Error).message);
     }
+    const minimumBars = requiredScanBars(rule.ast);
     const signature = await digest(
       definition.universePreset === "CUSTOM_CSV" && typeof input.customCsv === "string"
         ? { definition, csvDigest: await digest(input.customCsv) }
         : definition,
     );
-    const prior = await db
-      .prepare(
-        "SELECT id,payload FROM x1_scans WHERE subject=? AND request_key=?",
-      )
-      .bind(subject, requestId)
-      .first<{ id: string; payload: string }>();
-    if (prior) {
-      if (JSON.parse(prior.payload).requestDigest !== signature)
-        throw new HttpError(
-          409,
-          "Scan retry ID already used for different inputs.",
-        );
-      return { id: prior.id, replayed: true };
-    }
-    // Atomically reserve scan quota slot BEFORE running compute; failed/blocked runs release cleanly!
-    let reservationId: string | null = null;
-    try {
-      const resHandle = await reserveScanSlot(db, subject, scanTier, requestId);
-      if (resHandle.reusedCompletedScanId) {
-        return { id: resHandle.reusedCompletedScanId, replayed: true };
-      }
-      reservationId = resHandle.id;
-    } catch (err) {
-      if (err instanceof HttpError) throw err;
-      // Only swallow missing-table errors in isolated legacy harnesses without 0008
+    const prior = await replayOwnedScan(db, subject, requestId, signature);
+    if (prior) return prior;
+    const reservation = await reserveScanSlot(db, subject, scanTier, requestId);
+    if (reservation.reusedCompletedScanId) {
+      const completed = await replayOwnedScan(db, subject, requestId, signature);
+      if (completed) return completed;
+      throw new HttpError(503, "The prior scan could not be confirmed.");
     }
     try {
       const data = await scanSource(
@@ -1114,6 +1117,7 @@ export async function mutateWorkspace(
         definition,
         input.customCsv,
         minimumBars,
+        traceId,
       );
       const datasets = data.datasets;
       if (!datasets.length) {
@@ -1175,6 +1179,7 @@ export async function mutateWorkspace(
         research: definition,
         description: definition.description,
         preflight: { ...preflight, results: undefined },
+        sourceExclusions: data.excluded,
         replay,
         ...(soulGenome ? { soulGenome } : {}),
         backtest:
@@ -1198,6 +1203,7 @@ export async function mutateWorkspace(
         results,
         datasets,
         sourceSnapshot: data.asOf,
+        ...(traceId ? { traceId } : {}),
         sourceLineage: data.lineage ?? [],
         source: data.source,
         knownAtPolicy: data.pointInTime
@@ -1206,57 +1212,23 @@ export async function mutateWorkspace(
         billing: { charged: 0 },
       };
       const id = crypto.randomUUID();
-      await db
-        .prepare(
-          "INSERT OR IGNORE INTO x1_scans (id,subject,request_key,mode,name,payload,digest,created_at) VALUES (?,?,?,?,?,?,?,?)",
-        )
-        .bind(
-          id,
-          subject,
-          requestId,
-          mode,
-          name,
-          JSON.stringify(payload),
-          await digest(payload),
-          asOf,
-        )
-        .run();
-      const saved = await db
-        .prepare(
-          "SELECT id,payload FROM x1_scans WHERE subject=? AND request_key=?",
-        )
-        .bind(subject, requestId)
-        .first<{ id: string; payload: string }>();
-      if (!saved) {
-        if (reservationId) await releaseScanReservation(db, reservationId, subject, "FAILED");
-        throw new HttpError(
-          503,
-          "Save unconfirmed. Retry with the same request ID.",
-        );
-      }
-      const stored = JSON.parse(saved.payload);
-      if (stored.requestDigest !== signature) {
-        if (reservationId) await releaseScanReservation(db, reservationId, subject, "FAILED");
-        throw new HttpError(
-          409,
-          "Scan retry ID already used for different inputs.",
-        );
-      }
-      if (reservationId) {
-        await completeScanReservation(db, reservationId, subject, saved.id, asOf).catch(
-          () => {},
-        );
-      }
-      const projection = await projectResearchSnapshot(stored, false);
+      await persistReservedScan(db, {
+        reservationId: reservation.id,
+        subject, id, requestKey: requestId, mode, name,
+        payload: JSON.stringify(payload),
+        digest: await digest(payload),
+        completedAt: asOf,
+      });
+      const projection = await projectResearchSnapshot(payload, false);
       return {
-        id: saved.id,
+        id,
         results: projection.payload.results,
         redaction: projection.redaction,
         ...(soulGenome ? { soulGenome } : {}),
         scanQuota: await getScanQuotaSummary(db, subject),
       };
     } catch (err) {
-      if (reservationId) await releaseScanReservation(db, reservationId, subject, "FAILED");
+      await releaseScanReservation(db, reservation.id, subject, "FAILED");
       throw err;
     }
   }

@@ -302,7 +302,7 @@ function req(url, method = "GET", body = undefined) {
   });
 }
 
-test("X5.5 P3.2: guest gets 401 on private APIs; public release returns X5.5; public profile never leaks email/subject", async () => {
+test("guest gets 401 on private APIs; release reports X7 provenance without leaking account details", async () => {
   currentUser = null;
 
   assert.equal((await profileRoute.GET(req("/api/profile"))).status, 401);
@@ -312,7 +312,9 @@ test("X5.5 P3.2: guest gets 401 on private APIs; public release returns X5.5; pu
   const relRes = await releaseRoute.GET(req("/api/release"));
   assert.equal(relRes.status, 200);
   const rel = await relRes.json();
-  assert.equal(rel.release, "X5.5");
+  assert.equal(rel.release, "X7");
+  assert.equal(rel.revisionMarker, "x7-scan-scope-2026-11-24");
+  assert.equal(rel.buildCommit, null);
   assert.equal(rel.marketData.readOnlyOnly, true);
 
   // Guest can open discoverable researcher profile, with ZERO email/subject leak

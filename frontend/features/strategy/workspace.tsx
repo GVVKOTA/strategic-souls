@@ -34,13 +34,18 @@ import {
 } from "../../../backend/services/research/discover-parser";
 import {
   RESEARCH_GLOSSARY,
+  DEFAULT_SCAN_UNIVERSE_PRESET,
+  SCAN_REQUEST_VERSION,
+  SCAN_UNIVERSE_LABEL,
   compileTree,
+  scanUniverseForPreset,
   matchesScanMarketPreset,
   treeFromFormula,
   validateResearch,
   type RuleTree,
   type ResearchDefinition,
   type ScanUniversePreset,
+  type ScanSourceExclusion,
   type OutcomeDefinition,
   type preflightResearch,
 } from "../../../backend/services/research/research";
@@ -129,6 +134,9 @@ type RichRun = ScanRun & {
     scanTier?: "CLASSIC" | "ADVANCED";
     origin?: "CLASSIC" | "DISCOVER" | "BUILD" | "DRAW";
     research?: ResearchDefinition;
+    preflight?: Pick<ReturnType<typeof preflightResearch>, "accounting">;
+    source?: string;
+    sourceExclusions?: ScanSourceExclusion[];
     soulGenome?: SoulGenomeReport;
   };
 };
@@ -195,6 +203,15 @@ function localTimeShort(iso: string | null | undefined): string {
   } catch {
     return iso;
   }
+}
+
+function closedObservationLabel(eventAt: string | null, source: string) {
+  if (!eventAt) return "unavailable";
+  if (source.includes("Angel One") && eventAt.includes("T"))
+    return new Intl.DateTimeFormat("en-IN", {
+      timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric",
+    }).format(new Date(eventAt)) + " IST";
+  return eventAt.slice(0, 10);
 }
 
 function SoulGenomePanel({
@@ -401,17 +418,12 @@ export default function ResearchWorkspace({
   const [description, setDescription] = useState("");
   const [quotaInfoOpen, setQuotaInfoOpen] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const [universe, setUniverse] = useState<ResearchDefinition["universe"]>(
-    initialUniversePreset === "CUSTOM_CSV" ||
-      initialUniversePreset === "INDIAN_EQUITIES" ||
-      initialUniversePreset === "MCX_FUTURES"
-      ? "CONNECTED_MARKETS"
-      : "ECB_DAILY",
-  );
   const [universePreset, setUniversePreset] = useState<ScanUniversePreset | undefined>(
-    initialUniversePreset || "ECB_DAILY",
+    initialUniversePreset ?? DEFAULT_SCAN_UNIVERSE_PRESET,
   );
+  const universe = scanUniverseForPreset(universePreset);
   const [customCsv, setCustomCsv] = useState("");
+  const [watchlistId, setWatchlistId] = useState("");
   const [pickerQuery, setPickerQuery] = useState("");
   const [interval, setInterval] = useState<ResearchDefinition["interval"]>("1d");
   const [instruments, setInstruments] = useState("");
@@ -427,7 +439,7 @@ export default function ResearchWorkspace({
     signature: string;
     value: Preflight;
   } | null>(null);
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState<string | null>("");
   const [review, setReview] = useState<ScanRun | null>(null);
   const [graveyardFilter, setGraveyardFilter] = useState<
     "ALL" | "CLASSIC" | "ADVANCED" | "RETIRED"
@@ -476,6 +488,8 @@ export default function ResearchWorkspace({
   const [postedResultId, setPostedResultId] = useState<string | null>(null);
 
   const lock = useRef(false);
+  const scopeGeneration = useRef(0);
+  const preflightRequest = useRef<AbortController | null>(null);
   const pending = useRef<{ kind: string; signature: string; id: string } | null>(
     null,
   );
@@ -502,7 +516,6 @@ export default function ResearchWorkspace({
     queueMicrotask(() => {
       setInstruments(initialInstrument);
       const isEcb = initialInstrument.startsWith("ECB:");
-      setUniverse(isEcb ? "ECB_DAILY" : "CONNECTED_MARKETS");
       setUniversePreset(
         isEcb
           ? "ECB_DAILY"
@@ -528,8 +541,14 @@ export default function ResearchWorkspace({
     [classicFilter, classicCategory],
   );
 
-  const watchlistItems = workspace?.records.find((record) => record.kind === "watchlist")?.payload?.items;
-  const pickerMatches = useMemo(() => {
+  const watchlists = workspace?.records.filter((record) => record.kind === "watchlist");
+  const selectedWatchlist = watchlistId
+    ? watchlists?.find((record) => record.id === watchlistId)
+    : watchlists?.[0];
+  const watchlistItems = selectedWatchlist?.payload?.items;
+  const scopedWatchlistId = universePreset === "MY_WATCHLIST"
+    ? watchlistId || selectedWatchlist?.id : undefined;
+  const pickerMatches = (() => {
     if (!pickerQuery.trim()) return [];
     const candidates = X2_INSTRUMENTS.filter((instrument) => {
       if (universePreset === "ECB_DAILY") return instrument.id.startsWith("ECB:");
@@ -540,7 +559,7 @@ export default function ResearchWorkspace({
     return searchCanonicalInstruments(pickerQuery, candidates, {
       limit: 6,
     });
-  }, [pickerQuery, universePreset, watchlistItems]);
+  })();
 
   function selectClassicPreset(preset: ClassicPreset) {
     setSelectedClassicId(preset.id);
@@ -559,9 +578,15 @@ export default function ResearchWorkspace({
   }
 
   function applyUniversePreset(next: ScanUniversePreset) {
+    if (next === universePreset) return;
+    scopeGeneration.current++;
+    preflightRequest.current?.abort();
     setUniversePreset(next);
     setPreflight(null);
-    setUniverse(next === "ECB_DAILY" ? "ECB_DAILY" : "CONNECTED_MARKETS");
+    setSelected(null);
+    setJustCompletedId(null);
+    setPickerQuery("");
+    setWatchlistId("");
     setInstruments("");
     if (next === "CUSTOM_CSV") setInterval("1d");
     else setCustomCsv("");
@@ -602,7 +627,7 @@ export default function ResearchWorkspace({
         ? `${activeClassicPreset.note} (${activeClassicPreset.category} preset #${activeClassicPreset.number}).`
         : "Research hypothesis evaluated strictly on closed historical observations.";
 
-  const definition = useMemo(() => {
+  const definition = (() => {
     try {
       return {
         value: validateResearch({
@@ -612,6 +637,7 @@ export default function ResearchWorkspace({
           mode: backendMode,
           universe,
           universePreset,
+          watchlistId: scopedWatchlistId,
           interval,
           instrumentIds: instruments.split(/[\s,]+/).filter(Boolean),
           partialPolicy,
@@ -622,19 +648,7 @@ export default function ResearchWorkspace({
     } catch (error) {
       return { value: null, error: (error as Error).message };
     }
-  }, [
-    trimmedName,
-    effectiveDescription,
-    canonical.value,
-    effectiveFormula,
-    backendMode,
-    universe,
-    universePreset,
-    interval,
-    instruments,
-    partialPolicy,
-    outcome,
-  ]);
+  })();
 
   const signature = JSON.stringify(
     definition.value ?? {
@@ -670,7 +684,7 @@ export default function ResearchWorkspace({
     (a, b) =>
       b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id),
   );
-  const active = (runs.find((r) => r.id === selected) ?? runs[0]) as
+  const active = (selected === null ? undefined : (runs.find((r) => r.id === selected) ?? runs[0])) as
     | RichRun
     | undefined;
 
@@ -719,6 +733,10 @@ export default function ResearchWorkspace({
     value: ResearchDefinition,
     current: { id: string; version: number } | null = null,
   ) {
+    scopeGeneration.current++;
+    preflightRequest.current?.abort();
+    setCustomCsv("");
+    setWatchlistId(value.watchlistId ?? "");
     setName(value.name);
     setNameError("");
     setDescription(value.description);
@@ -737,8 +755,7 @@ export default function ResearchWorkspace({
       setAdvancedTab("BUILD");
       setBuildMode(converted ? "VISUAL" : "FORMULA");
     }
-    setUniverse(value.universe);
-    setUniversePreset(value.universePreset);
+    setUniversePreset(value.universePreset ?? (value.universe === "ECB_DAILY" ? "ECB_DAILY" : undefined));
     setInterval(value.interval);
     setInstruments(value.instrumentIds.join(", "));
     setPartial(value.partialPolicy);
@@ -807,11 +824,18 @@ export default function ResearchWorkspace({
       return;
     }
     if (lock.current || !canonical.value) return;
+    if (!universePreset) {
+      notify("Choose a market for this scan.", true);
+      return;
+    }
     if (!definition.value) {
       notify(definition.error || "Check your Soul inputs before continuing.", true);
       return;
     }
     lock.current = true;
+    const generation = scopeGeneration.current;
+    const controller = kind === "preflight" ? new AbortController() : null;
+    preflightRequest.current = controller;
     setPipelineStep(kind === "run" ? 1 : 0);
     setBusy(
       kind === "preflight"
@@ -827,19 +851,18 @@ export default function ResearchWorkspace({
     ) {
       pending.current = { kind, signature: requestSignature, id: crypto.randomUUID() };
     }
-    const endpoint =
-      universePreset === "CUSTOM_CSV" && customCsv.trim()
-        ? "/api/strategy/scan"
-        : "/api/x1/workspace";
+    const endpoint = "/api/strategy/scan";
     try {
       if (kind === "preflight") {
         const value = await api<Preflight>(endpoint, {
           action: "preflight-scan",
+          scanRequestVersion: SCAN_REQUEST_VERSION,
           ...definition.value,
           ...(universePreset === "CUSTOM_CSV" && customCsv.trim()
             ? { customCsv }
             : {}),
-        });
+        }, { signal: controller?.signal });
+        if (generation !== scopeGeneration.current) return;
         setPreflight({ signature: sourceSignature, value });
         if (value.preflight.blocked) {
           notify(
@@ -863,6 +886,7 @@ export default function ResearchWorkspace({
             definition: definition.value,
           },
         );
+        if (generation !== scopeGeneration.current) return;
         setDraft(result);
         setSavedSignature(signature);
         await reload();
@@ -873,6 +897,7 @@ export default function ResearchWorkspace({
         setBusy("2/3 Evaluating rules on closed historical bars…");
         const result = await api<{ id: string }>(endpoint, {
           action: "run-scan",
+          scanRequestVersion: SCAN_REQUEST_VERSION,
           requestId: pending.current.id,
           scanTier: scanMode,
           origin: scanMode === "CLASSIC" ? "CLASSIC" : advancedTab,
@@ -881,6 +906,10 @@ export default function ResearchWorkspace({
             ? { customCsv }
             : {}),
         });
+        if (generation !== scopeGeneration.current) {
+          await reload();
+          return;
+        }
         setPipelineStep(3);
         setBusy("3/3 Saved to GRAVEYARD · Updating workspace…");
         setSelected(result.id);
@@ -892,9 +921,11 @@ export default function ResearchWorkspace({
       }
       pending.current = null;
     } catch (e) {
+      if (generation !== scopeGeneration.current) return;
       notify((e as Error).message, true);
       setPipelineStep(0);
     } finally {
+      preflightRequest.current = null;
       lock.current = false;
       setBusy("");
     }
@@ -1265,6 +1296,25 @@ export default function ResearchWorkspace({
                         </button>
                       ))}
                     </div>
+                    {universePreset === "MY_WATCHLIST" && (
+                      <label className="x1-label">
+                        Active watchlist
+                        <select
+                          value={scopedWatchlistId ?? ""}
+                          onChange={(event) => {
+                            scopeGeneration.current++;
+                            preflightRequest.current?.abort();
+                            setWatchlistId(event.target.value);
+                            setInstruments("");
+                            setPreflight(null);
+                            setSelected(null);
+                          }}
+                        >
+                          {!selectedWatchlist && <option value={scopedWatchlistId ?? ""}>Choose an active watchlist</option>}
+                          {watchlists?.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}
+                        </select>
+                      </label>
+                    )}
                   </div>
 
                   <div className="x54-field-group">
@@ -1480,6 +1530,7 @@ export default function ResearchWorkspace({
                     fallback={<WorkspaceSkeleton label="Loading Draw Canvas…" kind="panel" />}
                   >
                     <PatternDrawCanvas
+                      key={scopedWatchlistId ?? universePreset}
                       authenticated={authenticated}
                       onRequireAuth={onRequireAuth}
                       scanName={name}
@@ -1489,6 +1540,7 @@ export default function ResearchWorkspace({
                       }}
                       universe={universe}
                       universePreset={universePreset}
+                      watchlistId={scopedWatchlistId}
                       interval={interval}
                       customCsv={
                         universePreset === "CUSTOM_CSV" ? customCsv : undefined
@@ -1631,7 +1683,7 @@ export default function ResearchWorkspace({
                       eligible · {coverage.preflight.unknown} UNKNOWN ·{" "}
                       {coverage.source} · {TIMEFRAMES.find((tf) => tf.id === interval)?.label}
                       {coverage.preflight.minimumBars !== null &&
-                        ` · Preset minimum ${coverage.preflight.minimumBars} bars`}
+                        ` · Rule history ${coverage.preflight.minimumBars} bars`}
                     </p>
                     {coverage.preflight.reason && <p>{coverage.preflight.reason}</p>}
                     {(coverage.sourceExclusions.length > 0 || coverage.preflight.exclusions.length > 0) && (
@@ -1748,7 +1800,7 @@ export default function ResearchWorkspace({
                   </div>
                   <div className="x53-compact-metric">
                     <strong>{active.payload.results.failed ?? 0}</strong>
-                    <span>Failed</span>
+                    <span>Did not match</span>
                   </div>
                   <div className="x53-compact-metric">
                     <strong>{active.payload.results.unknown ?? 0}</strong>
@@ -1790,12 +1842,22 @@ export default function ResearchWorkspace({
                     </div>
                   </details>
                 </div>
+                <p className="x1-caption">
+                  {active.payload.research?.universePreset
+                    ? SCAN_UNIVERSE_LABEL[active.payload.research.universePreset]
+                    : active.payload.research?.universe === "ECB_DAILY"
+                      ? SCAN_UNIVERSE_LABEL.ECB_DAILY
+                      : "Legacy scan scope"}
+                  {" · "}
+                  {TIMEFRAMES.find(({ id }) => id === (active.payload.research?.interval ?? active.payload.interval))?.label ?? "Timeframe unavailable"}
+                  {active.payload.source && ` · ${active.payload.source}`}
+                </p>
 
                 <ScanCoverageChart
                   passed={activeMatches.length}
                   failed={active.payload.results.failed ?? 0}
                   unknown={active.payload.results.unknown ?? 0}
-                  sourceLabel={active.payload.research?.universe ?? active.payload.interval ?? "1d"}
+                  candidateCount={active.payload.preflight?.accounting?.discovered}
                 />
 
                 {activeMatches.length > 0 ? (
@@ -1828,7 +1890,7 @@ export default function ResearchWorkspace({
                             <div className="x53-match-foot">
                               <span className="x1-caption">
                                 {r.source} · closed bar{" "}
-                                {r.latestEventAt ?? "unavailable"}
+                                {closedObservationLabel(r.latestEventAt, r.source)}
                               </span>
                               <button
                                 type="button"
@@ -1855,7 +1917,7 @@ export default function ResearchWorkspace({
 
                 <details className="x1-small-details" style={{ marginTop: 10 }}>
                   <summary>
-                    Coverage &amp; Exclusions ({activeNonMatches.length})
+                    Coverage &amp; Exclusions ({activeNonMatches.length + (active.payload.sourceExclusions?.length ?? 0)})
                   </summary>
                   <div className="x1-scan-results" style={{ marginTop: 8 }}>
                     {activeNonMatches.map((r) => (
@@ -1868,10 +1930,16 @@ export default function ResearchWorkspace({
                         }}
                       >
                         <strong>{r.instrumentId}</strong>{" "}
-                        <span className="x51-pill">{r.status}</span> —{" "}
+                        <span className="x51-pill">{r.status === "FAIL" ? "Did not match" : r.status}</span> ·{" "}
                         <span className="x1-caption">
                           {r.reasons.join(" ")}
+                          {" · "}{r.source}{" · "}{closedObservationLabel(r.latestEventAt, r.source)}
                         </span>
+                      </div>
+                    ))}
+                    {active.payload.sourceExclusions?.map(({ id, kind, reason }) => (
+                      <div key={id} className="x1-caption">
+                        <strong>{id}</strong>{" · "}{kind === "deferred" ? "Deferred" : "Excluded"}{" · "}{reason}
                       </div>
                     ))}
                   </div>

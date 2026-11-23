@@ -2,7 +2,7 @@ import { aggregateCandles, calendarPeriodKey } from "../../../engines/chart-anal
 import type { ScanObservation } from "../../../engines/scan";
 import type { Interval } from "../data-types";
 import { getIndianExchangeSession } from "./calendar";
-import type { NormalizedCandleSeries } from "./types";
+import { MAX_DAILY_CANDLE_DAYS, type NormalizedCandleSeries } from "./types";
 
 const DAY_MS = 86_400_000;
 const PERIOD_DAYS: Record<Interval, number> = { "1d": 1, "1wk": 7, "1mo": 31 };
@@ -15,7 +15,7 @@ export function brokerScanLookbackDays(interval: Interval, minimumBars?: number)
     interval === "1d"
       ? Math.ceil(targetBars * 1.55)
       : (targetBars + 2) * PERIOD_DAYS[interval];
-  return Math.min(365, Math.max(45, days));
+  return Math.min(MAX_DAILY_CANDLE_DAYS, Math.max(45, days));
 }
 
 export function completedBrokerObservations(

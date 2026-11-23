@@ -47,15 +47,19 @@ const { brokerScanLookbackDays, completedBrokerObservations } = await import(
 const { CLASSIC_50_PRESETS, findClassicPresetByFormula } = await import(
   "../../backend/services/research/classic-presets.ts"
 );
-const { compileFormula } = await import("../../backend/engines/scan.ts");
+const { compileFormula, requiredScanBars } = await import("../../backend/engines/scan.ts");
 
 test("Classic candle lookback uses each canonical preset's published minimum", () => {
   for (const preset of CLASSIC_50_PRESETS) {
-    assert.equal(findClassicPresetByFormula(compileFormula(preset.formula).formula), preset);
+    const rule = compileFormula(preset.formula);
+    assert.equal(findClassicPresetByFormula(rule.formula), preset);
+    assert.equal(requiredScanBars(rule.ast), preset.minBars, preset.id);
   }
   assert.ok(brokerScanLookbackDays("1d", 201) > 300);
   assert.ok(brokerScanLookbackDays("1d", 201) <= 365);
   assert.ok(brokerScanLookbackDays("1d", 16) < brokerScanLookbackDays("1d", 201));
+  assert.ok(brokerScanLookbackDays("1wk", 201) > 1_400);
+  assert.equal(brokerScanLookbackDays("1mo", 201), 2_000);
 });
 
 test("broker scan history preserves source timestamps and drops developing periods", () => {

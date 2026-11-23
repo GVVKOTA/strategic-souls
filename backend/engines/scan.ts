@@ -741,6 +741,56 @@ function timestamp(value: unknown): number {
 }
 
 /** Three-valued boolean semantics; UNKNOWN is never silently converted to FAIL. */
+/** Completed observations needed to evaluate every branch with all source fields present. */
+export function requiredScanBars(ast: Ast, cache = new WeakMap<Ast, number>()): number {
+  const cached = cache.get(ast);
+  if (cached !== undefined) return cached;
+  const required = (node: Ast) => requiredScanBars(node, cache);
+  let bars = 1;
+  if (ast.kind === "unary") bars = required(ast.arg);
+  if (ast.kind === "binary") bars = Math.max(required(ast.left), required(ast.right));
+  if (ast.kind === "call") {
+    const args = ast.args;
+    const period = (index: number) => lookback(args[index]);
+    const series = () => required(args[0]);
+    switch (ast.name) {
+      case "crossesabove":
+      case "crossesbelow":
+        bars = 1 + Math.max(required(args[0]), required(args[1]));
+        break;
+      case "within": bars = series() + period(1) - 1; break;
+      case "lag":
+      case "change":
+      case "rsi": bars = series() + period(1); break;
+      case "sma":
+      case "ema":
+      case "bbmid":
+      case "bbupper":
+      case "bblower":
+      case "bbwidth":
+      case "rollingmin":
+      case "rollingmax":
+      case "rollingmedian": bars = series() + period(1) - 1; break;
+      case "macd": bars = series() + period(2) - 1; break;
+      case "macdsignal":
+      case "macdhist": bars = series() + period(2) + period(3) - 2; break;
+      case "atr":
+      case "plusdi":
+      case "minusdi":
+      case "mfi":
+      case "supertrend":
+      case "supertrenddir": bars = period(0) + 1; break;
+      case "adx": bars = 2 * period(0); break;
+      case "stochk": bars = period(0) + period(1) - 1; break;
+      case "stochd": bars = period(0) + period(1) + period(2) - 2; break;
+      case "obv": bars = 2; break;
+      default: bars = Math.max(1, ...args.map(required));
+    }
+  }
+  cache.set(ast, bars);
+  return bars;
+}
+
 export function evaluateScan(
   rule: CanonicalRule,
   datasets: ScanDataset[],
@@ -758,6 +808,7 @@ export function evaluateScan(
   if (!Array.isArray(datasets) || datasets.length > LIMITS.datasets)
     throw new Error(`A scan supports up to ${LIMITS.datasets} datasets.`);
   const ids = new Set<string>();
+  const barRequirements = new WeakMap<Ast, number>();
   for (const d of datasets) {
     if (
       !d ||
@@ -879,7 +930,7 @@ export function evaluateScan(
         );
       }
       function ema(a: Ast, i: number, n: number): number {
-        const values = history(a, i, i + 1);
+        const values = seededHistory(a, i);
         if (values.length < n)
           throw new MissingData(
             `EMA requires at least ${n} eligible observations.`,
@@ -889,6 +940,9 @@ export function evaluateScan(
         for (let j = n; j < values.length; j++)
           v = alpha * values[j] + (1 - alpha) * v;
         return v;
+      }
+      function seededHistory(a: Ast, i: number): number[] {
+        return history(a, i, Math.max(0, i + 2 - requiredScanBars(a, barRequirements)));
       }
       function ev(a: Ast, i: number): Value {
         if (--budget < 0)
@@ -1021,11 +1075,12 @@ export function evaluateScan(
           const fast = lookback(args[1], 2),
             slow = lookback(args[2], 2),
             sig = lookback(args[3], 2);
-          if (i + 1 < slow + sig - 1)
+          const needed = requiredScanBars(a, barRequirements);
+          if (i + 1 < needed)
             throw new MissingData(
-              `MACD(${fast},${slow},${sig}) requires at least ${slow + sig - 1} eligible observations.`,
+              `MACD(${fast},${slow},${sig}) requires at least ${needed} eligible observations.`,
             );
-          const series = history(args[0], i, i + 1);
+          const series = seededHistory(args[0], i);
           const emaArr = (period: number): (number | null)[] => {
             const out: (number | null)[] = new Array(series.length).fill(null);
             let acc =
@@ -1312,7 +1367,7 @@ export function evaluateScan(
             value = history(args[0], i, n).reduce((s, x) => s + x, 0) / n;
           else if (name === "ema") value = ema(args[0], i, n);
           else if (name === "rsi") {
-            const values = history(args[0], i, i + 1);
+            const values = seededHistory(args[0], i);
             if (values.length < n + 1)
               throw new MissingData(
                 `RSI requires at least ${n + 1} eligible observations.`,
