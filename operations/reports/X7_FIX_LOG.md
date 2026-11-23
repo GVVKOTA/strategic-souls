@@ -1,5 +1,7 @@
 # X7 fix log
 
+Implementation commit `6e1636f575589fbf52ed9cfd890a5899cffea9fd` on the existing X6/X7 repair branch.
+
 | Defect | Change | Verification |
 | --- | --- | --- |
 | ECB default and contradictory sources | `frontend/features/strategy/workspace.tsx`, `backend/services/research/research.ts`, and `workspace.ts` default new scans to NSE/BSE and require a consistent scope for version 2 requests. Legacy stored runs keep their original definitions. | Versioned API cases reject missing scope or NSE/BSE paired with ECB before a broker call. |
@@ -17,3 +19,4 @@
 - `uv run --project backend/quant pytest backend/quant/tests -q` passed 29 tests in 4.05 seconds.
 - `node operations/scripts/run-framework.mjs build` passed. The generated config matched the existing Worker name, D1 UUID, and binding names.
 - `pnpm.cmd audit --audit-level high` exited zero and reported two moderate advisories.
+- `node operations/scripts/scan-secrets.mjs` passed on 760 files, the staged changes, and the Worker bundle. The checkout had no configured local secret-value comparisons.
