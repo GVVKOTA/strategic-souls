@@ -8,7 +8,7 @@ import {
   type Transaction,
 } from "../../engines/portfolio";
 import { compileFormula } from "../../engines/scan";
-import { researchUniverse } from "../market-data/data-service";
+import { researchUniverse, type ResearchUniverse } from "../market-data/data-service";
 import { backtestResearch } from "../../engines/backtest";
 import {
   projectResearchSnapshot,
@@ -17,6 +17,7 @@ import {
 } from "./scan-projection";
 import {
   validateResearch,
+  isScanUniversePreset,
   preflightResearch,
   parsePrivateCsvDataset,
   assessEvidence,
@@ -390,29 +391,31 @@ async function scanSource(
   customCsv?: unknown,
   minimumBars?: number,
 ) {
-  const hasCsv = typeof customCsv === "string" && customCsv.trim().length > 0;
+  const preset = definition.universePreset;
+  const hasCsv = typeof customCsv === "string" && customCsv.trim().length > 0 &&
+    (preset === undefined || preset === "CUSTOM_CSV");
+  const unavailable = (source: string, reason: string): ResearchUniverse => ({
+    datasets: [],
+    excluded: [{ id: source, reason }],
+    source,
+    pointInTime: false,
+    adjusted: false,
+    rights: { analysis: false, storage: false },
+    asOf: new Date().toISOString(),
+    lineage: [],
+  });
   if (definition.interval === "30m" || definition.interval === "1h") {
-    const source = hasCsv
+    const source = hasCsv || preset === "CUSTOM_CSV"
       ? "Private CSV"
-      : definition.universe === "ECB_DAILY"
+      : preset === "ECB_DAILY" || (!preset && definition.universe === "ECB_DAILY")
         ? "ECB Daily Reference FX"
         : "Connected Markets";
-    return {
-      datasets: [],
-      excluded: [
-        {
-          id: source,
-          reason: `${source} does not supply ${definition.interval} observations to Soul Scan. Choose Daily, Weekly, or Monthly.`,
-        },
-      ],
-      source,
-      pointInTime: false,
-      adjusted: false,
-      rights: { analysis: false, storage: false },
-      asOf: new Date().toISOString(),
-      lineage: [],
-    };
+    return unavailable(source, `${source} does not supply ${definition.interval} observations to Soul Scan. Choose Daily, Weekly, or Monthly.`);
   }
+  if (preset === "CUSTOM_CSV" && !hasCsv)
+    return unavailable("Private CSV", "Upload a dated daily CSV to scan this universe.");
+  if (preset === "CUSTOM_CSV" && definition.interval !== "1d")
+    return unavailable("Private CSV", "Select Daily for imported CSV bars.");
   if (hasCsv) {
     let parsed;
     try {
@@ -448,14 +451,48 @@ async function scanSource(
       })),
     };
   }
+  const options = { interval: definition.interval, minimumBars, universePreset: preset };
+  if (preset === "MY_WATCHLIST") {
+    const watchlist = await database()
+      .prepare("SELECT payload FROM x1_records WHERE subject=? AND kind='watchlist' AND archived=0 ORDER BY created_at,id LIMIT 1")
+      .bind(subject)
+      .first<{ payload: string }>();
+    const saved = watchlist ? JSON.parse(watchlist.payload).items as string[] : [];
+    if (!saved.length)
+      return unavailable("Watchlist", "Add instruments to your active watchlist before scanning.");
+    const requested = new Set(definition.instrumentIds);
+    const members = [...new Set(saved)].filter((id) => !requested.size || requested.has(id));
+    const excluded = definition.instrumentIds.filter((id) => !saved.includes(id))
+      .map((id) => ({ id, reason: "Instrument is outside your active watchlist." }));
+    const ecb = members.filter((id) => id.startsWith("ECB:"));
+    const connected = members.filter((id) => !id.startsWith("ECB:"));
+    const sources = await Promise.all([
+      ...(ecb.length ? [researchUniverse(subject, { ...options, provider: "ECB", instrumentIds: ecb })] : []),
+      ...(connected.length ? [researchUniverse(subject, { ...options, provider: "CONNECTED_MARKETS", instrumentIds: connected })] : []),
+    ]);
+    const datasets = sources.flatMap((source) => source.datasets);
+    return {
+      datasets,
+      excluded: [...excluded, ...sources.flatMap((source) => source.excluded)],
+      source: "Watchlist",
+      pointInTime: false,
+      adjusted: false,
+      rights: { analysis: datasets.length > 0, storage: datasets.length > 0 },
+      asOf: new Date().toISOString(),
+      lineage: sources.flatMap((source) => source.lineage),
+    };
+  }
+  const ecb = preset === "ECB_DAILY" || (!preset && definition.universe === "ECB_DAILY");
   const data = await researchUniverse(subject, {
-    provider: definition.universe === "ECB_DAILY" ? "ECB" : "CONNECTED_MARKETS",
+    ...options,
+    provider: ecb ? "ECB" : "CONNECTED_MARKETS",
     instrumentIds: definition.instrumentIds,
-    interval: definition.interval,
-    minimumBars,
   });
+  if (preset && !data.datasets.length && !data.excluded.length)
+    return unavailable(preset === "MCX_FUTURES" ? "MCX Futures" : preset === "INDIAN_EQUITIES" ? "Indian Equities" : "ECB Daily Reference FX",
+      "No authorized historical instruments are available for this universe.");
   const datasets =
-    definition.universe === "CONNECTED_MARKETS"
+    !ecb
       ? data.datasets.filter((d) => !d.instrumentId.startsWith("ECB:"))
       : data.datasets;
   return { ...data, datasets };
@@ -885,6 +922,7 @@ export async function mutateWorkspace(
       formula: "close > 0",
       mode: "ADVANCED",
       universe,
+      ...(isScanUniversePreset(input.universePreset) ? { universePreset: input.universePreset } : {}),
       interval,
       partialPolicy: "ALLOW_UNKNOWN",
       outcome: {
@@ -905,6 +943,8 @@ export async function mutateWorkspace(
       strokePoints,
       windowBars,
       minPatternFit,
+      ...(definition.universePreset === "CUSTOM_CSV" && typeof input.customCsv === "string"
+        ? { csvDigest: await digest(input.customCsv) } : {}),
     });
     const prior = await db
       .prepare("SELECT id, payload FROM x1_scans WHERE subject=? AND request_key=?")
@@ -1037,7 +1077,11 @@ export async function mutateWorkspace(
     } catch (e) {
       throw new HttpError(400, (e as Error).message);
     }
-    const signature = await digest(definition);
+    const signature = await digest(
+      definition.universePreset === "CUSTOM_CSV" && typeof input.customCsv === "string"
+        ? { definition, csvDigest: await digest(input.customCsv) }
+        : definition,
+    );
     const prior = await db
       .prepare(
         "SELECT id,payload FROM x1_scans WHERE subject=? AND request_key=?",

@@ -12,6 +12,29 @@ import {
 } from "../../engines/scan";
 
 export const RESEARCH_VERSION = "x2-research-1";
+export const SCAN_UNIVERSE_PRESETS = [
+  "INDIAN_EQUITIES", "MCX_FUTURES", "MY_WATCHLIST", "ECB_DAILY", "CUSTOM_CSV",
+] as const;
+export type ScanUniversePreset = (typeof SCAN_UNIVERSE_PRESETS)[number];
+
+export function isScanUniversePreset(value: unknown): value is ScanUniversePreset {
+  return SCAN_UNIVERSE_PRESETS.some((preset) => preset === value);
+}
+
+export function matchesScanMarketPreset(
+  preset: ScanUniversePreset | undefined,
+  exchange: string,
+  assetClass: string,
+  expiry?: string | null,
+  now = Date.now(),
+) {
+  if (preset === "INDIAN_EQUITIES")
+    return (exchange === "NSE" || exchange === "BSE") && assetClass === "EQUITY";
+  if (preset === "MCX_FUTURES")
+    return exchange === "MCX" && assetClass === "FUTURE" &&
+      !!expiry && Date.parse(`${expiry}T23:59:59+05:30`) >= now;
+  return true;
+}
 export type OutcomeDefinition = {
   family: "POSITIVE_RETURN" | "FIRST_BARRIER";
   horizon: number;
@@ -26,6 +49,7 @@ export type ResearchDefinition = {
   formula: string;
   mode: "SIMPLE" | "ADVANCED";
   universe: "ECB_DAILY" | "CONNECTED_MARKETS";
+  universePreset?: ScanUniversePreset;
   interval: "30m" | "1h" | "1d" | "1wk" | "1mo";
   partialPolicy: "STRICT" | "ALLOW_UNKNOWN";
   outcome: OutcomeDefinition;
@@ -186,6 +210,9 @@ export function validateResearch(
     partialPolicy = input.partialPolicy ?? "STRICT";
   if (universe !== "ECB_DAILY" && universe !== "CONNECTED_MARKETS")
     throw new Error("Choose a supported universe.");
+  const universePreset = input.universePreset;
+  if (universePreset !== undefined && !isScanUniversePreset(universePreset))
+    throw new Error("Choose a supported scan universe preset.");
   if (!["30m", "1h", "1d", "1wk", "1mo"].includes(String(interval)))
     throw new Error("Choose a supported timeframe.");
   if (partialPolicy !== "STRICT" && partialPolicy !== "ALLOW_UNKNOWN")
@@ -224,6 +251,7 @@ export function validateResearch(
     formula,
     mode: input.mode,
     universe,
+    ...(universePreset === undefined ? {} : { universePreset }),
     interval: interval as ResearchDefinition["interval"],
     partialPolicy,
     outcome,

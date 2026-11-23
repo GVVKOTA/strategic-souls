@@ -3,6 +3,7 @@ import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import { loadMarketData, type DataPoint } from "./market-data";
 import type { ScanDataset } from "../../engines/scan";
+import { matchesScanMarketPreset, type ScanUniversePreset } from "../research/research";
 import type {
   AssetResearch,
   ChartLayout,
@@ -12,7 +13,7 @@ import type {
   ProviderHealth,
   ProviderId,
 } from "./data-types";
-import { aggregateCandles, aggregateReferences } from "../../engines/chart-analytics";
+import { aggregateCandles, aggregateReferences, calendarPeriodKey } from "../../engines/chart-analytics";
 import {
   EMPTY_HEALTH,
   PROVIDERS,
@@ -29,6 +30,7 @@ import {
 import { X2_INSTRUMENTS, registryInstrument } from "./instrument-registry";
 import {
   gatewayCandles,
+  gatewaySearchInstruments,
   MarketGatewayError,
   resolveGatewayConfig,
 } from "./angelone/gateway";
@@ -789,6 +791,27 @@ export type ResearchUniverse = {
     periodPolicy?: string;
   }[];
 };
+
+function completedPublishedPeriods<T extends { date: string }>(
+  rows: T[],
+  interval: Interval,
+  currentDate: string,
+) {
+  if (interval === "1d" || !rows.length) return rows;
+  const first = calendarPeriodKey(rows[0].date, interval);
+  const current = calendarPeriodKey(currentDate, interval);
+  return rows.filter(({ date }) => {
+    const period = calendarPeriodKey(date, interval);
+    return period !== first && period < current;
+  });
+}
+
+function dateInZone(zone: string, now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(now);
+}
+
 export async function researchUniverse(
   subject: string,
   options: {
@@ -797,11 +820,13 @@ export async function researchUniverse(
     interval?: Interval;
     limit?: number;
     minimumBars?: number;
+    universePreset?: ScanUniversePreset;
   } = {},
 ): Promise<ResearchUniverse> {
   if (options.interval && !["1d", "1wk", "1mo"].includes(options.interval))
     throw new HttpError(400, "Use a supported scan interval.");
   const maxLimit = Math.max(1, Math.min(1000, options.limit ?? 500));
+  const interval = options.interval ?? "1d";
   const out: ResearchUniverse = {
     datasets: [],
     excluded: [],
@@ -825,10 +850,14 @@ export async function researchUniverse(
     out.discoveredCount = matchedHistory.length;
     out.authorizedCount = matchedHistory.length;
     for (const h of matchedHistory) {
-      if (!h.canAnalyze) {
+      const history = aggregateReferences(
+        completedPublishedPeriods(h.points, interval, dateInZone("Europe/Brussels")),
+        interval,
+      );
+      if (!h.canAnalyze || !history.length) {
         out.excluded.push({
           id: h.id,
-          reason: "Daily reference history is unavailable or stale.",
+          reason: "Completed reference history is unavailable or stale for this timeframe.",
         });
         continue;
       }
@@ -838,11 +867,8 @@ export async function researchUniverse(
         source: h.provider,
         permitted: true,
         frequency: "DAILY_REFERENCE",
-        maxAgeMs: 5 * 86400000,
-        observations: aggregateReferences(
-          h.points,
-          options.interval ?? "1d",
-        ).map((p) => ({
+        maxAgeMs: brokerScanFreshnessMs(interval),
+        observations: history.map((p) => ({
           eventAt: p.date + "T00:00:00.000Z",
           knownAt: p.knownAt,
           close: p.close,
@@ -851,7 +877,7 @@ export async function researchUniverse(
       out.lineage.push({
         instrumentId: h.id,
         provider: h.provider,
-        eventAt: h.points.at(-1)?.date ?? null,
+        eventAt: history.at(-1)?.date ?? null,
         retrievedAt: h.retrievedAt,
         adjustment: "REFERENCE_ONLY",
         displayAllowed: true,
@@ -860,12 +886,17 @@ export async function researchUniverse(
         interval: options.interval ?? "1d",
         periodPolicy:
           options.interval && options.interval !== "1d"
-            ? "LAST_AVAILABLE_REFERENCE; LATEST_CALENDAR_GROUP_MAY_BE_PARTIAL"
+            ? "LAST_REFERENCE_IN_COMPLETED_CALENDAR_PERIOD"
             : "DAILY_SOURCE_OBSERVATIONS",
       });
     }
+    for (const id of options.instrumentIds ?? []) {
+      if (!matchedHistory.some((history) => history.id === id))
+        out.excluded.push({ id, reason: "No eligible ECB daily reference history for this instrument." });
+    }
     return out;
   }
+  const preset = options.universePreset;
   const configs = (await providerConfigs()).filter(
     (c) =>
       rightsActive(c, "analysis") &&
@@ -874,7 +905,9 @@ export async function researchUniverse(
         options.provider === c.provider),
   );
   const allCommercialIds = [
-    ...new Set(configs.flatMap((c) => c.instruments.map((i) => i.id))),
+    ...new Set(configs.flatMap((c) => c.instruments
+      .filter((i) => matchesScanMarketPreset(preset, i.market, i.type, i.expiry))
+      .map((i) => i.id))),
   ].filter(
     (id) =>
       !options.instrumentIds?.length || options.instrumentIds.includes(id),
@@ -889,21 +922,25 @@ export async function researchUniverse(
   const loadedIds = new Set<string>();
   for (const id of ids) {
     const selected = configs.find((c) =>
-      c.instruments.some((i) => i.id === id),
+      c.instruments.some((i) => i.id === id &&
+        matchesScanMarketPreset(preset, i.market, i.type, i.expiry)),
     )!;
     const a = await sourceResearch(
       id,
       subject,
-      options.interval ?? "1d",
+      "1d",
       false,
       "analysis",
       selected.provider,
     );
+    const rows = completedPublishedPeriods(a.candles, interval, dateInZone(a.instrument?.timezone ?? "UTC"));
+    const closes = aggregateReferences(rows, interval);
+    const candles = aggregateCandles(rows, interval);
     if (
       !a.capabilities.analysis ||
       !a.capabilities.storage ||
       a.state === "STALE" ||
-      !a.candles.length
+      !candles.length
     ) {
       out.excluded.push({
         id,
@@ -919,9 +956,9 @@ export async function researchUniverse(
       source: a.provider,
       permitted: true,
       frequency: "PUBLISHED_EOD",
-      maxAgeMs: 5 * 86400000,
-      observations: a.candles.map((c) => ({
-        eventAt: c.date + "T00:00:00.000Z",
+      maxAgeMs: brokerScanFreshnessMs(interval),
+      observations: candles.map((c, index) => ({
+        eventAt: closes[index].date + "T00:00:00.000Z",
         knownAt: c.knownAt,
         open: c.open,
         high: c.high,
@@ -934,7 +971,7 @@ export async function researchUniverse(
     out.lineage.push({
       instrumentId: id,
       provider: a.provider,
-      eventAt: a.candles.at(-1)?.date ?? null,
+      eventAt: closes.at(-1)?.date ?? null,
       retrievedAt: a.retrievedAt!,
       adjustment: "RAW",
       displayAllowed: rightsActive(selected, "display"),
@@ -946,7 +983,7 @@ export async function researchUniverse(
       interval: options.interval ?? "1d",
       periodPolicy:
         options.interval && options.interval !== "1d"
-          ? "GROUPED_DAILY_OHLC; LATEST_CALENDAR_GROUP_MAY_BE_PARTIAL"
+          ? "GROUPED_DAILY_OHLC_IN_COMPLETED_CALENDAR_PERIOD"
           : "DAILY_SOURCE_OBSERVATIONS",
     });
   }
@@ -957,10 +994,19 @@ export async function researchUniverse(
     (options.provider === "ANGELONE" || options.provider === "CONNECTED_MARKETS") &&
     resolveGatewayConfig(environment()).flags.enablePrivateBrokerData
   ) {
+    const brokerUniverse = !options.instrumentIds?.length && preset === "MCX_FUTURES"
+      ? (await gatewaySearchInstruments({
+          isOwner: true, exchange: "MCX", segment: "FUTURE", limit: 50, runtimeEnv: environment(),
+        })).instruments
+      : VERIFIED_SEED_INSTRUMENTS;
     const rawBrokerCandidates = [...new Set(
       options.instrumentIds?.length
-        ? options.instrumentIds.filter((id) => /^(NSE|BSE|MCX):/i.test(id))
-        : VERIFIED_SEED_INSTRUMENTS.map((i) => i.id)
+        ? options.instrumentIds.filter((id) => {
+            if (preset === "INDIAN_EQUITIES" && !/^(NSE|BSE):/i.test(id)) return false;
+            if (preset === "MCX_FUTURES" && !/^MCX:/i.test(id)) return false;
+            return /^(NSE|BSE|MCX):/i.test(id);
+          })
+        : brokerUniverse.filter((i) => matchesScanMarketPreset(preset, i.exchange, i.segment, i.expiry)).map((i) => i.id)
     )].filter((id) => !loadedIds.has(id));
     const remainingBudget = Math.min(24, Math.max(0, maxLimit - out.datasets.length));
     const candidateIds = rawBrokerCandidates.slice(0, remainingBudget);
@@ -970,7 +1016,6 @@ export async function researchUniverse(
         reason: `Deferred beyond this run's broker request budget (${remainingBudget} instruments). Narrow the selection.`,
       });
     }
-    const interval = options.interval ?? "1d";
     const maxAgeMs = brokerScanFreshnessMs(interval);
     const days = brokerScanLookbackDays(interval, options.minimumBars);
     const source = "Angel One SmartAPI (Private Owner)";
@@ -988,6 +1033,9 @@ export async function researchUniverse(
               days,
               runtimeEnv: environment(),
             });
+            const instrument = series.instrument;
+            if (!matchesScanMarketPreset(preset, instrument.exchange, instrument.segment, instrument.expiry))
+              return { id, reason: "Instrument is outside the selected universe or its contract has expired." };
             const observations = series.sourceMode === "PRIVATE_OWNER_FEED"
               ? completedBrokerObservations(series, interval)
               : [];
@@ -1047,6 +1095,10 @@ export async function researchUniverse(
       out.source = source;
   }
   out.asOf = new Date().toISOString();
+  for (const id of options.instrumentIds ?? []) {
+    if (!loadedIds.has(id) && !out.excluded.some((entry) => entry.id === id))
+      out.excluded.push({ id, reason: "No authorized historical source for this instrument in the selected universe." });
+  }
   out.excluded = [...new Map(out.excluded
     .filter(({ id }) => !loadedIds.has(id))
     .map((entry) => [entry.id, entry])).values()];

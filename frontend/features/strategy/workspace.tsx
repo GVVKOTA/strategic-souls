@@ -35,10 +35,12 @@ import {
 import {
   RESEARCH_GLOSSARY,
   compileTree,
+  matchesScanMarketPreset,
   treeFromFormula,
   validateResearch,
   type RuleTree,
   type ResearchDefinition,
+  type ScanUniversePreset,
   type OutcomeDefinition,
   type preflightResearch,
 } from "../../../backend/services/research/research";
@@ -180,35 +182,6 @@ const TIMEFRAMES: { id: ResearchDefinition["interval"]; label: string }[] = [
   { id: "1wk", label: "Weekly" },
   { id: "1mo", label: "Monthly" },
 ];
-
-function buildSampleTestCsv(): string {
-  const rows = ["symbol,date,open,high,low,close,volume"];
-  const specs: [string, number, number][] = [
-    ["NSE:HDFCBANK", 1680, 4.5],
-    ["NSE:SBIN", 1120, 3.2],
-    ["NSE:RELIANCE", 1410, -2.5],
-    ["NSE:TCS", 4150, 8.0],
-    ["NSE:INFY", 1890, -3.0],
-  ];
-  const baseMs = Date.UTC(2026, 8, 1);
-  for (const [sym, start, step] of specs) {
-    for (let d = 0; d < 42; d++) {
-      const date = new Date(baseMs + d * 86_400_000).toISOString().slice(0, 10);
-      const wave = Math.sin(d * 0.45) * Math.abs(step) * 1.4;
-      const close = Math.round((start + d * step + wave) * 100) / 100;
-      const open = Math.round((close - step * 0.35) * 100) / 100;
-      const high =
-        Math.round((Math.max(open, close) + Math.abs(step) * 0.85 + 2) * 100) /
-        100;
-      const low =
-        Math.round((Math.min(open, close) - Math.abs(step) * 0.85 - 2) * 100) /
-        100;
-      const vol = 150000 + d * 2800 + (d === 41 ? 180000 : 0);
-      rows.push(`${sym},${date},${open},${high},${low},${close},${vol}`);
-    }
-  }
-  return rows.join("\n");
-}
 
 function localTimeShort(iso: string | null | undefined): string {
   if (!iso) return "unavailable";
@@ -435,12 +408,10 @@ export default function ResearchWorkspace({
       ? "CONNECTED_MARKETS"
       : "ECB_DAILY",
   );
-  const [universePreset, setUniversePreset] = useState<
-    "INDIAN_EQUITIES" | "MCX_FUTURES" | "MY_WATCHLIST" | "ECB_DAILY" | "CUSTOM_CSV"
-  >(initialUniversePreset || "ECB_DAILY");
-  const [customCsv, setCustomCsv] = useState(
-    initialUniversePreset === "CUSTOM_CSV" ? buildSampleTestCsv() : "",
+  const [universePreset, setUniversePreset] = useState<ScanUniversePreset | undefined>(
+    initialUniversePreset || "ECB_DAILY",
   );
+  const [customCsv, setCustomCsv] = useState("");
   const [pickerQuery, setPickerQuery] = useState("");
   const [interval, setInterval] = useState<ResearchDefinition["interval"]>("1d");
   const [instruments, setInstruments] = useState("");
@@ -537,7 +508,9 @@ export default function ResearchWorkspace({
           ? "ECB_DAILY"
           : initialInstrument.startsWith("MCX:")
             ? "MCX_FUTURES"
-            : "INDIAN_EQUITIES",
+            : registryInstrument(initialInstrument)?.assetClass === "EQUITY"
+              ? "INDIAN_EQUITIES"
+              : undefined,
       );
       setPreflight(null);
     });
@@ -555,12 +528,19 @@ export default function ResearchWorkspace({
     [classicFilter, classicCategory],
   );
 
+  const watchlistItems = workspace?.records.find((record) => record.kind === "watchlist")?.payload?.items;
   const pickerMatches = useMemo(() => {
     if (!pickerQuery.trim()) return [];
-    return searchCanonicalInstruments(pickerQuery, X2_INSTRUMENTS, {
+    const candidates = X2_INSTRUMENTS.filter((instrument) => {
+      if (universePreset === "ECB_DAILY") return instrument.id.startsWith("ECB:");
+      if (universePreset === "MY_WATCHLIST") return watchlistItems?.includes(instrument.id);
+      if (universePreset === "CUSTOM_CSV") return false;
+      return matchesScanMarketPreset(universePreset, instrument.market, instrument.assetClass, instrument.expiry);
+    });
+    return searchCanonicalInstruments(pickerQuery, candidates, {
       limit: 6,
     });
-  }, [pickerQuery]);
+  }, [pickerQuery, universePreset, watchlistItems]);
 
   function selectClassicPreset(preset: ClassicPreset) {
     setSelectedClassicId(preset.id);
@@ -578,51 +558,13 @@ export default function ResearchWorkspace({
     window.requestAnimationFrame(() => nameInputRef.current?.focus());
   }
 
-  function applyUniversePreset(
-    next:
-      | "INDIAN_EQUITIES"
-      | "MCX_FUTURES"
-      | "MY_WATCHLIST"
-      | "ECB_DAILY"
-      | "CUSTOM_CSV",
-  ) {
+  function applyUniversePreset(next: ScanUniversePreset) {
     setUniversePreset(next);
     setPreflight(null);
-    if (next === "ECB_DAILY") {
-      setUniverse("ECB_DAILY");
-      setInstruments("");
-      setCustomCsv("");
-      return;
-    }
-    if (next === "INDIAN_EQUITIES") {
-      setUniverse("CONNECTED_MARKETS");
-      setInstruments("");
-      setCustomCsv("");
-      return;
-    }
-    if (next === "MCX_FUTURES") {
-      setUniverse("CONNECTED_MARKETS");
-      setInstruments("MCX:GOLD04DEC26FUT, MCX:CRUDEOIL18DEC26FUT");
-      setCustomCsv("");
-      return;
-    }
-    if (next === "MY_WATCHLIST") {
-      setCustomCsv("");
-      const wl = workspace?.records.find((r) => r.kind === "watchlist");
-      const items = (wl?.payload?.items ?? []).filter(Boolean);
-      setInstruments(items.join(", "));
-      const allEcb =
-        items.length > 0 && items.every((i) => i.startsWith("ECB:"));
-      setUniverse(allEcb ? "ECB_DAILY" : "CONNECTED_MARKETS");
-      return;
-    }
-    if (next === "CUSTOM_CSV") {
-      setUniverse("CONNECTED_MARKETS");
-      setInstruments("");
-      if (!customCsv.trim()) {
-        setCustomCsv(buildSampleTestCsv());
-      }
-    }
+    setUniverse(next === "ECB_DAILY" ? "ECB_DAILY" : "CONNECTED_MARKETS");
+    setInstruments("");
+    if (next === "CUSTOM_CSV") setInterval("1d");
+    else setCustomCsv("");
   }
 
   const effectiveFormula =
@@ -669,6 +611,7 @@ export default function ResearchWorkspace({
           formula: canonical.value?.formula ?? effectiveFormula,
           mode: backendMode,
           universe,
+          universePreset,
           interval,
           instrumentIds: instruments.split(/[\s,]+/).filter(Boolean),
           partialPolicy,
@@ -686,6 +629,7 @@ export default function ResearchWorkspace({
     effectiveFormula,
     backendMode,
     universe,
+    universePreset,
     interval,
     instruments,
     partialPolicy,
@@ -763,7 +707,12 @@ export default function ResearchWorkspace({
       ?.researchDrafts ?? [];
   const nextCursor =
     olderCursor === undefined ? workspace?.scanHistoryNextBefore : olderCursor;
-  const coverage = preflight?.signature === signature ? preflight.value : null;
+  const sourceSignature = JSON.stringify([
+    signature,
+    universePreset === "CUSTOM_CSV" ? customCsv : null,
+    universePreset === "MY_WATCHLIST" ? watchlistItems : null,
+  ]);
+  const coverage = preflight?.signature === sourceSignature ? preflight.value : null;
   const quota = workspace?.scanQuota;
 
   function loadDefinition(
@@ -789,21 +738,7 @@ export default function ResearchWorkspace({
       setBuildMode(converted ? "VISUAL" : "FORMULA");
     }
     setUniverse(value.universe);
-    const hasOnlyMcx =
-      value.instrumentIds.length > 0 &&
-      value.instrumentIds.every((idStr) => idStr.toUpperCase().startsWith("MCX:"));
-    const hasCsv =
-      value.instrumentIds.length > 0 &&
-      value.instrumentIds.some((idStr) => idStr.toUpperCase().startsWith("CSV:"));
-    setUniversePreset(
-      value.universe === "ECB_DAILY"
-        ? "ECB_DAILY"
-        : hasCsv
-          ? "CUSTOM_CSV"
-          : hasOnlyMcx
-            ? "MCX_FUTURES"
-            : "INDIAN_EQUITIES",
-    );
+    setUniversePreset(value.universePreset);
     setInterval(value.interval);
     setInstruments(value.instrumentIds.join(", "));
     setPartial(value.partialPolicy);
@@ -885,11 +820,12 @@ export default function ResearchWorkspace({
           ? "Saving draft version…"
           : "1/3 Running preflight & data checks…",
     );
+    const requestSignature = kind === "draft" ? signature : sourceSignature;
     if (
-      pending.current?.signature !== signature ||
+      pending.current?.signature !== requestSignature ||
       pending.current?.kind !== kind
     ) {
-      pending.current = { kind, signature, id: crypto.randomUUID() };
+      pending.current = { kind, signature: requestSignature, id: crypto.randomUUID() };
     }
     const endpoint =
       universePreset === "CUSTOM_CSV" && customCsv.trim()
@@ -904,7 +840,7 @@ export default function ResearchWorkspace({
             ? { customCsv }
             : {}),
         });
-        setPreflight({ signature, value });
+        setPreflight({ signature: sourceSignature, value });
         if (value.preflight.blocked) {
           notify(
             value.preflight.reason || "Data preflight blocked execution.",
@@ -1346,7 +1282,8 @@ export default function ResearchWorkspace({
                             "x54-chip" + (interval === tf.id ? " is-active" : "")
                           }
                           aria-pressed={interval === tf.id}
-                          disabled={tf.id === "30m" || tf.id === "1h"}
+                          disabled={tf.id === "30m" || tf.id === "1h" ||
+                            (universePreset === "CUSTOM_CSV" && tf.id !== "1d")}
                           title={tf.id === "30m" || tf.id === "1h" ? "Intraday history is unavailable for Soul Scan." : undefined}
                           onClick={() => {
                             setInterval(tf.id);
@@ -1375,20 +1312,6 @@ export default function ResearchWorkspace({
                         setPreflight(null);
                       }}
                     />
-                    <div className="x1-actions">
-                      <button
-                        type="button"
-                        className="x1-secondary"
-                        style={{ minHeight: 36, fontSize: "0.8rem" }}
-                        onClick={() => {
-                          setCustomCsv(buildSampleTestCsv());
-                          setDescription("Simulated 5-stock Indian equity test CSV fixture (non-publishable TEST DATA).");
-                          setPreflight(null);
-                        }}
-                      >
-                        Load 5-stock test CSV (non-publishable)
-                      </button>
-                    </div>
                   </div>
                 )}
 
@@ -1565,6 +1488,7 @@ export default function ResearchWorkspace({
                         nameInputRef.current?.focus();
                       }}
                       universe={universe}
+                      universePreset={universePreset}
                       interval={interval}
                       customCsv={
                         universePreset === "CUSTOM_CSV" ? customCsv : undefined
@@ -1605,12 +1529,6 @@ export default function ResearchWorkspace({
                               .filter(Boolean);
                             if (!existing.includes(m.id)) {
                               setInstruments([...existing, m.id].join(", "));
-                              if (!m.id.startsWith("ECB:")) {
-                                setUniverse("CONNECTED_MARKETS");
-                                if (universePreset === "ECB_DAILY") {
-                                  setUniversePreset("INDIAN_EQUITIES");
-                                }
-                              }
                               setPreflight(null);
                             }
                             setPickerQuery("");

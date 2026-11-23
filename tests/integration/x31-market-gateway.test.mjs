@@ -240,6 +240,10 @@ test("owner Classic coverage uses longer candle history and saves a daily scan o
     MARKET_DATA_ADAPTER: {
       async fetch(url) {
         const { pathname, searchParams } = new URL(url);
+        if (pathname === "/internal/instruments") {
+          assert.equal(searchParams.get("exchange"), "MCX");
+          return Response.json({ instruments: master.search({ exchange: "MCX", segment: "FUTURE" }) });
+        }
         assert.equal(pathname, "/internal/candles");
         const id = searchParams.get("id");
         const days = Number(searchParams.get("days"));
@@ -324,6 +328,37 @@ test("owner Classic coverage uses longer candle history and saves a daily scan o
   const replay = await call("run-scan", "NSE:SBIN", { requestId });
   assert.equal(replay.body.id, saved.body.id);
   assert.equal(replay.body.replayed, true);
+
+  const equities = await call("preflight-scan", "NSE:SBIN", {
+    universePreset: "INDIAN_EQUITIES",
+    instrumentIds: ["NSE:SBIN", "NSE:NIFTY", "MCX:GOLD04DEC26FUT"],
+  });
+  assert.deepEqual(equities.body.preflight.results.results.map((row) => row.instrumentId), ["NSE:SBIN"]);
+  assert.deepEqual(new Set(equities.body.sourceExclusions.map(({ id }) => id)), new Set(["NSE:NIFTY", "MCX:GOLD04DEC26FUT"]));
+
+  const mcx = await call("preflight-scan", "NSE:SBIN", {
+    universePreset: "MCX_FUTURES",
+    instrumentIds: ["NSE:SBIN"],
+  });
+  assert.equal(mcx.body.preflight.blocked, true);
+  assert.equal(mcx.body.sourceExclusions[0].id, "NSE:SBIN");
+  const noCsv = await call("preflight-scan", "NSE:SBIN", { universePreset: "CUSTOM_CSV" });
+  assert.match(noCsv.body.preflight.reason, /Upload a dated daily CSV/);
+
+  await env.DB.prepare(`
+    INSERT INTO x1_records (id,subject,kind,name,payload,version,archived,last_write,created_at,updated_at)
+    VALUES ('wl-fixture','owner','watchlist','Watchlist',?,1,0,'fixture',?,?)
+  `).bind(JSON.stringify({ items: ["NSE:SBIN"] }), new Date(nowMs).toISOString(), new Date(nowMs).toISOString()).run();
+  const watchlist = await call("preflight-scan", "NSE:SBIN", {
+    universePreset: "MY_WATCHLIST",
+    instrumentIds: [],
+  });
+  assert.deepEqual(watchlist.body.preflight.results.results.map((row) => row.instrumentId), ["NSE:SBIN"]);
+  const outside = await call("preflight-scan", "BSE:SBIN", { universePreset: "MY_WATCHLIST" });
+  assert.match(outside.body.preflight.reason, /outside your active watchlist/);
+  activeUser = { userId: "alice" };
+  const other = await call("preflight-scan", "NSE:SBIN", { universePreset: "MY_WATCHLIST" });
+  assert.match(other.body.preflight.reason, /Add instruments to your active watchlist/);
 });
 
 test("full local loopback adapter + Cloudflare Worker route authorization, multi-exchange quotes, candles, offline degradation & zero leak", async () => {

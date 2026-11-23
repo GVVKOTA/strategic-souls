@@ -8,6 +8,7 @@ import {
   type DrawScanReport,
 } from "../../../backend/engines/pattern-draw";
 import type { SoulGenomeReport } from "../../../backend/engines/soul-genome";
+import type { ScanUniversePreset } from "../../../backend/services/research/research";
 import { api, type Notice } from "../../components/workspace/shared";
 
 type Props = {
@@ -16,6 +17,7 @@ type Props = {
   scanName?: string;
   onRequireName?: (message: string) => void;
   universe: "ECB_DAILY" | "CONNECTED_MARKETS";
+  universePreset?: ScanUniversePreset;
   interval: "30m" | "1h" | "1d" | "1wk" | "1mo";
   customCsv?: string;
   instrumentIds?: string[];
@@ -85,6 +87,7 @@ export default function PatternDrawCanvas({
   interval,
   customCsv,
   instrumentIds,
+  universePreset,
   busy,
   onScanComplete,
   onOpenAsset,
@@ -286,6 +289,7 @@ export default function PatternDrawCanvas({
         windowBars,
         minPatternFit,
         universe,
+        universePreset,
         interval,
         ...(customCsv?.trim() ? { customCsv } : {}),
         ...(instrumentIds?.length ? { instrumentIds } : {}),
