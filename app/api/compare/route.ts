@@ -1,6 +1,7 @@
 import { getAuthenticatedUser } from "../../../backend/auth/session";
 import { computeAssetComparison, computeCorrelationLab } from "../../../backend/engines/analytics";
 import { instrumentRegistry } from "../../../backend/services/market-data/data-service";
+import { OFFICIAL_FX_PAIRS } from "../../../backend/services/market-data/market-data";
 import { completedResearchPrices as series } from "../../../backend/services/market-data/history-prices";
 import { calendarPeriodKey } from "../../../backend/engines/chart-analytics";
 import { COMMON_INSTRUMENT_ALIASES, type SearchableInstrument } from "../../../backend/services/market-data/instrument-registry";
@@ -36,6 +37,20 @@ async function catalog(subject: string) {
       : row.assetClass === "INDEX" ? "Indices" : row.assetClass === "ETF" ? "ETFs" : "Commodities";
     add(row, category);
   }
+  for (const pair of OFFICIAL_FX_PAIRS) {
+    if (rows.has(pair.id)) continue;
+    const label = pair.base + " / " + pair.quote;
+    add({ id: pair.id, name: label, label, market: "FX", assetClass: "FX",
+      currency: pair.quote, aliases: [pair.base + pair.quote] }, "Forex");
+  }
+  const broadIndices = [
+    ["NSE:NIFTY100", "Nifty 100"], ["NSE:NIFTY200", "Nifty 200"], ["NSE:NIFTY500", "Nifty 500"],
+    ["NSE:NIFTYMIDCAP150", "Nifty Midcap 150"], ["NSE:NIFTYSMALLCAP250", "Nifty Smallcap 250"],
+  ] as const;
+  for (const [id, name] of broadIndices) if (!rows.has(id)) add({
+    id, name, label: name, market: "NSE", currency: "INR", assetClass: "INDEX",
+    availabilityState: "ENTITLEMENT_REQUIRED",
+  }, "Indices");
   for (const sector of NSE_SECTOR_INDICES) add({
     ...rows.get(sector.id), id: sector.id, market: "NSE", name: sector.name,
     label: sector.indexSymbol, currency: "INR", assetClass: "INDEX",
