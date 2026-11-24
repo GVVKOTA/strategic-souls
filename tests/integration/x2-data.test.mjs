@@ -85,3 +85,19 @@ test('ECB scans use the last reference of each completed week or month', async (
   await assert.rejects(() => service.researchUniverse("owner", { provider: "ECB", interval: "1min" }), (error) => error.status === 400);
 });
 test('fault injection: 403, 5xx, timeout, malformed JSON, stale candles and key rotation fail closed safely',async()=>{for(const [status,code] of [[403,'AUTH_FAILED'],[500,'PROVIDER_DOWN'],[503,'PROVIDER_DOWN']]){await assert.rejects(()=>provider.fetchProviderJson(new URL('https://eodhd.com/api/eod/TEST.NSE?api_token=SECRET_KEY_123'),{},async()=>new Response('SECRET_KEY_123',{status})),e=>e.code===code&&!e.message.includes('SECRET_KEY_123'));}await assert.rejects(()=>provider.fetchProviderJson(new URL('https://eodhd.com/api/eod/TEST.NSE'),{},async()=>{const err=new Error('aborted');err.name='AbortError';throw err;}),e=>e.code==='PROVIDER_DOWN');await assert.rejects(()=>provider.fetchProviderJson(new URL('https://eodhd.com/api/eod/TEST.NSE'),{},async()=>new Response('{not-json',{status:200})),e=>e.code==='PROVIDER_DOWN');const existing=JSON.parse(sql.prepare("SELECT payload FROM x2_providers WHERE provider='EODHD'").get().payload);await service.configureProvider('owner',{config:{...existing,version:existing.version,lastWrite:randomUUID(),enabled:true,rights:{...existing.rights,display:true,analysis:true,storage:true,cacheSeconds:300}}});env.X2_EODHD_API_TOKEN='ROTATED_SECRET_TOKEN_ONE';fetchReply=()=>Response.json([{date:'2026-11-01',open:10,high:12,low:9,close:11,volume:5}]);const staleAsset=await service.assetResearch(instrument.id,'owner');assert.equal(staleAsset.state,'STALE');let fetchCountAfterRotation=0;env.X2_EODHD_API_TOKEN='ROTATED_SECRET_TOKEN_TWO';fetchReply=()=>{fetchCountAfterRotation++;return Response.json(bars());};const rotatedAsset=await service.assetResearch(instrument.id,'owner');assert.equal(fetchCountAfterRotation,1,'Key rotation must bypass prior secret cache entry');assert.equal(rotatedAsset.state,'PUBLISHED_EOD');assert.ok(!JSON.stringify(rotatedAsset).includes('ROTATED_SECRET_TOKEN'));});
+
+test("Indian API daily prices validate source, cadence, order and optional aligned volume", async () => {
+  const price = { metric: "Price", label: "Price on NSE", meta: { is_weekly: false }, values: [["2026-11-12", "10"], ["2026-11-13", "11"]] };
+  const volume = { metric: "Volume", label: "Volume", values: [["2026-11-13", 250]] };
+  const read = (datasets, host = "stock.indianapi.in") => provider.indianDailyPrices("TEST", "fixture", host,
+    async () => Response.json({ datasets }));
+  const rows = await read([price, volume]);
+  assert.equal(rows[0].volume, null);
+  assert.equal(rows[1].volume, 250);
+  assert.equal(rows[1].high, undefined);
+  await assert.rejects(read([price, price]), /unavailable/);
+  await assert.rejects(read([{ ...price, meta: { is_weekly: true } }]), /unavailable/);
+  await assert.rejects(read([{ ...price, values: [...price.values].reverse() }]), /unordered/);
+  await assert.rejects(read([{ ...price, label: "Price on BSE" }]), /unavailable/);
+  await assert.rejects(read([price], "example.invalid"), /hostname/);
+});

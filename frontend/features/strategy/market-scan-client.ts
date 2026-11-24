@@ -1,7 +1,7 @@
 import { api } from "../../components/workspace/shared";
 
 export type MarketScanCoverage = {
-  selected: number; evaluated: number; matched: number; unmatched: number;
+  selected: number; evaluated: number; matched?: number; unmatched?: number;
   insufficient: number; deniedOrFailed: number; deferred: number;
 };
 export type MarketScanProgress = {
@@ -11,6 +11,12 @@ export type MarketScanProgress = {
   state?: "QUEUED" | "RUNNING" | "COMPLETE" | "PARTIAL" | "FAILED" | "CANCELLED";
   progress?: number;
 };
+
+export function resultPhase(result: MarketScanProgress, immediateMatches?: number) {
+  if (result.state === "PARTIAL") return "PARTIAL";
+  const matches = result.coverage?.matched ?? immediateMatches;
+  return matches === 0 ? "NO_MATCHES" : "COMPLETE";
+}
 
 const SCAN_ENDPOINT = "/api/strategy/scan";
 

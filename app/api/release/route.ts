@@ -1,7 +1,7 @@
 import { hasReadySharedHistory, sharedHistoryGrants } from "../../../backend/services/market-data/shared-history";
 import { APP_RELEASE } from "../../../backend/services/release-meta";
 import {
-  SCAN_DAILY_LIMIT,
+  CLASSIC_DAILY_LIMIT, ADVANCED_ROLLING_LIMIT,
 } from "../../../backend/services/research/scan-quota";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +29,8 @@ export async function GET() {
       globalMarketTiles: 8,
       exchangeVenues: 24,
       classicPresets: 50,
-      scanDailyLimit: SCAN_DAILY_LIMIT,
+      classicDailyLimit: CLASSIC_DAILY_LIMIT,
+      advancedRollingLimit: ADVANCED_ROLLING_LIMIT,
       avatarPresets: 50,
       profileBannerPresets: 8,
       portfolioBackdropPresets: 8,

@@ -508,7 +508,7 @@ test("Advanced reservations share the Classic daily window and support distinct 
         scanTier: "ADVANCED",
         requestId: reqId,
         name: "Advanced Genome Scan",
-        description: "Concurrent Advanced scans use the shared daily allowance.",
+        description: "Concurrent Advanced scans use the rolling hourly allowance.",
         formula: "close > sma(close, 20)",
         mode: "ADVANCED",
         universe: "ECB_DAILY",
@@ -524,18 +524,18 @@ test("Advanced reservations share the Classic daily window and support distinct 
     mkAdv("adv_concurrent_two"),
   ]);
   const statuses = [res1.status, res2.status].sort((a, b) => a - b);
-  assert.deepEqual(statuses, [200, 200]);
+  assert.deepEqual(statuses, [200, 429]);
 
-  // The previous one-per-hour limit has been removed.
+  // The first completed Advanced scan still occupies the rolling window.
   nowMs += 30 * 60 * 1000;
   const res30 = await mkAdv("adv_after_30min_test");
-  assert.equal(res30.status, 200);
+  assert.equal(res30.status, 429);
 
   // 61 minutes after initial completion: permitted again!
   nowMs += 32 * 60 * 1000;
   const res62 = await mkAdv("adv_after_62min_test");
   assert.equal(res62.status, 200);
-  assert.equal((await scanQuotaMod.getScanQuotaSummary(DB, "user-b", nowMs)).classic.used, 4);
+  assert.equal((await scanQuotaMod.getScanQuotaSummary(DB, "user-b", nowMs)).advanced.remaining, 0);
 });
 
 test("Community Research Network: One-Click Post Soul, Angel One redaction (403), Follow Requests, Save/Comment/Copy/Pin/Delete & Privacy", async () => {
@@ -753,14 +753,17 @@ test("Market jobs pin all 500 IDs across modes, reconcile results and protect ow
   assert.equal((await niftyUniverse()).version, saved.version);
 
   currentUser = { userId: "user-b", displayName: "Bob Macro", email: "b@test.local", authProvider: "email" };
+  nowMs += 61 * 60 * 1000;
   const start = performance.now();
-  for (const variant of ["CLASSIC", "BUILD", "DISCOVER", "CUSTOM_DRAW", "TEMPLATE_DRAW"]) {
+  for (const variant of ["CLASSIC", "BUILD", "DISCOVER", "CUSTOM_DRAW", "TEMPLATE_DRAW", "FULL_CLASSIC", "FULL_BUILD"]) {
+    const complete = variant.startsWith("FULL_");
+    const isClassic = variant.endsWith("CLASSIC");
     const isDraw = variant.endsWith("_DRAW");
     const input = {
-      action: isDraw ? "run-draw-scan" : "run-scan", origin: variant, scanRequestVersion: 2,
+      action: isDraw ? "run-draw-scan" : "run-scan", origin: variant.replace("FULL_", ""), scanRequestVersion: 2,
       requestId: randomUUID(), name: "Market fixture " + variant,
       description: "Run a full canonical market fixture through the durable scan pipeline.",
-      formula: "close > 100", interval: "1d", mode: variant === "CLASSIC" ? "SIMPLE" : "ADVANCED",
+      formula: "close > 100", interval: "1d", mode: isClassic ? "SIMPLE" : "ADVANCED",
       universe: "ECB_DAILY", universePreset: "ECB_DAILY", instrumentIds: ["ECB:USDINR"],
       outcome: { family: "POSITIVE_RETURN", horizon: 10, threshold: 0, target: 5, stop: 3, costBps: 0 },
       ...(isDraw && { strokePoints: variant === "TEMPLATE_DRAW" ? PATTERN_TEMPLATES[0].points :
@@ -773,9 +776,10 @@ test("Market jobs pin all 500 IDs across modes, reconcile results and protect ow
     assert.equal((await replay.json()).jobId, job.jobId);
     const requests = [];
     const fixture = async (_subject, options) => {
+      assert.equal(options.provider, "INDIANAPI");
       requests.push(...options.instrumentIds);
       const asOf = new Date(nowMs).toISOString();
-      const datasets = options.instrumentIds.filter((id) => id !== "NSE:FIX499").map((id) => ({
+      const datasets = options.instrumentIds.filter((id) => complete || id !== "NSE:FIX499").map((id) => ({
         instrumentId: id, permitted: true, source: "Fixture OHLCV", currency: "INR",
         observations: Array.from({ length: 30 }, (_, i) => ({
           eventAt: new Date(nowMs - (30 - i) * 86_400_000).toISOString(), knownAt: asOf,
@@ -788,14 +792,20 @@ test("Market jobs pin all 500 IDs across modes, reconcile results and protect ow
       assert.equal(await processMarketScanBatch(fixture), true);
     assert.deepEqual(requests, constituents.map((row) => row.id));
     const completed = await route.GET(makeReq("/api/strategy/scan?jobId=" + job.jobId));
-    assert.equal((await completed.json()).state, "PARTIAL");
+    assert.equal((await completed.json()).state, complete ? "COMPLETE" : "PARTIAL");
     const stored = JSON.parse(sql.prepare("SELECT payload FROM x1_scans WHERE id=?").get(job.jobId).payload);
     assert.equal(stored.universeVersion, saved.version);
-    assert.equal(stored.results.eligible, 499);
-    assert.equal(stored.results.unknown, 1);
+    assert.equal(stored.billing.charged, complete ? 1 : 0);
+    const allowance = sql.prepare(`SELECT r.state,r.scan_id,r.completed_at FROM x51_scan_reservations r
+      JOIN x78_market_scan_jobs j ON r.id=j.reservation_id WHERE j.id=?`).get(job.jobId);
+    assert.equal(allowance.state, complete ? "COMPLETED" : "FAILED");
+    assert.equal(allowance.scan_id, complete ? job.jobId : null);
+    assert.equal(Boolean(allowance.completed_at), complete);
+    assert.equal(stored.results.eligible, complete ? 500 : 499);
+    assert.equal(stored.results.unknown, complete ? 0 : 1);
     assert.equal(stored.coverage.selected, 500);
-    assert.equal(stored.coverage.evaluated, 499);
-    assert.equal(stored.coverage.insufficient, 1);
+    assert.equal(stored.coverage.evaluated, complete ? 500 : 499);
+    assert.equal(stored.coverage.insufficient, complete ? 0 : 1);
     assert.equal(stored.coverage.deferred, 0);
     assert.equal(stored.results.matches + stored.results.failed + stored.results.unknown, 500);
     assert.equal(new Set(stored.results.results.map((row) => row.instrumentId)).size, 500);
@@ -861,11 +871,15 @@ test("Market jobs pin all 500 IDs across modes, reconcile results and protect ow
     const asOf = new Date(nowMs).toISOString();
     return { datasets: options.instrumentIds.map((instrumentId) => ({
       instrumentId, permitted: true, source: "Fixture", observations: [{ eventAt: asOf, knownAt: asOf, close: 10 }],
-    })), excluded: [], lineage: [], source: "Fixture", asOf };
+    })), excluded: [], lineage: options.instrumentIds.map((instrumentId) => ({
+      instrumentId, provider: "Fixture", eventAt: asOf, retrievedAt: asOf, adjustment: "RAW",
+      displayAllowed: true, derivedDisplayAllowed: true, rightsExpiresAt: null,
+    })), source: "Fixture", asOf };
   };
   assert.equal(await processMarketScanBatch(loader), true);
   const progress = await (await route.GET(makeReq("/api/strategy/scan?jobId=" + scoped.jobId))).json();
   assert.equal(progress.coverage.evaluated, 5);
+  assert.equal(progress.coverage.matched, undefined);
   assert.equal(progress.coverage.deferred, 2);
   const chargedWhileRunning = (await scanQuotaMod.getScanQuotaSummary(DB, "user-b", nowMs)).classic.used;
   assert.equal((await (await route.POST(makeReq("/api/strategy/scan", "POST", { action: "cancel", jobId: scoped.jobId }))).json()).state, "CANCELLED");
@@ -882,5 +896,16 @@ test("Market jobs pin all 500 IDs across modes, reconcile results and protect ow
   assert.equal(timedOut.coverage.evaluated, 5);
   assert.equal(timedOut.coverage.deferred, 2);
   assert.equal(timedOut.coverage.deniedOrFailed, 0);
-  console.info("X8 5 × 500 synthetic jobs plus scoped cancellation and timeout, simulated provider and D1, " + Math.round(performance.now() - start) + "ms");
+  const beforeComplete = (await scanQuotaMod.getScanQuotaSummary(DB, "user-b", nowMs)).classic.used;
+  const zeroRequest = { ...scopeRequest, formula: "close < 0", requestId: randomUUID() };
+  const zeroJob = await (await route.POST(makeReq("/api/strategy/scan", "POST", zeroRequest))).json();
+  for (let batch = 0; batch < 3; batch++) assert.equal(await processMarketScanBatch(loader), true);
+  const complete = await (await route.GET(makeReq("/api/strategy/scan?jobId=" + zeroJob.jobId))).json();
+  assert.equal(complete.state, "COMPLETE");
+  assert.equal(complete.coverage.matched, 0);
+  assert.equal(complete.coverage.unmatched, 7);
+  const replay = await (await route.POST(makeReq("/api/strategy/scan", "POST", zeroRequest))).json();
+  assert.equal(replay.jobId, zeroJob.jobId);
+  assert.equal((await scanQuotaMod.getScanQuotaSummary(DB, "user-b", nowMs)).classic.used, beforeComplete + 1);
+  console.info("Seven 500-member synthetic jobs plus scoped cancellation and timeout, simulated provider and D1, " + Math.round(performance.now() - start) + "ms");
 });

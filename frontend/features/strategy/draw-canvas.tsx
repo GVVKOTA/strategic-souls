@@ -51,6 +51,7 @@ type Props = {
   onScanComplete: (res: {
     id: string;
     state?: MarketScanProgress["state"];
+    coverage?: MarketScanProgress["coverage"];
     drawReport?: DrawScanReport;
     soulGenome?: SoulGenomeReport;
   }) => Promise<void> | void;

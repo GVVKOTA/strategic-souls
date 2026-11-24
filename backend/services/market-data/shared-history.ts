@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import type { Candle, Instrument, Interval, ProviderConfig, ProviderId, SharedHistoryGrant } from "./data-types";
-import { providerCandles, providerIntradayCandles, ProviderFailure, rightsActive, secretFrom } from "./providers";
+import { indianDailyPrices, type IndianDailyPrice, providerCandles, providerIntradayCandles, ProviderFailure, rightsActive, secretFrom } from "./providers";
 import { getExchangeSessionWindowMinutes, getIstDateAndMinutes } from "./angelone/calendar";
 import { intradayBarCloseMs } from "./angelone/scan-history";
 
@@ -23,7 +23,7 @@ type Task = {
 };
 type SnapshotRow = { bars: string; received_at: number; expires_at: number; first_event: string; last_event: string; bar_count: number };
 export type SharedHistory = {
-  config: Grant; instrument: Instrument; row: SnapshotRow; candles: Candle[];
+  config: Grant; instrument: Instrument; row: SnapshotRow; candles: Candle[]; prices?: IndianDailyPrice[];
   interval: NativeHistoryInterval; state: "PUBLISHED_EOD" | "DELAYED" | "STALE";
 };
 
@@ -32,7 +32,7 @@ export const nativeInterval = (interval: Interval): NativeHistoryInterval =>
   interval === "30m" || interval === "1h" ? interval : "1d";
 
 export function hasSharedRights(config: ProviderConfig, now = Date.now()): config is Grant {
-  return !!config.sharedHistory && config.datasets.includes("candles") &&
+  return !!config.sharedHistory && config.datasets.includes(config.provider === "INDIANAPI" ? "prices" : "candles") &&
     rightsActive(config, "display", now) && rightsActive(config, "analysis", now) &&
     rightsActive(config, "storage", now) && config.rights.derivedDisplay === true &&
     config.rights.redistribution === true;
@@ -109,12 +109,12 @@ export function normalizedSharedBars(
   return [...unique.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-MAX_BARS);
 }
 
-export function eligibleSharedPeriods(
-  bars: Candle[], instrument: Instrument, interval: Interval, at: number,
-): Candle[] {
+export function eligibleSharedPeriods<T extends {date: string}>(
+  bars: T[], instrument: Instrument, interval: Interval, at: number,
+): T[] {
   if (interval !== "1wk" && interval !== "1mo") return bars;
   const current = calendarPeriodKey(dateAt(instrument, at), interval);
-  const groups = new Map<string, Candle[]>();
+  const groups = new Map<string, T[]>();
   for (const bar of bars) {
     const key = calendarPeriodKey(bar.date, interval);
     if (key >= current) continue;
@@ -205,7 +205,7 @@ export async function readSharedHistoryBatch(
       const row = byId.get(instrument.id);
       if (!row) continue;
       const state = dataState(instrument, resolution, row.last_event, cutoff, config.sharedHistory.lagMinutes);
-      result.set(id, { config, instrument, row, interval: resolution, candles: JSON.parse(row.bars) as Candle[], state });
+      result.set(id, { config, instrument, row, interval: resolution, ...(config.provider === "INDIANAPI" ? { prices: JSON.parse(row.bars) as IndianDailyPrice[], candles: [] } : { candles: JSON.parse(row.bars) as Candle[] }), state });
     }
   }
   return result;
@@ -240,7 +240,7 @@ export async function readSharedDailyQuotes(ids: readonly string[], grants: read
     attribution: { label: string; url: string }; instrument: Instrument;
   }>();
   for (const config of grants) {
-    if (!hasSharedRights(config, now) || !config.sharedHistory.intervals.includes("1d")) continue;
+    if (config.provider === "INDIANAPI" || !hasSharedRights(config, now) || !config.sharedHistory.intervals.includes("1d")) continue;
     const mappings = new Map(ids.flatMap((id) => {
       const instrument = resolveSharedInstrument(config, id, now);
       return instrument && !result.has(id) ? [[id, instrument] as const] : [];
@@ -344,9 +344,14 @@ async function refresh(task: Task, config: Grant, fetchHistory: typeof providerH
       return;
     }
     await consumeProviderBudget(config, started);
-    const source = await fetchHistory(config, instrument, secret, task.interval, started);
+    const prices = config.provider === "INDIANAPI"
+      ? await indianDailyPrices(instrument.providerSymbol, secret, runtime().INDIA_API_HOST) : null;
+    const source = prices ? [] : await fetchHistory(config, instrument, secret, task.interval, started);
     const now = Date.now();
-    const bars = normalizedSharedBars(source, instrument, task.interval, now, config.sharedHistory.lagMinutes);
+    const bars = prices ? prices.filter((price) => {
+      const close = sessionClose(instrument, price.date);
+      return close !== null && close + config.sharedHistory.lagMinutes * MINUTE <= now;
+    }) : normalizedSharedBars(source, instrument, task.interval, now, config.sharedHistory.lagMinutes);
     const payload = JSON.stringify(bars);
     if (!bars.length || new TextEncoder().encode(payload).byteLength > MAX_BYTES)
       throw new ProviderFailure("INVALID_DATA", "Shared history failed normalization or size checks.");
@@ -369,7 +374,7 @@ async function refresh(task: Task, config: Grant, fetchHistory: typeof providerH
         .bind(config.provider, config.version, now),
     ]);
     console.info({ event: "shared_history_refresh", outcome: saved.meta.changes ? "stored" : "superseded",
-      interval: task.interval, bars: bars.length, rejected: source.length - bars.length, elapsedMs: now - started });
+      interval: task.interval, bars: bars.length, rejected: (prices ?? source).length - bars.length, elapsedMs: now - started });
   } catch (error) {
     const now = Date.now();
     const kind = error instanceof ProviderFailure ? error.code
@@ -400,11 +405,15 @@ export async function hasReadySharedHistory(
   const now = Date.now();
   for (const grant of grants) {
     if (!grant.sharedHistory.intervals.includes(resolution)) continue;
+    const earliest = grant.provider === "INDIANAPI"
+      ? expectedDailyDate(grant.instruments[0], now, grant.sharedHistory.lagMinutes) : null;
+    if (grant.provider === "INDIANAPI" && (!earliest || interval === "1h" || interval === "30m")) continue;
     const ready = await database().prepare(
       `SELECT 1 AS ready FROM x8_shared_history_snapshot WHERE provider=? AND config_version=? AND interval=?
         AND expires_at>? AND received_at<=?
+        AND (? IS NULL OR last_event >= ?)
         AND (? IS NULL OR instrument_id IN (SELECT value FROM json_each(?))) LIMIT 1`,
-    ).bind(grant.provider, grant.version, resolution, now, now, instrumentIds ? "filtered" : null,
+    ).bind(grant.provider, grant.version, resolution, now, now, earliest, earliest, instrumentIds ? "filtered" : null,
       JSON.stringify(instrumentIds ?? [])).first<number>("ready");
     if (ready) return true;
   }

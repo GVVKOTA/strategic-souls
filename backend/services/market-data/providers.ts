@@ -10,7 +10,16 @@ import type {
   Statement,
   ResearchEvent,
 } from "./data-types";
+const INDIAN_API_HOSTS = ["stock.indianapi.in", "dev.indianapi.in", "analyst.indianapi.in", "pro.indianapi.in"];
 export const PROVIDERS = {
+  INDIANAPI: {
+    label: "Indian API · NSE daily prices",
+    secret: "INDIA_API_KEY",
+    docs: "https://indianapi.in/documentation/indian-stock-market",
+    rightsUrl: "https://indianapi.in/indian-stock-market",
+    markets: ["NSE"], datasets: ["prices"],
+    status: "Daily NSE price history for Soul Scan",
+  },
   EODHD: {
     label: "EODHD · EOD & fundamentals",
     secret: "X2_EODHD_API_TOKEN",
@@ -49,7 +58,7 @@ const string = (v: unknown, min: number, max: number) => {
 };
 const finite = (v: unknown) => typeof v === "number" && Number.isFinite(v);
 export function providerId(v: unknown): ProviderId {
-  if (v !== "EODHD" && v !== "TRUEDATA")
+  if (v !== "EODHD" && v !== "TRUEDATA" && v !== "INDIANAPI")
     throw new Error("Choose an implemented provider.");
   return v;
 }
@@ -64,6 +73,8 @@ export function validateInstrument(
     symbol = string(v.providerSymbol, 1, 60);
   if (!/^[A-Z0-9^._:&-]+$/.test(id) || !/^[A-Z0-9^._&-]+$/.test(symbol))
     throw new Error("Use exact source identifiers, not a URL or expression.");
+  if (provider === "INDIANAPI" && (v.type !== "EQUITY" || id !== "NSE:" + symbol || v.mic !== "XNSE" || v.currency !== "INR" || v.timezone !== "Asia/Kolkata"))
+    throw new Error("Map a verified NSE equity ticker in INR with its Indian exchange timezone.");
   if (!(PROVIDERS[provider].markets as readonly string[]).includes(v.market))
     throw new Error("This adapter does not support the selected market.");
   if (
@@ -112,6 +123,7 @@ function validateSharedHistory(value: unknown, provider: ProviderId): SharedHist
   const v = value as SharedHistoryGrant;
   if (!Array.isArray(v?.intervals) || !v.intervals.length ||
       v.intervals.some((interval) => !["1d", "1h", "30m"].includes(interval)) ||
+      (provider === "INDIANAPI" && v.intervals.some((i) => i !== "1d")) ||
       (provider === "EODHD" && v.intervals.includes("30m")))
     throw new Error("Approve only supported native candle intervals.");
   const bounded = (value: number, min: number, max: number) =>
@@ -181,7 +193,7 @@ export function validateConfig(value: unknown): ProviderConfig {
     throw new Error("Use a 1–1000 daily call cap and priority 1–10.");
   const sharedHistory = validateSharedHistory(v.sharedHistory, p);
   if (sharedHistory && (!r.display || !r.analysis || !r.storage || !r.redistribution || !r.derivedDisplay ||
-      !r.verified || !v.datasets.includes("candles")))
+      !r.verified || !v.datasets.includes(p === "INDIANAPI" ? "prices" : "candles")))
     throw new Error("Shared history needs verified display, analysis, derived display, storage and redistribution rights.");
   return {
     provider: p,
@@ -245,7 +257,7 @@ export async function fetchProviderJson(
   fetcher: typeof fetch = fetch,
 ) {
   if (
-    !["eodhd.com", "history.truedata.in"].includes(url.hostname) ||
+    !["eodhd.com", "history.truedata.in", ...INDIAN_API_HOSTS].includes(url.hostname) ||
     url.protocol !== "https:" ||
     url.username ||
     url.password ||
@@ -412,6 +424,44 @@ export function normalizeTrueData(value: unknown, now = Date.now()): Candle[] {
     };
   });
 }
+export type IndianDailyPrice = { date: string; close: number; volume: number | null };
+
+export async function indianDailyPrices(symbol: string, secret: string, host: unknown, fetcher = fetch): Promise<IndianDailyPrice[]> {
+  if (typeof host !== "string" || !INDIAN_API_HOSTS.includes(host))
+    throw new ProviderFailure("INVALID_DATA", "Select the Indian API hostname shown on the subscribed plan.");
+  const url = new URL("/historical_data", "https://" + host);
+  url.search = new URLSearchParams({ stock_name: symbol, period: "1yr", filter: "price" }).toString();
+  const body = await fetchProviderJson(url, { "X-API-Key": secret }, fetcher) as {
+    datasets?: { metric?: string; label?: string; meta?: { is_weekly?: boolean }; values?: unknown[] }[]
+  };
+  const series = Array.isArray(body?.datasets) ? body.datasets.filter((item) =>
+    item?.metric === "Price" && item.label === "Price on NSE" && item.meta?.is_weekly === false) : [];
+  const rows = series.length === 1 ? series[0].values : undefined;
+  if (!Array.isArray(rows) || !rows.length || rows.length > 370)
+    throw new ProviderFailure("INVALID_DATA", "Daily NSE price history is unavailable.");
+  const volume = new Map<string, number>();
+  const volumeSeries = body.datasets?.filter((item) => item?.metric === "Volume" && item.label === "Volume");
+  if (volumeSeries?.length === 1 && volumeSeries[0].meta?.is_weekly !== true && Array.isArray(volumeSeries[0].values)) {
+    for (const row of volumeSeries[0].values) {
+      if (!Array.isArray(row) || typeof row[0] !== "string" || !Number.isSafeInteger(row[1]) || row[1] < 0 || volume.has(row[0]))
+        throw new ProviderFailure("INVALID_DATA", "Invalid or duplicate volume observation.");
+      volume.set(row[0], row[1]);
+    }
+  }
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(Date.now());
+  const prices: IndianDailyPrice[] = [];
+  for (const pair of rows) {
+    const [day, raw] = Array.isArray(pair) ? pair : [];
+    const close = typeof raw === "number" || (typeof raw === "string" && /^\d+(?:\.\d+)?$/.test(raw)) ? Number(raw) : NaN;
+    const stamp = typeof day === "string" ? Date.parse(day) : NaN;
+    if (!Number.isFinite(stamp) || day > today || new Date(stamp).toISOString().slice(0,10) !== day ||
+        !Number.isFinite(close) || close <= 0 || (prices.length && day <= prices[prices.length - 1].date))
+      throw new ProviderFailure("INVALID_DATA", "Invalid or unordered daily price history.");
+    prices.push({ date: day, close, volume: volume.get(day) ?? null });
+  }
+  return prices;
+}
+
 export async function providerCandles(
   config: ProviderConfig,
   instrument: Instrument,
@@ -420,6 +470,8 @@ export async function providerCandles(
   now = Date.now(),
   days = 370,
 ) {
+  if (config.provider === "INDIANAPI")
+    throw new ProviderFailure("INVALID_DATA", "This dataset contains daily prices only.");
   if (instrument.expiry && Date.parse(instrument.expiry + "T23:59:59Z") < now)
     throw new ProviderFailure(
       "INVALID_DATA",
@@ -600,6 +652,8 @@ export async function providerIntradayCandles(
   fetcher: typeof fetch = fetch,
   now = Date.now(),
 ): Promise<Candle[]> {
+  if (config.provider === "INDIANAPI")
+    throw new ProviderFailure("INVALID_DATA", "This dataset contains daily prices only.");
   if (instrument.expiry && Date.parse(instrument.expiry + "T23:59:59Z") < now) {
     throw new ProviderFailure(
       "INVALID_DATA",

@@ -1,5 +1,5 @@
 "use client";
-import { cancelMarketScan, waitForMarketScan, type MarketScanProgress } from "./market-scan-client";
+import { cancelMarketScan, resultPhase, waitForMarketScan, type MarketScanProgress } from "./market-scan-client";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
@@ -101,6 +101,7 @@ type ScanPhase =
   | "IDLE"
   | "RUNNING"
   | "COMPLETE"
+  | "PARTIAL"
   | "NO_MATCHES"
   | "BLOCKED"
   | "FAILED"
@@ -994,10 +995,8 @@ export default function Strategy({
       setSelectedScanId(res.id);
       setUniverseTableOpen(null);
       setJustCompletedId(res.id);
-      setScanPhase(
-        res.state || (res.results?.matches ?? 0) > 0 ? "COMPLETE" : "NO_MATCHES",
-      );
-      notify(res.state === "PARTIAL" ? "Some market data was unavailable. Partial results were saved." : "Scan complete.");
+      setScanPhase(resultPhase(res, res.results?.matches));
+      notify(res.state === "PARTIAL" ? "Partial results saved. Incomplete market coverage used no scan allowance." : "Scan complete.");
     } catch (err) {
       if (seq !== runSeqRef.current) return;
       const msg =
@@ -1400,7 +1399,7 @@ export default function Strategy({
                     Soul Scan
                   </h2>
                   <p className="ss-v31-quota-inline" aria-live="polite">
-                    {classicRemaining} of {classicLimit} scans left today
+                    {scanTier === "CLASSIC" ? `${classicRemaining} of ${classicLimit} Classic scans left today` : `${quota?.advanced.remaining ?? 1} of 1 Advanced scans available this hour`}
                   </p>
                 </div>
               </div>
@@ -1764,11 +1763,7 @@ export default function Strategy({
                           await reload();
                           setSelectedScanId(res.id);
                           setJustCompletedId(res.id);
-                          setScanPhase(
-                            res.state || (res.drawReport?.matches?.length ?? 0) > 0
-                              ? "COMPLETE"
-                              : "NO_MATCHES",
-                          );
+                          setScanPhase(resultPhase(res, res.drawReport?.matches.length));
                         }}
                         onOpenAsset={openAsset}
                         notify={notify}
@@ -2908,7 +2903,7 @@ export default function Strategy({
           <div className="x54-quota-popover" style={{ marginBottom: 14 }}>
             <strong>Daily scan allowance</strong>
             <div style={{ marginTop: 4 }}>
-              {classicRemaining}/{classicLimit} scans remaining across all modes. Resets at midnight IST.
+              {classicRemaining}/{classicLimit} Classic scans remaining until midnight IST. Advanced allows one completed scan per rolling hour.
             </div>
             <div className="x1-caption" style={{ marginTop: 4 }}>
               Failed, invalid, or unentitled scans release their reservation and

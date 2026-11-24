@@ -86,6 +86,13 @@ async function mockFetch(url, init) {
   const href = String(url);
   fetchCalls.push({ url: href, method: init?.method ?? "GET" });
 
+  if (new URL(href).hostname === "dev.indianapi.in") {
+    assert.equal(new URL(href).pathname, "/historical_data");
+    assert.equal(new URL(href).searchParams.get("stock_name"), "RELIANCE");
+    assert.equal(new Headers(init.headers).get("X-API-Key"), env.INDIA_API_KEY);
+    return Response.json({ datasets: [{ metric: "Price", label: "Price on NSE", meta: { is_weekly: false },
+      values: [["2026-11-19", "99"], ["2026-11-20", "101"], ["2026-11-23", "105"]] }] });
+  }
   // Shared commercial TrueData intraday (60min) and daily (eod) across NSE, BSE & active MCX futures
   if (href.includes("history.truedata.in/getbars")) {
     const parsed = new URL(href);
@@ -627,6 +634,25 @@ test("V3 S02/S03/S04/S06: Licensed shared commercial NSE+BSE+MCX provider serves
   assert.equal(denied.candles.length, 0);
   assert.equal(await researchData.canScanExchange(bob.userId, "1d", ["NSE:RELIANCE"]), false);
   sql.prepare("DELETE FROM x2_providers WHERE provider = 'TRUEDATA'").run();
+  const priceConfig = { ...sharedProviderPayload, provider: "INDIANAPI", datasets: ["prices"],
+    instruments: [sharedProviderPayload.instruments[0]], dailyCallLimit: 20,
+    sharedHistory: { ...sharedProviderPayload.sharedHistory, intervals: ["1d"] } };
+  env.INDIA_API_KEY = randomUUID();
+  env.INDIA_API_HOST = "dev.indianapi.in";
+  sql.prepare("INSERT INTO x2_providers (provider,version,payload,health,updated_by,updated_at,last_write) VALUES (?,?,?,?,?,?,?)")
+    .run("INDIANAPI", 1, JSON.stringify(priceConfig), "{}", "owner_v3", now, "fixture-price-history");
+  await historyStore.refreshSharedHistory();
+  assert.equal(await researchData.canScanExchange(bob.userId, "1d", ["NSE:RELIANCE"], "INDIANAPI"), true);
+  assert.equal(await researchData.canScanExchange(bob.userId, "1h", ["NSE:RELIANCE"], "INDIANAPI"), false);
+  const requested = { provider: "INDIANAPI", instrumentIds: ["NSE:RELIANCE"], interval: "1d", eventCutoff: now };
+  const snapshot = await researchData.researchUniverse(bob.userId, requested);
+  assert.deepEqual(Array.from(snapshot.datasets[0].observations, (point) => point.close), [99, 101, 105]);
+  assert.equal(snapshot.datasets[0].observations[0].high, undefined);
+  assert.equal(snapshot.datasets[0].observations[0].volume, undefined);
+  assert.equal(snapshot.lineage[0].provider, "INDIANAPI");
+  delete env.INDIA_API_KEY;
+  assert.equal(await researchData.canScanExchange(bob.userId, "1d", ["NSE:RELIANCE"], "INDIANAPI"), false);
+  sql.prepare("DELETE FROM x2_providers WHERE provider='INDIANAPI'").run();
   historyClock = null;
 });
 

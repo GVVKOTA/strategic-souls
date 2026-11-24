@@ -213,7 +213,7 @@ export default function DataControl({
               verified: false,
             },
       );
-      setDatasets(c?.datasets ?? ["candles"]);
+      setDatasets(c?.datasets ?? [selected === "INDIANAPI" ? "prices" : "candles"]);
       setEnabled(c?.enabled ?? false);
       key.current = null;
     });

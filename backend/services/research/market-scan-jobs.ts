@@ -1,3 +1,4 @@
+import { projectResearchSnapshot } from "./scan-projection";
 import { archivalScanRows } from "./scan-retention";
 import { database } from "../../../database/queries/repository";
 import { digest } from "../../engines/engine";
@@ -45,11 +46,25 @@ function recordCoverage(coverage: Coverage, rows: Outcome[]): Coverage {
   next.deferred = next.selected - next.evaluated - next.insufficient - next.deniedOrFailed;
   return next;
 }
-const jobStatus = (job: Job) => ({
-  jobId: job.id, state: job.state, progress: Math.round(job.cursor * 100 / job.selected_count),
-  coverage: job.coverage ? JSON.parse(job.coverage) as Coverage : startingCoverage(job.selected_count),
-  ...(job.scan_id ? { id: job.scan_id } : {}),
-});
+async function jobStatus(job: Job) {
+  const coverage: Coverage = job.coverage ? JSON.parse(job.coverage) : startingCoverage(job.selected_count);
+  const { matched, unmatched, ...counts } = coverage;
+  let visible = false;
+  if (job.scan_id) {
+    const record = await database().prepare("SELECT payload FROM x1_scans WHERE id=? AND subject=?")
+      .bind(job.scan_id, job.subject).first<{ payload: string }>();
+    if (record) {
+      const view = await projectResearchSnapshot(JSON.parse(record.payload), false);
+      visible = !view.redaction.applied;
+    }
+  }
+  return {
+    jobId: job.id, state: job.state,
+    progress: Math.round((coverage.selected - coverage.deferred) * 100 / coverage.selected),
+    coverage: { ...counts, ...(visible && { matched, unmatched }) },
+    ...(job.scan_id ? { id: job.scan_id } : {}),
+  };
+}
 
 function parseInput(raw: Record<string, unknown>): Input {
   const chosen = raw.scopeIntent === "EXPLICIT" ? raw.universePreset : "MARKET";
@@ -135,10 +150,12 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
   const existing = await prior();
   if (existing) return confirm(existing);
   const scope = await resolveScope(subject, input.definition);
+  if (scope.defaultMarket && (input.definition.interval === "30m" || input.definition.interval === "1h"))
+    throw new HttpError(422, "The configured Nifty 500 price feed provides daily prices. Choose daily, weekly or monthly. No scan was charged.");
   const refInterval = input.definition.interval !== "30m" && input.definition.interval !== "1h";
   const allowsReference = refInterval && scope.members.some((id) => id.startsWith("ECB:"));
   const hasExchange = scope.members.some((id) => !id.startsWith("ECB:"));
-  if (!allowsReference && !(hasExchange && await canScanExchange(subject, input.definition.interval, scope.members)))
+  if (!allowsReference && !(hasExchange && await canScanExchange(subject, input.definition.interval, scope.members, scope.defaultMarket ? "INDIANAPI" : undefined)))
     throw new HttpError(503, "Market history is unavailable for this account and timeframe. No scan was charged.");
   const cutoff = new Date().toISOString();
   const deadline = new Date(Date.parse(cutoff) + JOB_MS).toISOString();
@@ -188,9 +205,9 @@ export async function listActiveMarketScans(subject: string) {
   const rows = await database().prepare(
     "SELECT * FROM x78_market_scan_jobs WHERE subject=? AND state IN ('QUEUED','RUNNING') ORDER BY cutoff",
   ).bind(subject).all<Job>();
-  return rows.results.map((job) => ({
-    ...jobStatus(job), name: (JSON.parse(job.input) as Input).definition.name,
-  }));
+  return Promise.all(rows.results.map(async (job) => ({
+    ...await jobStatus(job), name: (JSON.parse(job.input) as Input).definition.name,
+  })));
 }
 
 async function ownedJob(subject: string, id: unknown) {
@@ -290,6 +307,7 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
   const coverage = recordCoverage(startingCoverage(ids.length), results.results);
   const state: State = results.eligible === 0 ? "FAILED" : results.unknown ? "PARTIAL" : "COMPLETE";
   const id = state === "FAILED" ? null : job.id;
+  const chargeQuota = state === "COMPLETE";
   const reports = batches.flatMap((batch) => batch.drawReport ? [batch.drawReport] : []);
   const drawReport = reports[0] && {
     ...reports[0],
@@ -306,7 +324,7 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
     knownAtPolicy: "Completed candles observed by retrieval, with market events bounded by the acceptance cutoff.",
     ...(input.draw && { patternRecipe: input.draw }),
     ...(drawReport && { drawReport }),
-    requestDigest: job.request_digest, billing: { charged: id ? 1 : 0 },
+    requestDigest: job.request_digest, billing: { charged: chargeQuota ? 1 : 0 },
   };
   await db.batch([
     db.prepare(
@@ -318,7 +336,7 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
     db.prepare(
       `UPDATE x51_scan_reservations SET state=?,completed_at=?,scan_id=?
        WHERE id=? AND EXISTS (SELECT 1 FROM x78_market_scan_jobs WHERE id=? AND lease=? AND state='RUNNING')`,
-    ).bind(id ? "COMPLETED" : "FAILED", id ? now : null, id, job.reservation_id, job.id, job.lease),
+    ).bind(chargeQuota ? "COMPLETED" : "FAILED", chargeQuota ? now : null, chargeQuota ? id : null, job.reservation_id, job.id, job.lease),
     db.prepare(
       `UPDATE x78_market_scan_jobs SET state=?,scan_id=?,cursor=?,evaluated=?,coverage=?,lease=NULL,lease_until=NULL,input='{}'
        WHERE id=? AND lease=? AND state='RUNNING'`,
@@ -364,7 +382,7 @@ export async function processMarketScanBatch(loadHistory = researchUniverse, bat
       const reference = batchIds.filter((id) => id.startsWith("ECB:"));
       const exchange = batchIds.filter((id) => !id.startsWith("ECB:"));
       const sources = await Promise.all([
-        ...(exchange.length ? [loadHistory(job.subject, { ...options, provider: "CONNECTED_MARKETS",
+        ...(exchange.length ? [loadHistory(job.subject, { ...options, provider: input.definition.universePreset === "MARKET" ? "INDIANAPI" : "CONNECTED_MARKETS",
           universePreset: input.definition.universePreset === "MARKET" ? "INDIAN_EQUITIES" : input.definition.universePreset,
           instrumentIds: exchange })] : []),
         ...(reference.length ? [loadHistory(job.subject, { ...options, provider: "ECB", instrumentIds: reference })] : []),

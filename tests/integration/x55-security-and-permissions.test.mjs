@@ -315,7 +315,8 @@ test("guest gets 401 on private APIs; release reports X7 provenance without leak
   assert.equal(rel.release, "X8");
   assert.equal(rel.revisionMarker, "x8-shared-market-history-2026-11-24");
   assert.equal(rel.buildCommit, null);
-  assert.equal(rel.scanDailyLimit, 20);
+  assert.equal(rel.classicDailyLimit, 20);
+  assert.equal(rel.advancedRollingLimit, 1);
   assert.equal(rel.providerReadiness, undefined);
   assert.equal(rel.marketData.readOnlyOnly, true);
   assert.doesNotMatch(JSON.stringify(rel), /angel\s*one|smartapi|providerReadiness|demoMode/i);

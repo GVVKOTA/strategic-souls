@@ -99,7 +99,8 @@ const {
   thirtyMinBarCloseMs,
 } = await loadTs("backend/services/market-data/angelone/scan-history.ts");
 const {
-  SCAN_DAILY_LIMIT,
+  CLASSIC_DAILY_LIMIT,
+  ADVANCED_ROLLING_LIMIT,
   getScanQuotaSummary,
   persistReservedScan,
   reserveScanSlot,
@@ -239,8 +240,9 @@ test("V3.1 R05: MCX partial-holiday schedule and NYMEX Globex CL schedule are ti
 
 // ── 2. R09 & R19: Atomic 20/day Classic quota, concurrency & parity ──────────
 
-test("V3.1 R09/R19: Shared quota enforces exact 20/day limit, blocks concurrent 20th-slot race, enforces owner/member parity, and recovers expired leases", async () => {
-  assert.equal(SCAN_DAILY_LIMIT, 20);
+test("V3.1 R09/R19: Classic quota enforces exact 20/day limit, blocks concurrent 20th-slot race, enforces owner/member parity, and recovers expired leases", async () => {
+  assert.equal(CLASSIC_DAILY_LIMIT, 20);
+  assert.equal(ADVANCED_ROLLING_LIMIT, 1);
 
   const db = createTestQuotaDb();
   const baseMs = Date.parse("2026-11-23T06:00:00.000Z"); // 11:30 IST
@@ -248,7 +250,7 @@ test("V3.1 R09/R19: Shared quota enforces exact 20/day limit, blocks concurrent 
   // Complete 19 distinct scans for ordinary member
   for (let i = 1; i <= 19; i++) {
     const reqKey = `member_scan_${i}_${randomUUID().slice(0, 8)}`;
-    const res = await reserveScanSlot(db, "member-1", i % 2 ? "CLASSIC" : "ADVANCED", reqKey, baseMs + i * 1000);
+    const res = await reserveScanSlot(db, "member-1", "CLASSIC", reqKey, baseMs + i * 1000);
     await persistReservedScan(db, {
       reservationId: res.id,
       subject: "member-1",
@@ -269,7 +271,7 @@ test("V3.1 R09/R19: Shared quota enforces exact 20/day limit, blocks concurrent 
   // Two simultaneous requests racing for final 20th slot: strictly ONE succeeds, ONE rejected 429
   const raceOutcomes = await Promise.allSettled([
     reserveScanSlot(db, "member-1", "CLASSIC", "race_req_alpha_12345", baseMs + 30_000),
-    reserveScanSlot(db, "member-1", "ADVANCED", "race_req_beta_67890", baseMs + 30_000),
+    reserveScanSlot(db, "member-1", "CLASSIC", "race_req_beta_67890", baseMs + 30_000),
   ]);
   const fulfilled = raceOutcomes.filter((r) => r.status === "fulfilled");
   const rejected = raceOutcomes.filter((r) => r.status === "rejected");
