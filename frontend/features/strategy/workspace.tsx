@@ -1,13 +1,19 @@
 "use client";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   ArrowRight,
   BookmarkPlus,
   Check,
+  ChevronDown,
+  ChevronUp,
   Compass,
+  Download,
   Info,
   Layers,
+  LineChart,
   PenTool,
+  Plus,
   RefreshCw,
   RotateCcw,
   Send,
@@ -53,6 +59,7 @@ import {
   WorkspaceSkeleton,
   api,
   moment,
+  number,
   type Notice,
   type ScanRun,
   type WorkspaceState,
@@ -160,6 +167,166 @@ function sourceBadgeLabel(rawPreset?: string, rawSource?: string): string {
     return "Market";
   }
   return rawSource || "Market";
+}
+
+type ScanSortKey =
+  | "move_desc"
+  | "move_asc"
+  | "vol_desc"
+  | "rsi_asc"
+  | "rsi_desc"
+  | "range_desc"
+  | "range_asc"
+  | "symbol_asc";
+
+type ScanRowItem = ScanRun["payload"]["results"]["results"][number];
+
+const INDEX_INSTRUMENT_IDS = new Set([
+  "NSE:NIFTY",
+  "NSE:BANKNIFTY",
+  "NSE:NIFTYMIDCAP100",
+  "BSE:SENSEX",
+]);
+
+function formatScanPrice(
+  instrumentId: string,
+  value: number | null | undefined,
+): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  if (instrumentId.startsWith("ECB:")) {
+    return value.toFixed(4);
+  }
+  if (INDEX_INSTRUMENT_IDS.has(instrumentId)) {
+    return number(value, 2);
+  }
+  if (/^(NSE|BSE|MCX):/.test(instrumentId)) {
+    return `₹${number(value, 2)}`;
+  }
+  return number(value, 2);
+}
+
+function formatSignedPct(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  const prefix = value > 0 ? "+" : "";
+  return `${prefix}${value.toFixed(digits)}%`;
+}
+
+function rsiZoneBadge(rsi: number | null | undefined): {
+  label: string;
+  tone: "pos" | "neg" | "teal" | "muted";
+} | null {
+  if (rsi === null || rsi === undefined || !Number.isFinite(rsi)) return null;
+  if (rsi < 30) return { label: "Oversold", tone: "pos" };
+  if (rsi < 45) return { label: "Cool", tone: "muted" };
+  if (rsi <= 65) return { label: "Balanced", tone: "teal" };
+  if (rsi <= 75) return { label: "Strong", tone: "pos" };
+  return { label: "Stretched", tone: "neg" };
+}
+
+function sortScanRows(rows: readonly ScanRowItem[], sortBy: ScanSortKey): ScanRowItem[] {
+  const numOr = (v: number | null | undefined, fallback: number) =>
+    typeof v === "number" && Number.isFinite(v) ? v : fallback;
+  return [...rows].sort((a, b) => {
+    const ma = a.metrics;
+    const mb = b.metrics;
+    switch (sortBy) {
+      case "move_desc":
+        return numOr(mb?.changePct, -9999) - numOr(ma?.changePct, -9999);
+      case "move_asc":
+        return numOr(ma?.changePct, 9999) - numOr(mb?.changePct, 9999);
+      case "vol_desc":
+        return numOr(mb?.volRatio, -1) - numOr(ma?.volRatio, -1);
+      case "rsi_asc":
+        return numOr(ma?.rsi14, 999) - numOr(mb?.rsi14, 999);
+      case "rsi_desc":
+        return numOr(mb?.rsi14, -1) - numOr(ma?.rsi14, -1);
+      case "range_desc":
+        return numOr(mb?.rangePosPct, -1) - numOr(ma?.rangePosPct, -1);
+      case "range_asc":
+        return numOr(ma?.rangePosPct, 999) - numOr(mb?.rangePosPct, 999);
+      case "symbol_asc":
+      default:
+        return a.instrumentId.localeCompare(b.instrumentId);
+    }
+  });
+}
+
+function safeCsvCell(raw: string | number | null | undefined): string {
+  if (raw === null || raw === undefined) return "";
+  const str = String(raw);
+  const neutralized = /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+  if (/[",\n\r]/.test(neutralized)) {
+    return `"${neutralized.replace(/"/g, '""')}"`;
+  }
+  return neutralized;
+}
+
+function exportScanResultsCsv(scan: ScanRun): void {
+  const rows = scan.payload.results?.results ?? [];
+  const header = [
+    "Instrument",
+    "Venue",
+    "Status",
+    "BarTimestamp",
+    "Close",
+    "ChangePct",
+    "RSI14",
+    "EMA20",
+    "DistEMA20Pct",
+    "SMA50",
+    "VolRatio",
+    "ATR14",
+    "ATRPct",
+    "Low20",
+    "High20",
+    "RangePosPct",
+    "RuleProof",
+  ];
+  const lines = [header.join(",")];
+  for (const r of rows) {
+    const [venue, sym] = r.instrumentId.includes(":")
+      ? r.instrumentId.split(":", 2)
+      : ["MKT", r.instrumentId];
+    const m = r.metrics;
+    const proof = (r.reasons ?? []).slice(1).join(" | ") || r.reasons?.[0] || "";
+    lines.push(
+      [
+        sym,
+        venue,
+        r.status,
+        r.latestEventAt ?? "",
+        m?.close ?? "",
+        m?.changePct ?? "",
+        m?.rsi14 ?? "",
+        m?.ema20 ?? "",
+        m?.distEma20Pct ?? "",
+        m?.sma50 ?? "",
+        m?.volRatio ?? "",
+        m?.atr14 ?? "",
+        m?.atrPct ?? "",
+        m?.low20 ?? "",
+        m?.high20 ?? "",
+        m?.rangePosPct ?? "",
+        proof,
+      ]
+        .map(safeCsvCell)
+        .join(","),
+    );
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const slug = scan.name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40) || "soul-scan";
+  link.href = url;
+  link.download = `${slug}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 function formatScanBarTimestamp(
@@ -332,6 +499,11 @@ export default function Strategy({
     sourceLabel: string;
     timeframeLabel: string;
   } | null>(null);
+
+  // Results analysis controls (sorting, universe snapshot toggle, quick watchlist add)
+  const [resultSort, setResultSort] = useState<ScanSortKey>("move_desc");
+  const [universeTableOpen, setUniverseTableOpen] = useState<boolean | null>(null);
+  const [addingWatchId, setAddingWatchId] = useState<string | null>(null);
 
   // GRAVEYARD filters & actions
   const [graveyardFilter, setGraveyardFilter] = useState<
@@ -774,12 +946,13 @@ export default function Strategy({
           ...(scanSource === "CUSTOM_CSV" ? { customCsv } : {}),
           requestId: crypto.randomUUID(),
         },
-        { signal: ctrl.signal },
+        { signal: ctrl.signal, timeoutMs: 65_000 },
       );
       if (seq !== runSeqRef.current) return;
       await reload();
       if (seq !== runSeqRef.current) return;
       setSelectedScanId(res.id);
+      setUniverseTableOpen(null);
       setJustCompletedId(res.id);
       setScanPhase(
         (res.results?.matches ?? 0) > 0 ? "COMPLETE" : "NO_MATCHES",
@@ -804,6 +977,49 @@ export default function Strategy({
         setBusy(false);
         setRunningContext(null);
       }
+    }
+  }
+
+  async function quickAddToWatchlist(instrumentId: string) {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    if (addingWatchId) return;
+    setAddingWatchId(instrumentId);
+    try {
+      const targetList = activeWatchlist ?? watchlists[0] ?? null;
+      if (!targetList) {
+        await api("/api/x1/workspace", {
+          action: "create-record",
+          kind: "watchlist",
+          name: "Primary Watchlist",
+          items: [instrumentId],
+          requestId: crypto.randomUUID(),
+        });
+      } else {
+        const existing = targetList.payload.items ?? [];
+        if (existing.includes(instrumentId)) {
+          notify(`${instrumentId} is already in ${targetList.name}.`);
+          return;
+        }
+        await api("/api/x1/workspace", {
+          action: "list-items",
+          id: targetList.id,
+          version: targetList.version,
+          items: [...existing, instrumentId],
+        });
+      }
+      await reload();
+      triggerGoFeedback("Added to Watchlist", `wl-${instrumentId}-${crypto.randomUUID()}`, true);
+      notify(`Added ${instrumentId} to Watchlist.`);
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : "Could not add instrument to Watchlist.",
+        true,
+      );
+    } finally {
+      setAddingWatchId(null);
     }
   }
 
@@ -1641,9 +1857,13 @@ export default function Strategy({
             ) : activeScan ? (
               (() => {
                 const res = activeScan.payload.results;
-                const matched = (res?.results ?? []).filter(
-                  (r) => r.status === "PASS",
+                const allRows = res?.results ?? [];
+                const matchedRaw = allRows.filter((r) => r.status === "PASS");
+                const evaluatedRows = allRows.filter(
+                  (r) => r.status === "PASS" || r.status === "FAIL",
                 );
+                const sortedMatched = sortScanRows(matchedRaw, resultSort);
+                const sortedEvaluated = sortScanRows(evaluatedRows, resultSort);
                 const nonMatchCount = res?.failed ?? 0;
                 const unknownCount = res?.unknown ?? 0;
                 const accounting = (
@@ -1668,20 +1888,86 @@ export default function Strategy({
                     .research?.interval ??
                   activeScan.payload.interval ??
                   "1d";
-                const isAdvanced = activeScan.mode !== "SIMPLE";
+                const scanFormula = activeScan.payload.rule?.formula ?? "";
+                const isSingleBarCross = /\bcrosses(?:above|below)\s*\(/i.test(
+                  scanFormula,
+                );
+
+                // Deterministic market breadth from real evaluated bars
+                let upCount = 0;
+                let downCount = 0;
+                let aboveEmaCount = 0;
+                let emaTotal = 0;
+                let rsiSum = 0;
+                let rsiCount = 0;
+                for (const row of evaluatedRows) {
+                  const m = row.metrics;
+                  if (!m) continue;
+                  if (typeof m.changePct === "number") {
+                    if (m.changePct > 0) upCount++;
+                    else if (m.changePct < 0) downCount++;
+                  }
+                  if (typeof m.distEma20Pct === "number") {
+                    emaTotal++;
+                    if (m.distEma20Pct > 0) aboveEmaCount++;
+                  }
+                  if (typeof m.rsi14 === "number") {
+                    rsiSum += m.rsi14;
+                    rsiCount++;
+                  }
+                }
+                const avgRsi = rsiCount > 0 ? rsiSum / rsiCount : null;
+                const watchlistSet = new Set(watchlistItems);
+                const showSnapshotTable =
+                  universeTableOpen ?? (sortedMatched.length === 0 && sortedEvaluated.length > 0);
 
                 return (
                   <>
-                    <div className="ss-v3-results-count">
-                      {matched.length === 0
-                        ? "0 instruments matched"
-                        : `${matched.length} instrument${matched.length === 1 ? "" : "s"} matched`}
+                    <div className="ss-v32-results-headline">
+                      <div className="ss-v3-results-count">
+                        {sortedMatched.length === 0
+                          ? "0 instruments matched"
+                          : `${sortedMatched.length} instrument${sortedMatched.length === 1 ? "" : "s"} matched`}
+                      </div>
+                      {allRows.length > 0 && (
+                        <div className="ss-v32-results-controls">
+                          <label className="ss-v32-sort-wrap" htmlFor="ss-v32-result-sort">
+                            <span className="x2-sr-only">Sort scan results</span>
+                            <select
+                              id="ss-v32-result-sort"
+                              className="ss-v32-sort-select"
+                              value={resultSort}
+                              onChange={(e) => setResultSort(e.target.value as ScanSortKey)}
+                            >
+                              <option value="move_desc">Sort: Best Move %</option>
+                              <option value="move_asc">Sort: Weakest Move %</option>
+                              <option value="vol_desc">Sort: Volume Surge</option>
+                              <option value="rsi_asc">Sort: RSI Low → High</option>
+                              <option value="rsi_desc">Sort: RSI High → Low</option>
+                              <option value="range_desc">Sort: Near 20-Bar High</option>
+                              <option value="range_asc">Sort: Near 20-Bar Low</option>
+                              <option value="symbol_asc">Sort: Symbol A–Z</option>
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            className="ss-v31-tool-btn"
+                            onClick={() => {
+                              exportScanResultsCsv(activeScan);
+                              notify("Downloaded CSV with verified scan metrics.");
+                            }}
+                          >
+                            <Download size={14} aria-hidden="true" />
+                            <span>Export CSV</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     {/* Truthful Disjoint Breakdown (never labels non-matches as "Failed"!) */}
                     <div className="ss-v31-breakdown-row" aria-label="Scan coverage breakdown">
                       <span className="ss-v31-stat-chip is-pos">
-                        Matched: {matched.length}
+                        Matched: {sortedMatched.length}
                       </span>
                       <span className="ss-v31-stat-chip">
                         Did not match: {nonMatchCount}
@@ -1711,9 +1997,36 @@ export default function Strategy({
                         )}
                     </div>
 
-                    {matched.length > 0 ? (
+                    {/* Market Breadth Strip derived strictly from real evaluated bars */}
+                    {(upCount + downCount > 0 || emaTotal > 0 || avgRsi !== null) && (
+                      <div className="ss-v32-breadth-bar" aria-label="Scanned universe breadth">
+                        <span className="ss-v32-breadth-label">
+                          <Activity size={14} aria-hidden="true" />
+                          <span>Universe Breadth</span>
+                        </span>
+                        {upCount + downCount > 0 && (
+                          <span className="ss-v32-breadth-item">
+                            <strong className="ss-v31-delta is-pos">{upCount} Up</strong>
+                            <span className="x1-caption"> · </span>
+                            <strong className="ss-v31-delta is-neg">{downCount} Down</strong>
+                          </span>
+                        )}
+                        {emaTotal > 0 && (
+                          <span className="ss-v32-breadth-item">
+                            <strong>{aboveEmaCount}/{emaTotal}</strong> above EMA(20)
+                          </span>
+                        )}
+                        {avgRsi !== null && (
+                          <span className="ss-v32-breadth-item">
+                            Avg RSI(14): <strong>{avgRsi.toFixed(1)}</strong>
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {sortedMatched.length > 0 ? (
                       <div className="ss-v3-match-list" role="list">
-                        {matched.map((item) => {
+                        {sortedMatched.map((item) => {
                           const [venue, sym] = item.instrumentId.includes(":")
                             ? item.instrumentId.split(":", 2)
                             : ["MKT", item.instrumentId];
@@ -1721,61 +2034,366 @@ export default function Strategy({
                             item.latestEventAt,
                             scanInterval,
                           );
+                          const m = item.metrics;
+                          const rsiMeta = rsiZoneBadge(m?.rsi14);
+                          const inWatchlist = watchlistSet.has(item.instrumentId);
+                          const proofLines = (item.reasons ?? []).slice(1);
+                          const primaryProof =
+                            proofLines[0] ?? item.reasons?.[0] ?? "";
+                          const moveTone =
+                            typeof m?.changePct === "number"
+                              ? m.changePct > 0
+                                ? "is-pos"
+                                : m.changePct < 0
+                                  ? "is-neg"
+                                  : "is-flat"
+                              : "is-flat";
+                          const emaTone =
+                            typeof m?.distEma20Pct === "number"
+                              ? m.distEma20Pct > 0
+                                ? "is-pos"
+                                : m.distEma20Pct < 0
+                                  ? "is-neg"
+                                  : "is-flat"
+                              : "is-flat";
+                          const hasRange =
+                            typeof m?.low20 === "number" &&
+                            typeof m?.high20 === "number" &&
+                            typeof m?.rangePosPct === "number";
+
                           return (
-                            <div
+                            <article
                               key={item.instrumentId}
                               role="listitem"
-                              className="ss-v3-match-item"
+                              className="ss-v3-match-item ss-v32-match-card"
                             >
-                              <div className="ss-v3-match-row">
+                              <div className="ss-v32-match-top">
+                                <div className="ss-v32-match-identity">
+                                  <button
+                                    type="button"
+                                    className="x1-text-button ss-v32-sym-btn"
+                                    onClick={() => openAsset(item.instrumentId)}
+                                  >
+                                    <strong>{sym}</strong>
+                                    <span className="x51-pill">{venue}</span>
+                                    {typeof item.patternFit === "number" && (
+                                      <span className="ss-v31-teal-pill">
+                                        Fit {item.patternFit.toFixed(0)}%
+                                      </span>
+                                    )}
+                                  </button>
+                                  <span className="x1-caption">
+                                    {barStamp || "Latest closed bar"}
+                                    {typeof m?.barsEvaluated === "number"
+                                      ? ` · ${m.barsEvaluated} bars`
+                                      : ""}
+                                  </span>
+                                </div>
+                                {typeof m?.close === "number" && (
+                                  <div className="ss-v32-price-col">
+                                    <span className="ss-v32-price-val">
+                                      {formatScanPrice(item.instrumentId, m.close)}
+                                    </span>
+                                    {typeof m.changePct === "number" && (
+                                      <span className={`ss-v31-delta ${moveTone}`}>
+                                        {formatSignedPct(m.changePct)}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+
+                              {primaryProof && (
+                                <div className="ss-v32-proof-strip" title={primaryProof}>
+                                  <code>{primaryProof}</code>
+                                </div>
+                              )}
+
+                              {m && (
+                                <div className="ss-v32-metrics-grid">
+                                  <div className="ss-v32-metric-cell">
+                                    <span className="ss-v32-metric-k">RSI (14)</span>
+                                    <div className="ss-v32-metric-v-row">
+                                      <strong>
+                                        {typeof m.rsi14 === "number" ? m.rsi14.toFixed(1) : "—"}
+                                      </strong>
+                                      {rsiMeta && (
+                                        <span className={`ss-v32-zone-tag is-${rsiMeta.tone}`}>
+                                          {rsiMeta.label}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div className="ss-v32-metric-cell">
+                                    <span className="ss-v32-metric-k">vs EMA (20)</span>
+                                    <div className="ss-v32-metric-v-row">
+                                      <strong className={`ss-v31-delta ${emaTone}`}>
+                                        {formatSignedPct(m.distEma20Pct)}
+                                      </strong>
+                                    </div>
+                                    {typeof m.ema20 === "number" && (
+                                      <span className="ss-v32-metric-sub">
+                                        EMA {formatScanPrice(item.instrumentId, m.ema20)}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="ss-v32-metric-cell">
+                                    <span className="ss-v32-metric-k">Vol / ATR(14)</span>
+                                    <div className="ss-v32-metric-v-row">
+                                      <strong
+                                        className={
+                                          typeof m.volRatio === "number" && m.volRatio >= 1.5
+                                            ? "ss-v32-vol-surge"
+                                            : undefined
+                                        }
+                                      >
+                                        {typeof m.volRatio === "number"
+                                          ? `${m.volRatio.toFixed(2)}× vol`
+                                          : "No vol"}
+                                      </strong>
+                                    </div>
+                                    <span className="ss-v32-metric-sub">
+                                      {typeof m.atrPct === "number"
+                                        ? `ATR ${m.atrPct.toFixed(2)}%`
+                                        : typeof m.sma50 === "number"
+                                          ? `SMA50 ${formatScanPrice(item.instrumentId, m.sma50)}`
+                                          : "—"}
+                                    </span>
+                                  </div>
+
+                                  <div className="ss-v32-metric-cell">
+                                    <span className="ss-v32-metric-k">20-Bar S/R Range</span>
+                                    {hasRange ? (
+                                      <>
+                                        <div className="ss-v32-range-track" aria-hidden="true">
+                                          <span
+                                            className="ss-v32-range-fill"
+                                            style={{ width: `${Math.min(100, Math.max(4, m.rangePosPct!))}%` }}
+                                          />
+                                        </div>
+                                        <span className="ss-v32-metric-sub">
+                                          {formatScanPrice(item.instrumentId, m.low20)} –{" "}
+                                          {formatScanPrice(item.instrumentId, m.high20)} (
+                                          {m.rangePosPct!.toFixed(0)}%)
+                                        </span>
+                                      </>
+                                    ) : (
+                                      <span className="ss-v32-metric-sub">Warm-up pending</span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                              <div className="ss-v32-match-actions">
                                 <button
                                   type="button"
-                                  className="x1-text-button"
-                                  style={{
-                                    padding: 0,
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: 8,
-                                    color: "var(--x1-text-primary)",
-                                  }}
+                                  className="ss-v31-tool-btn ss-v32-chart-btn"
                                   onClick={() => openAsset(item.instrumentId)}
                                 >
-                                  <strong>{sym}</strong>
-                                  <span className="x51-pill">{venue}</span>
+                                  <LineChart size={14} aria-hidden="true" />
+                                  <span>Open Chart</span>
                                 </button>
-                                <span className="x1-caption">
-                                  {barStamp || "Latest closed bar"}
-                                </span>
-                              </div>
-                              {isAdvanced && item.reasons?.length > 0 && (
-                                <details
-                                  style={{
-                                    padding: "0 14px 10px",
-                                    fontSize: "0.82rem",
-                                    color: "var(--x1-text-secondary)",
-                                  }}
+                                <button
+                                  type="button"
+                                  className={
+                                    "ss-v31-tool-btn" +
+                                    (inWatchlist ? " is-teal-active" : "")
+                                  }
+                                  disabled={addingWatchId === item.instrumentId || inWatchlist}
+                                  onClick={() => void quickAddToWatchlist(item.instrumentId)}
                                 >
-                                  <summary style={{ cursor: "pointer", color: "var(--x1-title-blue)" }}>
-                                    Matched conditions
-                                  </summary>
-                                  <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
-                                    {item.reasons.slice(0, 6).map((reason, idx) => (
-                                      <li key={idx}>{reason}</li>
-                                    ))}
-                                  </ul>
-                                </details>
-                              )}
-                            </div>
+                                  {inWatchlist ? (
+                                    <>
+                                      <Check size={14} aria-hidden="true" />
+                                      <span>In Watchlist</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Plus size={14} aria-hidden="true" />
+                                      <span>
+                                        {addingWatchId === item.instrumentId
+                                          ? "Adding…"
+                                          : "Watchlist"}
+                                      </span>
+                                    </>
+                                  )}
+                                </button>
+                                {item.reasons && item.reasons.length > 1 && (
+                                  <details className="ss-v32-proof-details">
+                                    <summary>Rule proof ({item.reasons.length - 1})</summary>
+                                    <ul>
+                                      {item.reasons.slice(0, 8).map((reason, idx) => (
+                                        <li key={idx}>{reason}</li>
+                                      ))}
+                                    </ul>
+                                  </details>
+                                )}
+                              </div>
+                            </article>
                           );
                         })}
                       </div>
                     ) : (
-                      <p className="x1-caption" style={{ margin: 0 }}>
-                        Checked {res?.eligible ?? 0} eligible instrument
-                        {(res?.eligible ?? 0) === 1 ? "" : "s"} on completed bars
-                        — none satisfied the rule as of{" "}
-                        {moment(res?.asOf ?? activeScan.created_at)}.
-                      </p>
+                      <div className="ss-v32-zero-match-box">
+                        <p className="x1-caption" style={{ margin: 0 }}>
+                          Checked {res?.eligible ?? 0} eligible instrument
+                          {(res?.eligible ?? 0) === 1 ? "" : "s"} on completed bars
+                          — none satisfied this exact rule as of{" "}
+                          {moment(res?.asOf ?? activeScan.created_at)}.
+                          {isSingleBarCross
+                            ? " Crossover rules only fire on the exact bar of crossing."
+                            : ""}
+                        </p>
+                        {isSingleBarCross && (
+                          <div className="ss-v32-pivot-row">
+                            <button
+                              type="button"
+                              className="ss-v31-tool-btn"
+                              onClick={() => {
+                                setScanTier("CLASSIC");
+                                setClassicFormula("close > ema(close, 20)");
+                                if (!nameEditedManually) setName("Price above EMA(20)");
+                                setScanError("");
+                              }}
+                            >
+                              Load trend filter: close &gt; ema(close, 20)
+                            </button>
+                            <button
+                              type="button"
+                              className="ss-v31-tool-btn"
+                              onClick={() => {
+                                setScanTier("CLASSIC");
+                                setClassicFormula("rsi(close, 14) < 50");
+                                if (!nameEditedManually) setName("RSI(14) Pullback below 50");
+                                setScanError("");
+                              }}
+                            >
+                              Load pullback: rsi(close, 14) &lt; 50
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Full Evaluated Market Snapshot Table (Actionable Technical Context for ALL Scanned Instruments) */}
+                    {sortedEvaluated.length > 0 && (
+                      <div className="ss-v32-snapshot-wrap">
+                        <button
+                          type="button"
+                          className="ss-v32-snapshot-toggle"
+                          aria-expanded={showSnapshotTable}
+                          onClick={() => setUniverseTableOpen(!showSnapshotTable)}
+                        >
+                          <span>
+                            Evaluated Market Snapshot ({sortedEvaluated.length} instruments)
+                          </span>
+                          {showSnapshotTable ? (
+                            <ChevronUp size={16} aria-hidden="true" />
+                          ) : (
+                            <ChevronDown size={16} aria-hidden="true" />
+                          )}
+                        </button>
+                        {showSnapshotTable && (
+                          <div className="ss-v32-table-scroll">
+                            <table className="ss-v32-table">
+                              <thead>
+                                <tr>
+                                  <th>Instrument</th>
+                                  <th>Status</th>
+                                  <th>Close</th>
+                                  <th>1-Bar %</th>
+                                  <th>RSI(14)</th>
+                                  <th>vs EMA20</th>
+                                  <th>Vol ×</th>
+                                  <th>20B Pos</th>
+                                  <th>Action</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {sortedEvaluated.map((row) => {
+                                  const [venue, sym] = row.instrumentId.includes(":")
+                                    ? row.instrumentId.split(":", 2)
+                                    : ["MKT", row.instrumentId];
+                                  const m = row.metrics;
+                                  const moveCls =
+                                    typeof m?.changePct === "number"
+                                      ? m.changePct > 0
+                                        ? "is-pos"
+                                        : m.changePct < 0
+                                          ? "is-neg"
+                                          : "is-flat"
+                                      : "is-flat";
+                                  const emaCls =
+                                    typeof m?.distEma20Pct === "number"
+                                      ? m.distEma20Pct > 0
+                                        ? "is-pos"
+                                        : m.distEma20Pct < 0
+                                          ? "is-neg"
+                                          : "is-flat"
+                                      : "is-flat";
+                                  return (
+                                    <tr key={row.instrumentId}>
+                                      <td>
+                                        <button
+                                          type="button"
+                                          className="x1-text-button ss-v32-tbl-sym"
+                                          onClick={() => openAsset(row.instrumentId)}
+                                        >
+                                          <strong>{sym}</strong>
+                                          <span className="ss-v32-tbl-venue">{venue}</span>
+                                        </button>
+                                      </td>
+                                      <td>
+                                        <span
+                                          className={
+                                            "ss-v32-status-pill" +
+                                            (row.status === "PASS" ? " is-pass" : "")
+                                          }
+                                        >
+                                          {row.status === "PASS" ? "Match" : "Checked"}
+                                        </span>
+                                      </td>
+                                      <td className="ss-v32-num">
+                                        {formatScanPrice(row.instrumentId, m?.close)}
+                                      </td>
+                                      <td className={`ss-v32-num ss-v31-delta ${moveCls}`}>
+                                        {formatSignedPct(m?.changePct)}
+                                      </td>
+                                      <td className="ss-v32-num">
+                                        {typeof m?.rsi14 === "number" ? m.rsi14.toFixed(1) : "—"}
+                                      </td>
+                                      <td className={`ss-v32-num ss-v31-delta ${emaCls}`}>
+                                        {formatSignedPct(m?.distEma20Pct)}
+                                      </td>
+                                      <td className="ss-v32-num">
+                                        {typeof m?.volRatio === "number"
+                                          ? `${m.volRatio.toFixed(2)}×`
+                                          : "—"}
+                                      </td>
+                                      <td className="ss-v32-num">
+                                        {typeof m?.rangePosPct === "number"
+                                          ? `${m.rangePosPct.toFixed(0)}%`
+                                          : "—"}
+                                      </td>
+                                      <td>
+                                        <button
+                                          type="button"
+                                          className="ss-v32-tbl-chart"
+                                          onClick={() => openAsset(row.instrumentId)}
+                                        >
+                                          Chart
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </>
                 );
@@ -1863,7 +2481,10 @@ export default function Strategy({
                       <button
                         type="button"
                         className="x53-graveyard-main"
-                        onClick={() => setSelectedScanId(s.id)}
+                        onClick={() => {
+                          setSelectedScanId(s.id);
+                          setUniverseTableOpen(null);
+                        }}
                       >
                         <div className="x53-graveyard-card-top">
                           <strong>{s.name}</strong>

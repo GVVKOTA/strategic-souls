@@ -555,18 +555,82 @@ test("full local loopback adapter + Cloudflare Worker route authorization, multi
     });
     assert.equal(ownerUniverse.datasets.length, 1);
 
-    // Full unscoped owner universe evaluates all verified seeds (no hidden .slice(0, 5) truncation!)
+    // Full unscoped owner universe evaluates curated liquid NSE + indices + MCX futures (24 instruments!)
     const fullOwnerUniverse = await dataService.researchUniverse("owner", {
       provider: "CONNECTED_MARKETS",
     });
     assert.ok(
-      fullOwnerUniverse.datasets.length >= 12,
-      `Expected >=12 owner broker instruments evaluated without .slice(0,5) cap, got ${fullOwnerUniverse.datasets.length}`,
+      fullOwnerUniverse.datasets.length >= 20,
+      `Expected >=20 liquid owner broker instruments evaluated, got ${fullOwnerUniverse.datasets.length}`,
     );
     assert.ok(
       fullOwnerUniverse.datasets.some((d) => d.instrumentId === "NSE:HDFCBANK"),
       "Full owner scan universe must include NSE:HDFCBANK",
     );
+    assert.ok(
+      fullOwnerUniverse.datasets.some((d) => d.instrumentId === "NSE:MARUTI"),
+      "Full owner scan universe must include expanded NIFTY-50 leaders like NSE:MARUTI",
+    );
+
+    // Bare MCX:GOLD single-asset scan resolves to active unexpired dated futures contract
+    const mcxGoldScan = await dataService.researchUniverse("owner", {
+      provider: "CONNECTED_MARKETS",
+      instrumentIds: ["MCX:GOLD"],
+    });
+    assert.equal(mcxGoldScan.datasets.length, 1);
+    assert.match(mcxGoldScan.datasets[0].instrumentId, /^MCX:GOLD\d{2}[A-Z]{3}\d{2}FUT$/);
+
+    // Non-owner must NEVER read owner's cached broker candles
+    const aliceUniverse = await dataService.researchUniverse("alice", {
+      provider: "CONNECTED_MARKETS",
+      instrumentIds: ["NSE:SBIN"],
+    });
+    assert.equal(aliceUniverse.datasets.length, 0);
+
+    // Transient WAF 403 (BROKER_AUTH_FAILED) burst recovers via paced retry without dropping symbols
+    let flakyHits = 0;
+    const flakyBinding = {
+      requests: 0,
+      async fetch(url, init) {
+        this.requests += 1;
+        const target = new URL(url);
+        if (target.pathname === "/internal/candles" && target.searchParams.get("id") === "NSE:RELIANCE" && flakyHits === 0) {
+          flakyHits += 1;
+          return new Response(
+            JSON.stringify({
+              error: "Angel One denied access (HTTP 403).",
+              errorCode: "BROKER_AUTH_FAILED",
+              actionHint: "Retry after checking adapter health.",
+            }),
+            { status: 403, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return fetch(`http://127.0.0.1:${adapter.port}${target.pathname}${target.search}`, init);
+      },
+    };
+    const flakyHarness = buildWorkerHarness(
+      {
+        ...workerEnv,
+        MARKET_DATA_ALLOW_LOOPBACK: "false",
+        MARKET_DATA_ADAPTER_URL: undefined,
+        MARKET_DATA_ADAPTER: flakyBinding,
+      },
+      () => ({ userId: "owner" }),
+    );
+    const flakyDataService = await flakyHarness.load("backend/services/market-data/data-service.ts");
+    const recoveredScan = await flakyDataService.researchUniverse("owner", {
+      provider: "CONNECTED_MARKETS",
+      instrumentIds: ["NSE:SBIN", "NSE:RELIANCE"],
+    });
+    assert.equal(recoveredScan.datasets.length, 2, "Transient WAF 403 burst must recover on paced retry");
+    assert.equal(flakyHits, 1);
+    const reqBeforeCacheHit = flakyBinding.requests;
+    const cachedRepeat = await flakyDataService.researchUniverse("owner", {
+      provider: "CONNECTED_MARKETS",
+      instrumentIds: ["NSE:SBIN", "NSE:RELIANCE"],
+    });
+    assert.equal(cachedRepeat.datasets.length, 2);
+    assert.equal(flakyBinding.requests, reqBeforeCacheHit, "Owner candle cache must serve repeat scans with 0 upstream calls");
 
     // Session endpoint works independently
     const sessBody = await (await sessionRoute.GET()).json();

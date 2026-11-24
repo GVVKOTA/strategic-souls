@@ -576,7 +576,7 @@ export default function PatternDrawCanvas({
           ...input,
           requestId: request.current.id,
         },
-        { signal: ctrl.signal },
+        { signal: ctrl.signal, timeoutMs: 65_000 },
       );
       if (!mounted.current) return;
       setLastReport(res.drawReport ?? null);

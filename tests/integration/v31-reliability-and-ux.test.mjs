@@ -107,6 +107,7 @@ const {
 } = await loadTs("backend/services/research/scan-quota.ts");
 const {
   compileFormula,
+  computeScanMetrics,
   evaluateScan,
   requiredScanBars,
 } = await loadTs("backend/engines/scan.ts");
@@ -606,4 +607,103 @@ test("V3.1 UI & Release Contracts: zero 'Last available', clean chart-first Asse
   assert.match(cssSrc, /--ss-gain:\s*#42cf91/i);
   assert.match(cssSrc, /--ss-loss:\s*#ef666a/i);
   assert.match(cssSrc, /100dvh/);
+});
+
+// ── 7. Soul Scan Liquid Universe, Deterministic Metrics & Rich Output Contracts ──
+
+test("Soul Scan liquid seed catalog covers 30 NSE leaders + 5 core MCX commodities with clean canonical IDs", () => {
+  const nseEq = VERIFIED_SEED_INSTRUMENTS.filter(
+    (i) => i.exchange === "NSE" && i.segment === "EQUITY",
+  );
+  assert.ok(nseEq.length >= 30, `Expected >=30 verified NSE equity seeds, got ${nseEq.length}`);
+  const ids = VERIFIED_SEED_INSTRUMENTS.map((i) => i.id);
+  assert.equal(new Set(ids).size, ids.length, "All seed IDs must be unique");
+  for (const id of ids) {
+    assert.match(
+      id,
+      /^[A-Za-z0-9:._-]{3,50}$/,
+      `Seed ID ${id} must stay compatible with watchlist & chart layout regexes`,
+    );
+  }
+  const mcxRoots = new Set(
+    VERIFIED_SEED_INSTRUMENTS.filter(
+      (i) => i.exchange === "MCX" && i.segment === "FUTURE",
+    ).map((i) => i.symbol),
+  );
+  for (const root of ["GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER"]) {
+    assert.ok(mcxRoots.has(root), `Core MCX commodity ${root} missing from verified seeds`);
+  }
+});
+
+test("evaluateScan computes independently verified deterministic metrics, crossover proof, and handles index null volume", () => {
+  const closes = Array.from({ length: 65 }, (_, i) =>
+    100 + i * 0.4 + Math.sin(i / 4) * 2.5,
+  );
+  // Force clean upward crossover above EMA20 on the final bar
+  closes[closes.length - 2] = refEma(closes.slice(0, -1), 20) - 0.8;
+  closes[closes.length - 1] = refEma(closes, 20) + 3.5;
+
+  const dsEq = makeOhlcvDataset("NSE:SBIN", closes);
+  // Make latest volume exactly 2.0x the prior 19 bars' average -> check volRatio > 1.5
+  for (let i = 0; i < dsEq.observations.length - 1; i++) {
+    dsEq.observations[i].volume = 100_000;
+  }
+  dsEq.observations[dsEq.observations.length - 1].volume = 220_000;
+
+  const dsIndex = makeOhlcvDataset("NSE:NIFTY", closes);
+  for (const obs of dsIndex.observations) obs.volume = null;
+
+  const rule = compileFormula("crossesAbove(close, ema(close, 20))");
+  const report = evaluateScan(rule, [dsEq, dsIndex], "2026-12-01T00:00:00.000Z");
+
+  const sbin = report.results.find((r) => r.instrumentId === "NSE:SBIN");
+  assert.ok(sbin && sbin.metrics);
+  assert.equal(sbin.status, "PASS");
+  assert.ok(
+    sbin.reasons.some((line) => /crossesAbove/i.test(line) && /PASS/.test(line)),
+    "Crossover scans must record explicit prev -> now comparison proof",
+  );
+  assert.equal(sbin.metrics.barsEvaluated, 65);
+  assert.ok(Math.abs(sbin.metrics.sma20 - refSma(closes, 20)) < 1e-2);
+  assert.ok(Math.abs(sbin.metrics.ema20 - refEma(closes, 20)) < 1e-2);
+  assert.ok(Math.abs(sbin.metrics.rsi14 - refWilderRsi(closes, 14)) < 0.2);
+  assert.ok(sbin.metrics.volRatio !== null && sbin.metrics.volRatio > 1.9);
+  assert.ok(sbin.metrics.atr14 !== null && sbin.metrics.atr14 > 0);
+  assert.ok(sbin.metrics.atrPct !== null && sbin.metrics.atrPct > 0);
+  assert.ok(
+    sbin.metrics.low20 !== null &&
+      sbin.metrics.high20 !== null &&
+      sbin.metrics.high20 > sbin.metrics.low20,
+  );
+  assert.ok(
+    sbin.metrics.rangePosPct !== null &&
+      sbin.metrics.rangePosPct >= 0 &&
+      sbin.metrics.rangePosPct <= 100,
+  );
+
+  // Index with null volume never fabricates volume or volRatio
+  const nifty = report.results.find((r) => r.instrumentId === "NSE:NIFTY");
+  assert.ok(nifty && nifty.metrics);
+  assert.equal(nifty.metrics.volume, null);
+  assert.equal(nifty.metrics.volRatio, null);
+  assert.ok(typeof nifty.metrics.rsi14 === "number");
+
+  // Empty observations produce strictly null metrics without throwing
+  const emptyMetrics = computeScanMetrics([]);
+  assert.equal(emptyMetrics.close, null);
+  assert.equal(emptyMetrics.barsEvaluated, 0);
+});
+
+test("Soul Scan UI exposes trading analysis metrics, breadth, sort, CSV export, evaluated snapshot, and 65s timeout cleanly", () => {
+  const stratSrc = readFileSync("frontend/features/strategy/workspace.tsx", "utf8");
+  assert.match(stratSrc, /Universe Breadth/);
+  assert.match(stratSrc, /Export CSV/);
+  assert.match(stratSrc, /Evaluated Market Snapshot/);
+  assert.match(stratSrc, /20-Bar S\/R Range/);
+  assert.match(stratSrc, /timeoutMs:\s*65_000/);
+  assert.doesNotMatch(stratSrc, /angel\s*one|smartapi/i);
+  assert.doesNotMatch(stratSrc, /\boptional\b/i);
+
+  const projSrc = readFileSync("backend/services/research/scan-projection.ts", "utf8");
+  assert.match(projSrc, /raw && derived && row\.metrics/);
 });

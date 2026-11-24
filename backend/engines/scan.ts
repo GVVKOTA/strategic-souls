@@ -47,12 +47,35 @@ export type ScanDataset = {
   maxAgeMs?: number;
   observations: ScanObservation[];
 };
+export type ScanResultMetrics = {
+  close: number | null;
+  prevClose: number | null;
+  changePct: number | null;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  volume: number | null;
+  volRatio: number | null;
+  rsi14: number | null;
+  ema20: number | null;
+  sma20: number | null;
+  sma50: number | null;
+  distEma20Pct: number | null;
+  distSma50Pct: number | null;
+  atr14: number | null;
+  atrPct: number | null;
+  high20: number | null;
+  low20: number | null;
+  rangePosPct: number | null;
+  barsEvaluated: number;
+};
 export type ScanResult = {
   instrumentId: string;
   status: RuleStatus;
   reasons: string[];
   latestEventAt: string | null;
   source: string;
+  metrics?: ScanResultMetrics;
 };
 export type ScanReport = {
   version: typeof RULE_VERSION;
@@ -791,6 +814,215 @@ export function requiredScanBars(ast: Ast, cache = new WeakMap<Ast, number>()): 
   return bars;
 }
 
+function roundMetric(value: number, digits = 2): number {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+/**
+ * Computes deterministic, strictly non-fabricated technical snapshot metrics
+ * from verified closed observations. Any metric whose warm-up or required
+ * source fields are unavailable remains null.
+ */
+export function computeScanMetrics(
+  observations: readonly ScanObservation[],
+): ScanResultMetrics {
+  const n = observations.length;
+  const empty: ScanResultMetrics = {
+    close: null,
+    prevClose: null,
+    changePct: null,
+    open: null,
+    high: null,
+    low: null,
+    volume: null,
+    volRatio: null,
+    rsi14: null,
+    ema20: null,
+    sma20: null,
+    sma50: null,
+    distEma20Pct: null,
+    distSma50Pct: null,
+    atr14: null,
+    atrPct: null,
+    high20: null,
+    low20: null,
+    rangePosPct: null,
+    barsEvaluated: n,
+  };
+  if (n === 0) return empty;
+  const last = observations[n - 1];
+  const prev = n >= 2 ? observations[n - 2] : null;
+  const posNum = (v: number | null | undefined): number | null =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+
+  const close = posNum(last.close);
+  const prevClose = prev ? posNum(prev.close) : null;
+  const open = posNum(last.open);
+  const high = posNum(last.high);
+  const low = posNum(last.low);
+  const volume = posNum(last.volume);
+
+  const changePct =
+    close !== null && prevClose !== null
+      ? roundMetric((close / prevClose - 1) * 100, 2)
+      : null;
+
+  const closes: number[] = [];
+  for (const o of observations) {
+    const c = posNum(o.close);
+    if (c !== null) closes.push(c);
+  }
+  const allClosesValid = closes.length === n;
+
+  let sma20: number | null = null;
+  let ema20: number | null = null;
+  let sma50: number | null = null;
+  let rsi14: number | null = null;
+  let distEma20Pct: number | null = null;
+  let distSma50Pct: number | null = null;
+
+  if (allClosesValid && close !== null) {
+    if (n >= 20) {
+      let sum20 = 0;
+      for (let i = n - 20; i < n; i++) sum20 += closes[i];
+      sma20 = roundMetric(sum20 / 20, 4);
+
+      let e = 0;
+      for (let i = 0; i < 20; i++) e += closes[i];
+      e /= 20;
+      const alpha = 2 / 21;
+      for (let i = 20; i < n; i++) e = alpha * closes[i] + (1 - alpha) * e;
+      ema20 = roundMetric(e, 4);
+      distEma20Pct = roundMetric(((close - e) / e) * 100, 2);
+    }
+    if (n >= 50) {
+      let sum50 = 0;
+      for (let i = n - 50; i < n; i++) sum50 += closes[i];
+      const s50 = sum50 / 50;
+      sma50 = roundMetric(s50, 4);
+      distSma50Pct = roundMetric(((close - s50) / s50) * 100, 2);
+    }
+    if (n >= 15) {
+      let gain = 0;
+      let loss = 0;
+      for (let i = 1; i <= 14; i++) {
+        const diff = closes[i] - closes[i - 1];
+        if (diff > 0) gain += diff;
+        else loss += -diff;
+      }
+      gain /= 14;
+      loss /= 14;
+      for (let i = 15; i < n; i++) {
+        const diff = closes[i] - closes[i - 1];
+        gain = (gain * 13 + Math.max(diff, 0)) / 14;
+        loss = (loss * 13 + Math.max(-diff, 0)) / 14;
+      }
+      const rawRsi =
+        gain === 0 && loss === 0
+          ? 50
+          : loss === 0
+            ? 100
+            : 100 - 100 / (1 + gain / loss);
+      rsi14 = roundMetric(rawRsi, 1);
+    }
+  }
+
+  let volRatio: number | null = null;
+  if (volume !== null && n >= 20) {
+    let volSum = 0;
+    let validVols = true;
+    for (let i = n - 20; i < n; i++) {
+      const v = posNum(observations[i].volume);
+      if (v === null) {
+        validVols = false;
+        break;
+      }
+      volSum += v;
+    }
+    if (validVols && volSum > 0) {
+      volRatio = roundMetric(volume / (volSum / 20), 2);
+    }
+  }
+
+  let atr14: number | null = null;
+  let atrPct: number | null = null;
+  if (n >= 15 && close !== null) {
+    const trs: number[] = [];
+    let validOhlc = posNum(observations[0].close) !== null;
+    for (let i = 1; i < n && validOhlc; i++) {
+      const h = posNum(observations[i].high);
+      const l = posNum(observations[i].low);
+      const prevC = posNum(observations[i - 1].close);
+      if (h === null || l === null || prevC === null || h < l) {
+        validOhlc = false;
+        break;
+      }
+      trs.push(Math.max(h - l, Math.abs(h - prevC), Math.abs(l - prevC)));
+    }
+    if (validOhlc && trs.length >= 14) {
+      let a = 0;
+      for (let i = 0; i < 14; i++) a += trs[i];
+      a /= 14;
+      for (let i = 14; i < trs.length; i++) a = (a * 13 + trs[i]) / 14;
+      atr14 = roundMetric(a, 2);
+      atrPct = roundMetric((a / close) * 100, 2);
+    }
+  }
+
+  let high20: number | null = null;
+  let low20: number | null = null;
+  let rangePosPct: number | null = null;
+  if (n >= 20 && close !== null) {
+    let maxH = -Infinity;
+    let minL = Infinity;
+    let ok = true;
+    for (let i = n - 20; i < n; i++) {
+      const h = posNum(observations[i].high) ?? posNum(observations[i].close);
+      const l = posNum(observations[i].low) ?? posNum(observations[i].close);
+      if (h === null || l === null || h < l) {
+        ok = false;
+        break;
+      }
+      if (h > maxH) maxH = h;
+      if (l < minL) minL = l;
+    }
+    if (ok && Number.isFinite(maxH) && Number.isFinite(minL)) {
+      high20 = roundMetric(maxH, 4);
+      low20 = roundMetric(minL, 4);
+      if (maxH > minL) {
+        rangePosPct = roundMetric(
+          Math.max(0, Math.min(100, ((close - minL) / (maxH - minL)) * 100)),
+          1,
+        );
+      }
+    }
+  }
+
+  return {
+    close: close !== null ? roundMetric(close, 4) : null,
+    prevClose: prevClose !== null ? roundMetric(prevClose, 4) : null,
+    changePct,
+    open: open !== null ? roundMetric(open, 4) : null,
+    high: high !== null ? roundMetric(high, 4) : null,
+    low: low !== null ? roundMetric(low, 4) : null,
+    volume: volume !== null ? Math.round(volume) : null,
+    volRatio,
+    rsi14,
+    ema20,
+    sma20,
+    sma50,
+    distEma20Pct,
+    distSma50Pct,
+    atr14,
+    atrPct,
+    high20,
+    low20,
+    rangePosPct,
+    barsEvaluated: n,
+  };
+}
+
 export function evaluateScan(
   rule: CanonicalRule,
   datasets: ScanDataset[],
@@ -872,6 +1104,7 @@ export function evaluateScan(
         throw new MissingData(
           "The latest observation exceeds this dataset’s freshness budget.",
         );
+      result.metrics = computeScanMetrics(observations);
       let budget = LIMITS.steps;
       const memo = new Map<string, Value>(),
         comparisons: string[] = [];
@@ -1040,9 +1273,16 @@ export function evaluateScan(
             nowRight = numeric(ev(args[1], i)),
             beforeLeft = numeric(ev(args[0], i - 1)),
             beforeRight = numeric(ev(args[1], i - 1));
-          return name === "crossesabove"
-            ? nowLeft > nowRight && beforeLeft <= beforeRight
-            : nowLeft < nowRight && beforeLeft >= beforeRight;
+          const crossed =
+            name === "crossesabove"
+              ? nowLeft > nowRight && beforeLeft <= beforeRight
+              : nowLeft < nowRight && beforeLeft >= beforeRight;
+          if (comparisons.length < 32) {
+            comparisons.push(
+              `${renderFormula(args[0])} ${name === "crossesabove" ? "crossesAbove" : "crossesBelow"} ${renderFormula(args[1])} (prev ${roundMetric(beforeLeft, 2)} vs ${roundMetric(beforeRight, 2)} → now ${roundMetric(nowLeft, 2)} vs ${roundMetric(nowRight, 2)}): ${crossed ? "PASS" : "FAIL"}.`,
+            );
+          }
+          return crossed;
         }
         if (name === "abs") return Math.abs(numeric(ev(args[0], i)));
         if (name === "min" || name === "max")

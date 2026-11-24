@@ -41,13 +41,175 @@ import {
   completedBrokerObservations,
   completedCommercialIntradayObservations,
 } from "./angelone/scan-history";
-import {
-  DEFAULT_OWNER_WATCH_IDS,
-  VERIFIED_SEED_INSTRUMENTS,
-} from "./angelone/instrument-master";
+import { VERIFIED_SEED_INSTRUMENTS } from "./angelone/instrument-master";
+import type {
+  CandleInterval,
+  InstrumentMasterEntry,
+  NormalizedCandleSeries,
+} from "./angelone/types";
 
 export const PRIVATE_EXCHANGE_FEED_LABEL = "Configured Exchange Feed (Private)";
 export const SHARED_EXCHANGE_FEED_LABEL = "Licensed Exchange Feed";
+const CORE_MCX_SCAN_ROOTS = [
+  "GOLD",
+  "SILVER",
+  "CRUDEOIL",
+  "NATURALGAS",
+  "COPPER",
+] as const;
+const EXTENDED_MCX_SCAN_ROOTS = [
+  ...CORE_MCX_SCAN_ROOTS,
+  "ZINC",
+  "ALUMINIUM",
+  "LEAD",
+] as const;
+const DEFAULT_MARKET_INDEX_IDS = new Set([
+  "NSE:NIFTY",
+  "NSE:BANKNIFTY",
+  "BSE:SENSEX",
+]);
+
+const ownerBrokerCandleCache = new Map<
+  string,
+  { until: number; series: NormalizedCandleSeries }
+>();
+
+export function clearBrokerCandleCache(): void {
+  ownerBrokerCandleCache.clear();
+}
+
+function brokerAdapterCacheScope(
+  gw: ReturnType<typeof resolveGatewayConfig>,
+): string {
+  const tokenTag = gw.adapterAuthToken ? gw.adapterAuthToken.slice(0, 8) : "notok";
+  const bindingTag = gw.adapterBinding ? "vpc" : (gw.adapterUrl ?? "none");
+  return `${bindingTag}|${tokenTag}|${gw.flags.demoMode ? "demo" : "live"}`;
+}
+
+function isLocalAdapterUrl(gw: ReturnType<typeof resolveGatewayConfig>): boolean {
+  return (
+    !gw.adapterBinding &&
+    typeof gw.adapterUrl === "string" &&
+    /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i.test(gw.adapterUrl)
+  );
+}
+
+function pickNearestActiveMcxByRoot(
+  entries: readonly InstrumentMasterEntry[],
+  roots: readonly string[],
+  nowMs = Date.now(),
+): InstrumentMasterEntry[] {
+  const active = entries.filter(
+    (i) =>
+      i.exchange === "MCX" &&
+      i.segment === "FUTURE" &&
+      (!i.expiry || Date.parse(`${i.expiry}T23:59:59+05:30`) >= nowMs),
+  );
+  const picked: InstrumentMasterEntry[] = [];
+  const seen = new Set<string>();
+  for (const root of roots) {
+    const best = active
+      .filter((i) => i.symbol.toUpperCase() === root)
+      .sort((a, b) => (a.expiry ?? "9999").localeCompare(b.expiry ?? "9999"))[0];
+    if (best && !seen.has(best.id)) {
+      seen.add(best.id);
+      picked.push(best);
+    }
+  }
+  return picked;
+}
+
+async function resolveMcxRootAliasId(
+  id: string,
+  subject: string,
+): Promise<string> {
+  if (!/^MCX:(GOLD|SILVER|CRUDEOIL|NATURALGAS|COPPER)$/i.test(id)) return id;
+  const root = id.split(":")[1].toUpperCase();
+  const nowMs = Date.now();
+  let matched = pickNearestActiveMcxByRoot(VERIFIED_SEED_INSTRUMENTS, [root], nowMs)[0];
+  try {
+    const found = await gatewaySearchInstruments({
+      isOwner: isDataOwner(subject),
+      exchange: "MCX",
+      segment: "FUTURE",
+      q: root,
+      limit: 40,
+      runtimeEnv: environment(),
+    });
+    const livePick = pickNearestActiveMcxByRoot(found.instruments, [root], nowMs)[0];
+    if (livePick) matched = livePick;
+  } catch {
+    /* Fall back cleanly to verified unexpired seed contract */
+  }
+  return matched ? matched.id : id;
+}
+
+function isUnsupportedIntervalError(error: unknown): boolean {
+  return (
+    error instanceof MarketGatewayError &&
+    error.status === 400 &&
+    /unsupported candle interval/i.test(error.message)
+  );
+}
+
+function isRetryableBrokerCandleError(
+  error: unknown,
+  consecutiveAuthFailures: number,
+): boolean {
+  if (!(error instanceof MarketGatewayError)) return false;
+  if (
+    error.code === "RATE_LIMITED" ||
+    error.code === "TIMEOUT" ||
+    error.code === "UPSTREAM_ERROR"
+  ) {
+    return !isUnsupportedIntervalError(error);
+  }
+  // Exchange WAF burst throttling can return HTTP 403 mapped to BROKER_AUTH_FAILED;
+  // allow 1 paced retry unless consecutive auth failures indicate an expired session.
+  if (error.code === "BROKER_AUTH_FAILED" && consecutiveAuthFailures < 3) {
+    return true;
+  }
+  return false;
+}
+
+function selectBrokerScanCandidates(
+  preset: ScanUniversePreset | undefined,
+  mcxFound: readonly InstrumentMasterEntry[],
+  nowMs = Date.now(),
+): string[] {
+  const nseEquities = VERIFIED_SEED_INSTRUMENTS.filter(
+    (i) => i.exchange === "NSE" && i.segment === "EQUITY",
+  ).map((i) => i.id);
+  const coreIndices = VERIFIED_SEED_INSTRUMENTS.filter(
+    (i) => i.segment === "INDEX" && DEFAULT_MARKET_INDEX_IDS.has(i.id),
+  ).map((i) => i.id);
+  const mergedMcx = [
+    ...mcxFound,
+    ...VERIFIED_SEED_INSTRUMENTS.filter((i) => i.exchange === "MCX" && i.segment === "FUTURE"),
+  ];
+
+  if (preset === "INDIAN_EQUITIES") {
+    return [...new Set(nseEquities)];
+  }
+  if (preset === "MCX_FUTURES") {
+    const core = pickNearestActiveMcxByRoot(mergedMcx, EXTENDED_MCX_SCAN_ROOTS, nowMs);
+    const seen = new Set(core.map((i) => i.id));
+    const extra = mergedMcx
+      .filter(
+        (i) =>
+          !seen.has(i.id) &&
+          matchesScanMarketPreset("MCX_FUTURES", i.exchange, i.segment, i.expiry),
+      )
+      .sort((a, b) => (a.expiry ?? "9999").localeCompare(b.expiry ?? "9999"));
+    return [...core, ...extra].map((i) => i.id);
+  }
+  // Default MARKET / CONNECTED_MARKETS: 16 liquid NSE leaders + 3 flagship indices + 5 core active MCX futures = 24 instruments (0 deferrals).
+  const coreMcx = pickNearestActiveMcxByRoot(mergedMcx, CORE_MCX_SCAN_ROOTS, nowMs).map(
+    (i) => i.id,
+  );
+  const equitySlots = Math.max(12, 24 - coreIndices.length - coreMcx.length);
+  return [...new Set([...nseEquities.slice(0, equitySlots), ...coreIndices, ...coreMcx])];
+}
 type ConfigRow = {
   provider: ProviderId;
   version: number;
@@ -667,37 +829,7 @@ async function sourceResearch(
   ) {
     try {
       const isIntraday = interval === "30m" || interval === "1h";
-      let targetGatewayId = id;
-      if (/^MCX:(GOLD|SILVER)$/i.test(id)) {
-        const root = id.split(":")[1].toUpperCase();
-        const nowMs = Date.now();
-        const pickActive = (list: typeof VERIFIED_SEED_INSTRUMENTS) =>
-          list
-            .filter(
-              (i) =>
-                i.exchange === "MCX" &&
-                i.segment === "FUTURE" &&
-                i.symbol.toUpperCase() === root &&
-                (!i.expiry || Date.parse(`${i.expiry}T23:59:59+05:30`) >= nowMs),
-            )
-            .sort((a, b) => (a.expiry ?? "9999").localeCompare(b.expiry ?? "9999"))[0];
-        let matched = pickActive(VERIFIED_SEED_INSTRUMENTS);
-        try {
-          const found = await gatewaySearchInstruments({
-            isOwner: isDataOwner(subject),
-            exchange: "MCX",
-            segment: "FUTURE",
-            q: root,
-            limit: 40,
-            runtimeEnv: environment(),
-          });
-          const livePick = pickActive(found.instruments);
-          if (livePick) matched = livePick;
-        } catch {
-          /* Fall back cleanly to verified unexpired seed contract */
-        }
-        if (matched) targetGatewayId = matched.id;
-      }
+      const targetGatewayId = await resolveMcxRootAliasId(id, subject);
       const series = await gatewayCandles({
         authenticated: true,
         isOwner: isDataOwner(subject),
@@ -1157,45 +1289,39 @@ export async function researchUniverse(
     (ownerFeedAllowed || sharedLicensedGatewayAllowed) &&
     (options.provider === "ANGELONE" || options.provider === "CONNECTED_MARKETS")
   ) {
-    let brokerUniverse = [...VERIFIED_SEED_INSTRUMENTS];
-    if (!options.instrumentIds?.length && (preset === "MCX_FUTURES" || preset === "MARKET")) {
+    let mcxFound: InstrumentMasterEntry[] = [];
+    if (!options.instrumentIds?.length && (preset === "MCX_FUTURES" || preset === "MARKET" || !preset)) {
       try {
-        const mcxFound = (await gatewaySearchInstruments({
+        mcxFound = (await gatewaySearchInstruments({
           isOwner: isDataOwner(subject),
           exchange: "MCX",
           segment: "FUTURE",
-          limit: preset === "MARKET" ? 16 : 50,
+          limit: preset === "MCX_FUTURES" ? 50 : 30,
           runtimeEnv: environment(),
         })).instruments;
-        if (preset === "MCX_FUTURES") {
-          brokerUniverse = mcxFound;
-        } else {
-          const seenIds = new Set(brokerUniverse.map((x) => x.id));
-          for (const item of mcxFound) {
-            if (!seenIds.has(item.id)) {
-              seenIds.add(item.id);
-              brokerUniverse.push(item);
-            }
-          }
-        }
       } catch {
         // Retain verified seed catalog when live search is unavailable.
       }
     }
-    const rawBrokerCandidates = [...new Set(
-      options.instrumentIds?.length
-        ? options.instrumentIds.filter((id) => {
-            if (preset === "INDIAN_EQUITIES" && !/^(NSE|BSE):/i.test(id)) return false;
-            if (preset === "MCX_FUTURES" && !/^MCX:/i.test(id)) return false;
-            return /^(NSE|BSE|MCX):/i.test(id);
-          })
-        : brokerUniverse
-            .filter((i) => matchesScanMarketPreset(preset, i.exchange, i.segment, i.expiry))
-            .map((i) => i.id)
-    )].filter((id) => !loadedIds.has(id));
+    const explicitCandidates: string[] = [];
+    if (options.instrumentIds?.length) {
+      for (const rawId of options.instrumentIds) {
+        if (preset === "INDIAN_EQUITIES" && !/^(NSE|BSE):/i.test(rawId)) continue;
+        if (preset === "MCX_FUTURES" && !/^MCX:/i.test(rawId)) continue;
+        if (!/^(NSE|BSE|MCX):/i.test(rawId)) continue;
+        explicitCandidates.push(await resolveMcxRootAliasId(rawId, subject));
+      }
+    }
+    const rawBrokerCandidates = [
+      ...new Set(
+        options.instrumentIds?.length
+          ? explicitCandidates
+          : selectBrokerScanCandidates(preset, mcxFound),
+      ),
+    ].filter((id) => !loadedIds.has(id));
     const targetBars = Math.min(1_500, Math.max(100, (options.minimumBars ?? 0) + 60));
     const remainingBudget = Math.min(
-      Math.floor(5_500 / targetBars),
+      Math.floor(7_500 / targetBars),
       Math.max(0, maxLimit - ids.length),
     );
     const candidateIds = rawBrokerCandidates.slice(0, remainingBudget);
@@ -1208,64 +1334,158 @@ export async function researchUniverse(
     }
     const maxAgeMs = brokerScanFreshnessMs(interval);
     const days = brokerScanLookbackDays(interval, options.minimumBars);
+    const reqInterval: CandleInterval = isIntraday ? interval : "1d";
     const source =
       sharedLicensedGatewayAllowed && !ownerFeedAllowed
         ? SHARED_EXCHANGE_FEED_LABEL
         : PRIVATE_EXCHANGE_FEED_LABEL;
-    const chunkSize = 6;
-    for (let i = 0; i < candidateIds.length; i += chunkSize) {
-      const batch = candidateIds.slice(i, i + chunkSize);
-      const batchResults = await Promise.all(
-        batch.map(async (id) => {
-          try {
-            const series = await gatewayCandles({
-              authenticated: true,
-              isOwner: isDataOwner(subject),
-              id,
-              interval: isIntraday ? interval : "1d",
-              days,
-              traceId: options.traceId,
-              runtimeEnv: environment(),
-            });
-            const instrument = series.instrument;
-            if (!matchesScanMarketPreset(preset, instrument.exchange, instrument.segment, instrument.expiry))
-              return { id, reason: "Instrument is outside the selected universe or its contract has expired." };
-            const observations =
-              series.sourceMode === "PRIVATE_OWNER_FEED"
-                ? completedBrokerObservations(series, interval).slice(-targetBars)
-                : [];
-            const latest = observations.at(-1);
-            if (!latest) return { id, reason: "No completed candles are available for the selected timeframe." };
-            if (Date.now() - Date.parse(latest.eventAt) > maxAgeMs)
-              return { id, reason: "Completed historical candles are stale for the selected timeframe." };
-            return { id, series, observations, latest };
-          } catch (error) {
-            return {
-              id,
-              kind: error instanceof MarketGatewayError &&
-                (error.code === "SEGMENT_NOT_ENTITLED" || error.code === "PUBLIC_LICENSE_REQUIRED")
-                ? "denied" as const : "error" as const,
-              reason: error instanceof MarketGatewayError
-                ? `${error.code}: ${error.actionHint}`.replace(/angel\s*one|smartapi/gi, "exchange feed")
-                : "Exchange historical candles could not be loaded. Retry shortly.",
-            };
+    const isLocalAdapter = isLocalAdapterUrl(gw);
+    const minSpacingMs = isLocalAdapter ? 15 : 360;
+    const retryBackoffMs = isLocalAdapter ? 35 : 950;
+    const cacheTtlMs = isIntraday ? 45_000 : 120_000;
+    const cacheScope = brokerAdapterCacheScope(gw);
+    const ownerFlag = isDataOwner(subject);
+    let lastNetworkCallAt = 0;
+    let consecutiveAuthFailures = 0;
+    let succeededCount = 0;
+    let unsupportedIntervalMessage: string | null = null;
+
+    const loadBrokerCandles = async (id: string): Promise<NormalizedCandleSeries> => {
+      const cacheKey = `${subject}|${ownerFlag ? "1" : "0"}|${cacheScope}|${id}|${reqInterval}|${days}`;
+      const cached = ownerBrokerCandleCache.get(cacheKey);
+      if (cached && cached.until > Date.now()) {
+        return cached.series;
+      }
+
+      const executeFetch = async (): Promise<NormalizedCandleSeries> => {
+        const now = Date.now();
+        const waitMs = minSpacingMs - (now - lastNetworkCallAt);
+        if (lastNetworkCallAt > 0 && waitMs > 0) {
+          await new Promise((r) => setTimeout(r, waitMs));
+        }
+        try {
+          const res = await gatewayCandles({
+            authenticated: true,
+            isOwner: ownerFlag,
+            id,
+            interval: reqInterval,
+            days,
+            traceId: options.traceId,
+            runtimeEnv: environment(),
+          });
+          lastNetworkCallAt = Date.now();
+          return res;
+        } catch (err) {
+          // Local 404/400 validation errors never hit upstream exchange rate limits.
+          if (
+            !(
+              err instanceof MarketGatewayError &&
+              (err.code === "INVALID_SYMBOL" || err.status === 400)
+            )
+          ) {
+            lastNetworkCallAt = Date.now();
           }
-        }),
-      );
-      for (const result of batchResults) {
-        if (!result.series) {
-          out.excluded.push({ id: result.id, reason: result.reason, kind: result.kind });
+          throw err;
+        }
+      };
+
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const series = await executeFetch();
+          consecutiveAuthFailures = 0;
+          succeededCount += 1;
+          if (series.sourceMode === "PRIVATE_OWNER_FEED" && series.candles.length > 0) {
+            if (ownerBrokerCandleCache.size >= 160) {
+              const nowCleanup = Date.now();
+              for (const [k, v] of ownerBrokerCandleCache) {
+                if (v.until <= nowCleanup) ownerBrokerCandleCache.delete(k);
+              }
+              if (ownerBrokerCandleCache.size >= 160) {
+                const oldest = ownerBrokerCandleCache.keys().next().value;
+                if (oldest) ownerBrokerCandleCache.delete(oldest);
+              }
+            }
+            ownerBrokerCandleCache.set(cacheKey, {
+              until: Date.now() + cacheTtlMs,
+              series,
+            });
+          }
+          return series;
+        } catch (err) {
+          lastErr = err;
+          if (
+            err instanceof MarketGatewayError &&
+            err.code === "BROKER_AUTH_FAILED"
+          ) {
+            consecutiveAuthFailures += 1;
+          }
+          if (
+            attempt === 0 &&
+            isRetryableBrokerCandleError(
+              err,
+              succeededCount > 0 ? Math.min(consecutiveAuthFailures, 2) : consecutiveAuthFailures,
+            )
+          ) {
+            const delayMs =
+              err instanceof MarketGatewayError && err.retryAfterMs
+                ? Math.min(2_000, Math.max(retryBackoffMs, err.retryAfterMs))
+                : retryBackoffMs;
+            await new Promise((r) => setTimeout(r, delayMs));
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw lastErr;
+    };
+
+    for (const id of candidateIds) {
+      if (unsupportedIntervalMessage) {
+        out.excluded.push({
+          id,
+          kind: "scope",
+          reason: unsupportedIntervalMessage,
+        });
+        continue;
+      }
+      try {
+        const series = await loadBrokerCandles(id);
+        const instrument = series.instrument;
+        if (!matchesScanMarketPreset(preset, instrument.exchange, instrument.segment, instrument.expiry)) {
+          out.excluded.push({
+            id,
+            reason: "Instrument is outside the selected universe or its contract has expired.",
+          });
           continue;
         }
-        const { series, observations, latest } = result;
-        const { id, currency } = series.instrument;
-        const alreadyLoaded = loadedIds.has(id);
-        loadedIds.add(result.id);
+        const observations =
+          series.sourceMode === "PRIVATE_OWNER_FEED"
+            ? completedBrokerObservations(series, interval).slice(-targetBars)
+            : [];
+        const latest = observations.at(-1);
+        if (!latest) {
+          out.excluded.push({
+            id,
+            reason: "No completed candles are available for the selected timeframe.",
+          });
+          continue;
+        }
+        if (Date.now() - Date.parse(latest.eventAt) > maxAgeMs) {
+          out.excluded.push({
+            id,
+            reason: "Completed historical candles are stale for the selected timeframe.",
+          });
+          continue;
+        }
+        const canonicalId = instrument.id;
+        const alreadyLoaded = loadedIds.has(canonicalId);
         loadedIds.add(id);
+        loadedIds.add(canonicalId);
         if (alreadyLoaded) continue;
         out.datasets.push({
-          instrumentId: id,
-          currency,
+          instrumentId: canonicalId,
+          currency: instrument.currency,
           source,
           permitted: true,
           frequency:
@@ -1278,7 +1498,7 @@ export async function researchUniverse(
           observations,
         });
         out.lineage.push({
-          instrumentId: id,
+          instrumentId: canonicalId,
           provider: source,
           eventAt: latest.eventAt,
           retrievedAt: series.retrievalTimestampUTC,
@@ -1295,6 +1515,29 @@ export async function researchUniverse(
                 : interval === "1d"
                   ? "PRIVATE_OWNER_COMPLETED_DAILY_CANDLES"
                   : "PRIVATE_OWNER_DAILY_CANDLES_IN_COMPLETED_CALENDAR_PERIODS",
+        });
+      } catch (error) {
+        if (interval === "30m" && isUnsupportedIntervalError(error)) {
+          unsupportedIntervalMessage =
+            "30m intraday candles are not yet active on the connected exchange feed adapter. Use 1 Hour, Daily, Weekly, or Monthly now — 0 scan quota was charged.";
+          out.excluded.push({
+            id,
+            kind: "scope",
+            reason: unsupportedIntervalMessage,
+          });
+          continue;
+        }
+        out.excluded.push({
+          id,
+          kind:
+            error instanceof MarketGatewayError &&
+            (error.code === "SEGMENT_NOT_ENTITLED" || error.code === "PUBLIC_LICENSE_REQUIRED")
+              ? "denied"
+              : "error",
+          reason:
+            error instanceof MarketGatewayError
+              ? `${error.code}: ${error.actionHint}`.replace(/angel\s*one|smartapi/gi, "exchange feed")
+              : "Exchange historical candles could not be loaded. Retry shortly.",
         });
       }
     }

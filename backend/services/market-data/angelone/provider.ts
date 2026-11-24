@@ -217,7 +217,7 @@ export class AngelOneReadOnlyProvider {
     // Respect documented Angel One per-second and per-minute quotas strictly.
     // Pace short bursts with bounded waiting. Every upstream retry passes through this guard.
     let effectiveNowMs = nowMs;
-    const perSecMax = bucket === "quote" ? 1 : 3;
+    const perSecMax = bucket === "quote" ? 1 : 2;
     let perSec = this.rateLimiter.consume(
       `angelone:${bucket}:sec`,
       perSecMax,
@@ -351,14 +351,20 @@ export class AngelOneReadOnlyProvider {
 
         if (res.status === 403) {
           const isStaticIp = lower.includes("ip") || lower.includes("static") || lower.includes("whitelist");
-          const isRate = lower.includes("rate") || lower.includes("exceed");
-          if (isRate) {
+          const isRate = lower.includes("rate") || lower.includes("exceed") || lower.includes("throttl");
+          const isWafBurst =
+            !isStaticIp &&
+            !errorcode &&
+            this.auth.getStatus(nowMs).authenticated &&
+            this.lastSuccessfulFetchAt !== null &&
+            (!json || lower.includes("access denied") || lower.trim() === "");
+          if (isRate || isWafBurst) {
             throw new ProviderRequestError(
               "RATE_LIMITED",
               "Angel One rate limit enforced (HTTP 403). Back off before retrying.",
               429,
-              5000,
-              false,
+              1500,
+              true,
             );
           }
           throw new ProviderRequestError(

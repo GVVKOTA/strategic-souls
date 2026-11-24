@@ -12,6 +12,7 @@ type ResultRow = {
   reasons?: string[];
   latestEventAt?: string | null;
   source?: string;
+  metrics?: Record<string, number | null>;
 };
 type Snapshot = {
   sourceLineage?: Lineage[];
@@ -183,6 +184,7 @@ export async function projectResearchSnapshot(
             ],
         latestEventAt: row.latestEventAt ?? null,
         source: row.source,
+        ...(raw && derived && row.metrics ? { metrics: row.metrics } : {}),
       };
     });
     const allDerived = derivedHidden.length === 0;

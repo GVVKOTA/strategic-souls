@@ -7,7 +7,7 @@ import {
   summarizePortfolio,
   type Transaction,
 } from "../../engines/portfolio";
-import { compileFormula, requiredScanBars } from "../../engines/scan";
+import { compileFormula, computeScanMetrics, requiredScanBars } from "../../engines/scan";
 import { researchUniverse, type ResearchUniverse } from "../market-data/data-service";
 import { backtestResearch } from "../../engines/backtest";
 import {
@@ -1135,6 +1135,7 @@ export async function mutateWorkspace(
         asOf,
         querySeries: drawReport.matches[0]?.normalizedQuery,
       });
+      const datasetById = new Map(data.datasets.map((d) => [d.instrumentId, d]));
       const results = {
         version: "x1-rule-1" as const,
         asOf,
@@ -1145,13 +1146,18 @@ export async function mutateWorkspace(
         failed: drawReport.evaluated - drawReport.matches.length,
         unknown: drawReport.insufficientBarsCount,
         results: [
-          ...drawReport.matches.map((m) => ({
-            instrumentId: m.instrumentId,
-            status: "PASS" as const,
-            reasons: [m.explanation],
-            latestEventAt: m.windowEndAt,
-            source: m.source,
-          })),
+          ...drawReport.matches.map((m) => {
+            const ds = datasetById.get(m.instrumentId);
+            return {
+              instrumentId: m.instrumentId,
+              status: "PASS" as const,
+              reasons: [m.explanation],
+              latestEventAt: m.windowEndAt,
+              source: m.source,
+              patternFit: m.patternFit,
+              ...(ds ? { metrics: computeScanMetrics(ds.observations) } : {}),
+            };
+          }),
           ...drawReport.excluded.map((e) => ({
             instrumentId: e.instrumentId,
             status: "UNKNOWN" as const,
