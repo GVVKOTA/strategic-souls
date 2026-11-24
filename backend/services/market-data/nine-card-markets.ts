@@ -472,32 +472,35 @@ export async function getMarketOverviewPayload(
   overrideSnapshot?: MarketSnapshot,
 ) {
   const layoutPromise = getUserMarketLayout(subject);
+  const now = new Date().toISOString();
+  const emptyExchange = {
+    quotes: [] as NormalizedMarketQuote[],
+    mcxAliasMap: new Map<string, string>(),
+    sparklines: new Map<string, number[]>(),
+  };
   const ownerQuotesPromise = layoutPromise.then(async ({ ids }) => {
     const gw = resolveGatewayConfig();
-    const ownerAllowed = !!subject && isDataOwner(subject) && gw.flags.enablePrivateBrokerData;
+    const isOwner = !!subject && isDataOwner(subject);
+    const ownerAllowed = isOwner && gw.flags.enablePrivateBrokerData;
     const publicAllowed = gw.flags.mode === "public_licensed" && gw.flags.enablePublicExchangeQuotes;
-    const empty = {
-      quotes: [] as NormalizedMarketQuote[],
-      mcxAliasMap: new Map<string, string>(),
-      sparklines: new Map<string, number[]>(),
-    };
-    if (!ownerAllowed && !publicAllowed) {
-      return empty;
-    }
+    if (!ownerAllowed && !publicAllowed) return emptyExchange;
+    if (!gw.adapterUrl || !gw.adapterAuthToken) throw new Error("Adapter configuration unavailable.");
+
+    const access = { authenticated: !!subject, isOwner };
     const nowMs = Date.now();
     const mcxAliasMap = new Map<string, string>();
-    const fetchIds: string[] = [];
-    for (const id of ids) {
+    const fetchIds = await Promise.all(ids.map(async (id) => {
       if (id === "MCX:GOLD" || id === "MCX:SILVER") {
         const root = id.slice(4);
         let mappedId: string | null = null;
         try {
           const found = await gatewaySearchInstruments({
-            isOwner: !!subject && isDataOwner(subject),
+            isOwner,
             q: root,
             exchange: "MCX",
             segment: "FUTURE",
             limit: 12,
+            timeoutMs: 1_500,
           });
           // Strictly match exact root symbol ("GOLD" / "SILVER"), NEVER mini/guinea/petal/micro variants or expired contracts
           const nearest = found.instruments
@@ -527,55 +530,45 @@ export async function getMarketOverviewPayload(
         }
         if (mappedId) {
           mcxAliasMap.set(id, mappedId);
-          fetchIds.push(mappedId);
         }
-      } else if (/^(NSE|BSE|MCX):/.test(id)) {
-        fetchIds.push(id);
+        return mappedId;
+      }
+      return /^(NSE|BSE|MCX):/.test(id) ? id : null;
+    }));
+    const uniqueFetchIds = [...new Set(fetchIds.filter((id): id is string => id !== null))];
+    if (!uniqueFetchIds.length) return emptyExchange;
+
+    const { quotes } = await gatewayQuotes({ ...access, ids: uniqueFetchIds, timeoutMs: 3_000 });
+    const sparklines = new Map<string, number[]>();
+    const quotedIds = new Set(quotes.filter((quote) => quote.ltp !== null).map((quote) => quote.id));
+    const candleResults = await Promise.allSettled(
+      uniqueFetchIds.filter((id) => quotedIds.has(id)).map(async (id) => {
+        const { candles } = await gatewayCandles({ ...access, id, interval: "1d", days: 45, timeoutMs: 1_200 });
+        const closes = candles.map(({ close }) => close).filter((close) => Number.isFinite(close) && close > 0);
+        return { id, closes };
+      }),
+    );
+    for (const item of candleResults) {
+      if (item.status === "fulfilled" && item.value.closes.length >= 2) {
+        sparklines.set(item.value.id, item.value.closes.slice(-30));
       }
     }
-    if (fetchIds.length === 0) {
-      return { quotes: [] as NormalizedMarketQuote[], mcxAliasMap, sparklines: new Map<string, number[]>() };
-    }
-    const uniqueFetchIds = [...new Set(fetchIds)];
-    try {
-      const res = await gatewayQuotes({
-        authenticated: !!subject,
-        isOwner: !!subject && isDataOwner(subject),
-        ids: uniqueFetchIds,
-      });
-      // Fetch real bounded daily closes (last ~45 calendar days -> ~30 trading days) for sparklines without blocking quotes on failure
-      const sparklines = new Map<string, number[]>();
-      if (res.quotes.length > 0) {
-        const candleResults = await Promise.allSettled(
-          uniqueFetchIds.map(async (targetId) => {
-            const series = await gatewayCandles({
-              authenticated: !!subject,
-              isOwner: !!subject && isDataOwner(subject),
-              id: targetId,
-              interval: "1d",
-              days: 45,
-            });
-            const closes = series.candles
-              .map((c) => c.close)
-              .filter((v): v is number => Number.isFinite(v) && v > 0);
-            return { targetId, closes };
-          }),
-        );
-        for (const item of candleResults) {
-          if (item.status === "fulfilled" && item.value.closes.length >= 2) {
-            sparklines.set(item.value.targetId, item.value.closes.slice(-30));
-          }
-        }
-      }
-      return { quotes: res.quotes, mcxAliasMap, sparklines };
-    } catch {
-      return { quotes: [] as NormalizedMarketQuote[], mcxAliasMap, sparklines: new Map<string, number[]>() };
-    }
+    return { quotes, mcxAliasMap, sparklines };
   });
-  const [layout, snapshot, ownerData] = await Promise.all([
+  const [layout, references, exchange] = await Promise.all([
     layoutPromise,
-    overrideSnapshot ? Promise.resolve(overrideSnapshot) : marketSnapshot(),
-    ownerQuotesPromise,
+    (async () => {
+      try {
+        return overrideSnapshot ?? await marketSnapshot();
+      } catch {
+        console.warn({ event: "market_overview_source_unavailable", source: "official_references" });
+        return { asOf: now, quotes: [], fxHistory: [], yields: [], providers: [], disclosure: "", nextRefreshAfter: now };
+      }
+    })(),
+    ownerQuotesPromise.catch(() => {
+      console.warn({ event: "market_overview_source_unavailable", source: "exchange" });
+      return emptyExchange;
+    }),
   ]);
   const allowedCatalog = DEFAULT_EIGHT_CARD_IDS.map((id) => registryInstrument(id))
     .filter((i): i is NonNullable<typeof i> => !!i)
@@ -589,14 +582,14 @@ export async function getMarketOverviewPayload(
       mappingStatus: i.mappingStatus,
     }));
   return {
-    asOf: snapshot.asOf,
+    asOf: references.asOf,
     layout,
     cards: buildMarketOverviewCards(
       layout.ids,
-      snapshot,
-      ownerData.quotes,
-      ownerData.mcxAliasMap,
-      ownerData.sparklines,
+      references,
+      exchange.quotes,
+      exchange.mcxAliasMap,
+      exchange.sparklines,
     ),
     catalog: allowedCatalog,
     disclosure:

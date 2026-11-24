@@ -13,18 +13,23 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request): Promise<Response> {
+  const startedAt = Date.now();
   try {
     const user = await getAuthenticatedUser(request).catch(() => null);
     const payload = await getMarketOverviewPayload(user?.userId ?? null);
     return Response.json(payload, {
       headers: {
-        "Cache-Control": user
-          ? "private, no-store"
-          : "public, max-age=60, stale-while-revalidate=120",
+        "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (err) {
+    const status = err instanceof HttpError ? err.status : 503;
+    const ray = request.headers.get("cf-ray");
+    const requestId = ray && /^[\da-f]{16}-[A-Z]{3}$/i.test(ray) ? ray : crypto.randomUUID();
+    console.warn({ event: "market_overview_unavailable", route: "/api/markets/overview",
+      requestId, status, errorClass: err instanceof HttpError ? "HttpError" : "UnexpectedError",
+      durationMs: Date.now() - startedAt });
     return Response.json(
       {
         code: "MARKET_OVERVIEW_UNAVAILABLE",
@@ -33,10 +38,11 @@ export async function GET(request: Request): Promise<Response> {
             ? err.message
             : "Market overview is temporarily unavailable.",
         retryable: true,
+        requestId,
       },
       {
-        status: err instanceof HttpError ? err.status : 503,
-        headers: { "Cache-Control": "no-store" },
+        status,
+        headers: { "Cache-Control": "private, no-store" },
       },
     );
   }

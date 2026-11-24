@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { resolveGatewayConfig } from "../../../backend/services/market-data/angelone/gateway";
 import { APP_RELEASE } from "../../../backend/services/release-meta";
 import {
@@ -9,6 +10,8 @@ export const dynamic = "force-dynamic";
 
 export function GET(request: Request) {
   const gw = resolveGatewayConfig(undefined, request.url);
+  const buildCommit = typeof process === "undefined" ? null : process.env.STRATEGIC_SOULS_BUILD_SHA ?? null;
+  const workerVersionId = env.CF_VERSION_METADATA?.id ?? null;
   return Response.json(
     {
       product: APP_RELEASE.productName,
@@ -18,10 +21,9 @@ export function GET(request: Request) {
       supportEmail: APP_RELEASE.supportEmail,
       targetLaunchDate: APP_RELEASE.targetLaunchDate,
       revisionMarker: APP_RELEASE.revisionMarker,
-      buildCommit:
-        typeof process === "undefined"
-          ? null
-          : process.env.STRATEGIC_SOULS_BUILD_SHA ?? null,
+      buildCommit,
+      workerVersionId,
+      provenance: buildCommit && workerVersionId ? "IDENTIFIED" : "UNAVAILABLE",
       dashboards: ["Global", "Strategy", "Community"],
       globalMarketTiles: 8,
       exchangeVenues: 24,

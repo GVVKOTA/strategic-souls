@@ -7,7 +7,7 @@ export const APP_RELEASE = Object.freeze({
   organization: "Global Vertex Vectors",
   releaseTrack: "V3.1",
   versionLabel: "Strategic Souls V3.1 — Reliability & Premium Experience",
-  revisionMarker: "x8-v3.1-reliability-2026-11-24",
+  revisionMarker: "v3.1-market-overview-repair-2026-11-25",
   targetLaunchDate: "2027-01-02",
   supportEmail: "strategicsoulsgvv@gmail.com",
   supportEmailDisplay: "strategicsoulsgvv@gmail.com",
