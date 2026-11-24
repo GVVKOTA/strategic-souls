@@ -348,6 +348,11 @@ test("8-Tile Global Market Grid persists per user, enforces 409 optimistic concu
   assert.equal(r0.status, 200);
   const d0 = await r0.json();
   assert.equal(d0.cards.length, 8);
+  assert.equal(d0.cards[3].canonicalId, "NSE:MIDCPNIFTY");
+  assert.equal(d0.cards[3].shortLabel, "Nifty Midcap Select");
+  assert.equal(d0.cards[6].canonicalId, "GLOBAL:CLF27");
+  assert.equal(d0.cards[6].quoteUnit, "USD/bbl");
+  assert.equal(d0.cards[6].value, null);
   assert.equal(d0.layout.version, 0);
 
   // Reject < 8 cards or duplicates or non-allowlisted IDs (including retired SPX/NDX/N225/BRENT)
@@ -389,7 +394,8 @@ test("8-Tile Global Market Grid persists per user, enforces 409 optimistic concu
   assert.equal(rSave.status, 200);
   const saved = await rSave.json();
   assert.equal(saved.layout.version, 1);
-  assert.deepEqual(saved.layout.ids, customIds);
+  const migratedIds = ["ECB:USDINR", "GLOBAL:CLF27", "MCX:SILVER", "MCX:GOLD", "NSE:MIDCPNIFTY", "NSE:BANKNIFTY", "BSE:SENSEX", "NSE:NIFTY"];
+  assert.deepEqual(saved.layout.ids, migratedIds);
 
   // Stale expectedVersion: 0 must return 409 Conflict
   const rConflict = await overviewRoute.POST(
@@ -397,10 +403,13 @@ test("8-Tile Global Market Grid persists per user, enforces 409 optimistic concu
   );
   assert.equal(rConflict.status, 409);
 
-  // Reload restores exact custom order
+  // A record persisted by the old build keeps its slot order and version on read.
+  sql.prepare("UPDATE x1_records SET payload=? WHERE id=?")
+    .run(JSON.stringify({ ids: customIds }), "market-layout:user-a");
   const rReload = await overviewRoute.GET(makeReq("/api/markets/overview"));
   const reloaded = await rReload.json();
-  assert.deepEqual(reloaded.layout.ids, customIds);
+  assert.deepEqual(reloaded.layout.ids, migratedIds);
+  assert.equal(reloaded.layout.version, 1);
 
   // IDOR check: User B still gets defaults, not User A's layout
   currentUser = { userId: "user-b", displayName: "Bob Macro", email: "b@test.local", authProvider: "email" };

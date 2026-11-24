@@ -38,7 +38,7 @@ Before V3.0 RC1, an ordinary signed-in user opening Strategy and running a defau
 | **MCX** | Active Unexpired Futures only (expired excluded) | Genuine `60min` completed session bars (`09:00–23:30/23:55 IST` DST/holiday-aware) | Completed daily OHLCV | Aggregated completed weekly bars | Aggregated completed monthly bars | **Requires Licensed Commercial Secret** (`X2_TRUEDATA_BEARER_TOKEN` + `x2_providers` config) |
 | **ECB Reference FX (`ECB:USDINR`)** | Official Daily FX | Unsupported (never synthesized from daily) | Live Public EOD | Live Aggregated Weekly | Live Aggregated Monthly | **Live (Keyless Official Public Feed)** |
 | **US Treasury (`UST:*`)** | Official Daily Yields | Unsupported | Live Public EOD | Live Aggregated Weekly | Live Aggregated Monthly | **Live (Keyless Official Public Feed)** |
-| **NYMEX WTI (`GLOBAL:CL`)** | Global Crude Tile | N/A (Dashboard tile) | Commercial Feed | N/A | N/A | **Requires Licensed Commercial Secret** |
+| **NYMEX WTI Jan 2027 (`GLOBAL:CLF27`)** | Global Crude Tile | N/A (Dashboard tile) | Commercial Feed | N/A | N/A | **Requires an authorized NYMEX feed for CLF27** |
 
 ---
 
@@ -51,10 +51,10 @@ Legacy 9-card D1/localStorage layouts (which previously contained `GLOBAL:SPX`, 
 | 1 | `NSE:NIFTY` | `NIFTY 50` | NSE | Index | Index points (INR) |
 | 2 | `BSE:SENSEX` | `SENSEX` | BSE | Index | Index points (INR) |
 | 3 | `NSE:BANKNIFTY` | `BANK NIFTY` | NSE | Index | Index points (INR) |
-| 4 | `NSE:NIFTYMIDCAP100` | `NIFTY MIDCAP` | NSE | Index | NIFTY Midcap 100 points (INR) |
+| 4 | `NSE:MIDCPNIFTY` | `Nifty Midcap Select` | NSE | Index | Nifty Midcap Select points (INR) |
 | 5 | `MCX:GOLD` | `GOLD` | MCX | Commodity Future | Maps dynamically to nearest active unexpired MCX Gold contract when entitled |
 | 6 | `MCX:SILVER` | `SILVER MCX` | MCX | Commodity Future | Maps dynamically to nearest active unexpired MCX Silver contract when entitled |
-| 7 | `GLOBAL:CL` | `CL` | NYMEX | Crude Oil Future | WTI Crude Oil (USD/bbl) |
+| 7 | `GLOBAL:CLF27` | `CL Jan 2027 Fut` | NYMEX | Crude Oil Future | WTI Crude Oil (USD/bbl) |
 | 8 | `ECB:USDINR` | `USD/INR` | ECB | FX Reference | Official daily INR per USD (live keyless) |
 
 ---

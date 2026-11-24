@@ -548,9 +548,8 @@
   font-size: 0.85rem;
   font-weight: 600;
   color: var(--x1-text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
   min-width: 0;
 }
 

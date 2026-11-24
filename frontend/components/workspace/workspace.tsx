@@ -1555,7 +1555,7 @@ export default function X1Workspace() {
                 <dt>8-Tile Markets Grid</dt>
                 <dd>
                   Displays the 8 core instruments (NIFTY 50, SENSEX, BANK NIFTY,
-                  NIFTY MIDCAP, GOLD, SILVER MCX, CL, and USD/INR) in a balanced
+                  Nifty Midcap Select, GOLD, SILVER MCX, CL Jan 2027, and USD/INR) in a balanced
                   2×4 desktop and 2-column mobile grid. Tap Reorder to arrange
                   your view.
                 </dd>

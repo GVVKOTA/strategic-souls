@@ -95,7 +95,7 @@ function sanitizeProviderLabel(raw: string | null | undefined): string {
 
 function isIndexInstrument(id: string, asset: AssetResearch | null): boolean {
   if (asset?.instrument?.type === "INDEX") return true;
-  return /^(NSE:(NIFTY50|BANKNIFTY|NIFTYMIDCAP100|INDIAVIX)|BSE:SENSEX|GLOBAL:(SPX|NDX))$/i.test(
+  return /^(NSE:(NIFTY50|BANKNIFTY|NIFTYMIDCAP100|MIDCPNIFTY|INDIAVIX)|BSE:SENSEX|GLOBAL:(SPX|NDX))$/i.test(
     id,
   );
 }
