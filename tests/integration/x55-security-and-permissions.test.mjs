@@ -132,7 +132,7 @@ function load(path) {
       return new vm.SyntheticModule(
         ["env"],
         function () {
-          this.setExport("env", { DB, APP_ORIGIN: "https://ss.example" });
+          this.setExport("env", { DB, APP_ORIGIN: "https://ss.example", CF_VERSION_METADATA: { id: "local-version" } });
         },
         { context },
       );
@@ -302,7 +302,7 @@ function req(url, method = "GET", body = undefined) {
   });
 }
 
-test("guest gets 401 on private APIs; release reports X7 provenance without leaking account details", async () => {
+test("guest gets 401 on private APIs; release reports public build provenance without leaking account details", async () => {
   currentUser = null;
 
   assert.equal((await profileRoute.GET(req("/api/profile"))).status, 401);
@@ -313,8 +313,11 @@ test("guest gets 401 on private APIs; release reports X7 provenance without leak
   assert.equal(relRes.status, 200);
   const rel = await relRes.json();
   assert.equal(rel.release, "V3.1");
-  assert.equal(rel.revisionMarker, "x8-v3.1-reliability-2026-11-24");
+  assert.equal(rel.revisionMarker, "v3.1-market-overview-repair-2026-11-25");
   assert.equal(rel.buildCommit, null);
+  assert.equal(rel.workerVersionId, "local-version");
+  assert.equal(rel.provenance, "UNAVAILABLE");
+  assert.match(relRes.headers.get("Cache-Control"), /no-store/);
   assert.equal(rel.classicDailyLimit, 20);
   assert.equal(rel.providerReadiness, undefined);
   assert.equal(rel.marketData.readOnlyOnly, true);
