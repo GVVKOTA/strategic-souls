@@ -88,17 +88,26 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
   const deadline = new Date(Date.parse(cutoff) + JOB_MS).toISOString();
   const tier: ScanQuotaTier = input.origin === "CLASSIC" ? "CLASSIC" : "ADVANCED";
   try {
-    const reservation = await reserveScanSlot(db, subject, tier, requestKey, Date.parse(cutoff), JOB_MS);
+    const reservation = await reserveScanSlot(db, subject, tier, requestKey, Date.parse(cutoff));
     if (reservation.reusedCompletedScanId)
       throw new HttpError(409, "This request ID belongs to a previous scan.");
     try {
       const id = crypto.randomUUID();
-      await db.prepare(
-        `INSERT INTO x78_market_scan_jobs
-         (id,subject,request_key,request_digest,reservation_id,universe_version,input,cutoff,deadline,state)
-         VALUES (?,?,?,?,?,?,?,?,?,'QUEUED')`,
-      ).bind(id, subject, requestKey, signature, reservation.id, universe.version,
-        JSON.stringify(input), cutoff, deadline).run();
+      const holdUntil = new Date(Date.parse(deadline) + 86_400_000).toISOString();
+      const [queued] = await db.batch([
+        db.prepare(
+          `INSERT INTO x78_market_scan_jobs
+           (id,subject,request_key,request_digest,reservation_id,universe_version,input,cutoff,deadline,state)
+           SELECT ?,?,?,?,?,?,?,?,?,'QUEUED' WHERE EXISTS
+             (SELECT 1 FROM x51_scan_reservations WHERE id=? AND state='RESERVED' AND lease_expires_at>=?)`,
+        ).bind(id, subject, requestKey, signature, reservation.id, universe.version,
+          JSON.stringify(input), cutoff, deadline, reservation.id, new Date().toISOString()),
+        db.prepare(
+          `UPDATE x51_scan_reservations SET lease_expires_at=?
+           WHERE id=? AND EXISTS (SELECT 1 FROM x78_market_scan_jobs WHERE id=?)`,
+        ).bind(holdUntil, reservation.id, id),
+      ]);
+      if (!queued.meta.changes) throw new HttpError(409, "The scan reservation expired. Retry the request.");
       return { jobId: id, state: "QUEUED" as const, progress: 0 };
     } catch (err) {
       // A network failure can occur after D1 commits. Confirm ownership before releasing the reservation.

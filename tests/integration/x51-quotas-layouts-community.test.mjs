@@ -799,5 +799,31 @@ test("X7.8 market jobs pin all 500 IDs across modes, reconcile results and prote
       currentUser = { userId: "user-b", displayName: "Bob Macro", email: "b@test.local", authProvider: "email" };
     }
   }
-  console.info("X7.8 5 × 500 synthetic jobs, simulated provider and D1, " + Math.round(performance.now() - start) + "ms");
+  const submission = await route.POST(makeReq("/api/strategy/scan", "POST", {
+    action: "run-scan", origin: "CLASSIC", scanRequestVersion: 2, requestId: randomUUID(),
+    name: "Worker cancellation fixture", description: "Verify cancellation while history is in flight.",
+    formula: "close > 0", mode: "SIMPLE", interval: "1d",
+    outcome: { family: "POSITIVE_RETURN", horizon: 5, threshold: 0, target: 5, stop: 3, costBps: 0 },
+  }));
+  assert.equal(submission.status, 202);
+  const cancelled = await submission.json();
+  const count = await scanQuotaMod.getScanQuotaSummary(DB, "user-b", nowMs);
+  let allowFetch;
+  let signalStarted;
+  const started = new Promise((resolve) => { signalStarted = resolve; });
+  const outbound = new Promise((resolve) => { allowFetch = resolve; });
+  const inFlight = processMarketScanBatch(async () => {
+    signalStarted();
+    await outbound;
+    return { datasets: [], excluded: [], lineage: [], asOf: new Date(nowMs).toISOString(), source: "Fixture OHLCV" };
+  });
+  await started;
+  const response = await route.POST(makeReq("/api/strategy/scan", "POST", { action: "cancel", jobId: cancelled.jobId }));
+  assert.equal((await response.json()).state, "CANCELLED");
+  allowFetch();
+  assert.equal(await inFlight, false);
+  assert.equal(sql.prepare("SELECT count(*) AS n FROM x78_market_scan_batches WHERE job_id=?").get(cancelled.jobId).n, 0);
+  const afterCancel = await scanQuotaMod.getScanQuotaSummary(DB, "user-b", nowMs);
+  assert.equal(afterCancel.classic.used, count.classic.used - 1);
+  console.info("X7.8 5 × 500 synthetic jobs plus cancellation, simulated provider and D1, " + Math.round(performance.now() - start) + "ms");
 });

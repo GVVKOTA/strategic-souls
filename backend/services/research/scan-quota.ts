@@ -94,10 +94,9 @@ export async function reserveScanSlot(
   tier: ScanQuotaTier,
   idempotencyKey: string,
   nowMs = Date.now(),
-  leaseMs = RESERVATION_LEASE_MS,
 ): Promise<ReservationHandle> {
   const nowIso = new Date(nowMs).toISOString();
-  const leaseExpiresAt = new Date(nowMs + leaseMs).toISOString();
+  const leaseExpiresAt = new Date(nowMs + RESERVATION_LEASE_MS).toISOString();
   const istDay = istCalendarDay(nowMs);
   await expireStaleReservations(db, nowIso);
 
