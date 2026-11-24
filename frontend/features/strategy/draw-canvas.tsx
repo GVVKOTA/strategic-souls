@@ -6,7 +6,8 @@ import {
   Info,
   Maximize2,
   Minimize2,
-  RotateCcw,
+  PenTool,
+  Redo2,
   Search,
   Trash2,
   Undo2,
@@ -29,9 +30,11 @@ import {
   type Notice,
   type SavedPatternRecord,
 } from "../../components/workspace/shared";
+import { cancelMarketScan, waitForMarketScan, type MarketScanProgress } from "./market-scan-client";
 import { triggerGoFeedback } from "../../components/workspace/go-feedback";
 
 type Props = {
+  initialRecipe?: { points: DrawPoint[]; windowBars: number; minPatternFit: number };
   authenticated: boolean;
   onRequireAuth?: () => void;
   scanName?: string;
@@ -47,7 +50,9 @@ type Props = {
   busy: boolean;
   onScanComplete: (res: {
     id: string;
-    drawReport: DrawScanReport;
+    state?: MarketScanProgress["state"];
+    coverage?: MarketScanProgress["coverage"];
+    drawReport?: DrawScanReport;
     soulGenome?: SoulGenomeReport;
   }) => Promise<void> | void;
   onOpenAsset: (id: string) => void;
@@ -143,6 +148,7 @@ function NormalizedOverlaySvg({ match }: { match: DrawMatchResult }) {
  * fullscreen drawing mode, flat-pattern rejection, and account-private saved patterns.
  */
 export default function PatternDrawCanvas({
+  initialRecipe,
   authenticated,
   onRequireAuth,
   scanName: controlledName,
@@ -167,12 +173,12 @@ export default function PatternDrawCanvas({
   const abortRef = useRef<AbortController | null>(null);
 
   const [points, setPoints] = useState<DrawPoint[]>([
-    ...PATTERN_TEMPLATES[0].points,
+    ...(initialRecipe?.points ?? []),
   ]);
   const [history, setHistory] = useState<DrawPoint[][]>([]);
-  const [activeTemplate, setActiveTemplate] = useState<string>(
-    PATTERN_TEMPLATES[0].id,
-  );
+  const [redo, setRedo] = useState<DrawPoint[][]>([]);
+  const [job, setJob] = useState<MarketScanProgress | null>(null);
+  const [activeTemplate, setActiveTemplate] = useState("");
   const [showAllTemplates, setShowAllTemplates] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -180,8 +186,8 @@ export default function PatternDrawCanvas({
   const [localName, setLocalName] = useState("");
   const [localNameError, setLocalNameError] = useState("");
   const [shapeError, setShapeError] = useState("");
-  const [windowBars, setWindowBars] = useState(20);
-  const [minPatternFit, setMinPatternFit] = useState(75);
+  const [windowBars, setWindowBars] = useState(initialRecipe?.windowBars ?? 20);
+  const [minPatternFit, setMinPatternFit] = useState(initialRecipe?.minPatternFit ?? 75);
   const [submitting, setSubmitting] = useState(false);
   const [savingPattern, setSavingPattern] = useState(false);
   const [lastReport, setLastReport] = useState<DrawScanReport | null>(null);
@@ -218,6 +224,7 @@ export default function PatternDrawCanvas({
 
   const pushHistory = useCallback((snapshot: DrawPoint[]) => {
     setHistory((prev) => [...prev.slice(-24), snapshot]);
+    setRedo([]);
   }, []);
 
   const renderCanvas = useCallback(() => {
@@ -261,7 +268,8 @@ export default function PatternDrawCanvas({
       ctx.fillStyle = "rgba(197, 205, 213, 0.55)";
       ctx.font = '13px "Inter", system-ui, sans-serif';
       ctx.textAlign = "center";
-      ctx.fillText("Draw left to right, or choose a template above", w / 2, h / 2);
+      ctx.fillText("Draw a price pattern", w / 2, h / 2 - 9);
+      ctx.fillText("Drag to draw from left to right", w / 2, h / 2 + 11);
       return;
     }
 
@@ -412,9 +420,8 @@ export default function PatternDrawCanvas({
       const last = prev[prev.length - 1];
       if (Math.hypot(last.x - pt.x, last.y - pt.y) < 0.014) return prev;
       // Keep trajectory monotonic left-to-right to avoid self-crossing tangles
-      const nextX = Math.max(last.x + 0.002, pt.x);
-      if (nextX > 1) return prev;
-      return [...prev, { x: nextX, y: pt.y }].slice(0, 240);
+      if (pt.x <= last.x) return prev;
+      return [...prev, pt].slice(0, 240);
     });
   }
 
@@ -445,6 +452,7 @@ export default function PatternDrawCanvas({
   }
 
   function applyTemplate(templateId: string, pts: readonly DrawPoint[]) {
+    if (points.length > 0 && !activeTemplate && !window.confirm("Replace the current drawing? You can undo this.")) return;
     if (points.length > 0) pushHistory(points);
     setActiveTemplate(templateId);
     setEraseMode(false);
@@ -453,14 +461,23 @@ export default function PatternDrawCanvas({
   }
 
   function handleUndo() {
-    setHistory((prev) => {
-      if (prev.length === 0) return prev;
-      const previous = prev[prev.length - 1];
-      setPoints(previous);
-      setActiveTemplate("");
-      setShapeError("");
-      return prev.slice(0, -1);
-    });
+    const previous = history.at(-1);
+    if (!previous) return;
+    setHistory(history.slice(0, -1));
+    setRedo([...redo, points]);
+    setPoints(previous);
+    setActiveTemplate("");
+    setShapeError("");
+  }
+
+  function handleRedo() {
+    const previous = redo.at(-1);
+    if (!previous) return;
+    setRedo(redo.slice(0, -1));
+    setHistory([...history.slice(-24), points]);
+    setPoints(previous);
+    setActiveTemplate("");
+    setShapeError("");
   }
 
   function handleClear() {
@@ -469,10 +486,6 @@ export default function PatternDrawCanvas({
     setActiveTemplate("");
     setEraseMode(false);
     setShapeError("");
-  }
-
-  function handleReset() {
-    applyTemplate(PATTERN_TEMPLATES[0].id, PATTERN_TEMPLATES[0].points);
   }
 
   async function saveCustomPattern() {
@@ -538,12 +551,9 @@ export default function PatternDrawCanvas({
       return;
     }
     if (submitting || busy) return;
-    if (!universePreset) {
-      notify("Choose a market for this scan.", true);
-      return;
-    }
     const input = {
       action: "run-draw-scan",
+      ...(universePreset && universePreset !== "MARKET" && { scopeIntent: "EXPLICIT" }),
       scanRequestVersion: SCAN_REQUEST_VERSION,
       name: trimmedName,
       description: `Pattern similarity search (${windowBars}-bar lookback, min fit ${minPatternFit}%).`,
@@ -566,23 +576,23 @@ export default function PatternDrawCanvas({
     abortRef.current = ctrl;
     setSubmitting(true);
     try {
-      const res = await api<{
-        id: string;
-        drawReport: DrawScanReport;
+      const initial = await api<MarketScanProgress & {
+        drawReport?: DrawScanReport;
         soulGenome?: SoulGenomeReport;
       }>(
-        "/api/strategy/scan",
+        universePreset === "CUSTOM_CSV" ? "/api/x1/workspace" : "/api/strategy/scan",
         {
           ...input,
           requestId: request.current.id,
         },
         { signal: ctrl.signal, timeoutMs: 65_000 },
       );
-      if (!mounted.current) return;
+      const res = await waitForMarketScan(initial, ctrl.signal, setJob);
+      if (!mounted.current || !res.id) return;
       setLastReport(res.drawReport ?? null);
-      await onScanComplete(res);
+      await onScanComplete({ ...res, id: res.id });
       request.current = null;
-      if (mounted.current) notify("Pattern scan saved to GRAVEYARD.");
+      if (mounted.current) notify(res.state === "PARTIAL" ? "Some market data was unavailable. Partial results were saved." : "Pattern scan complete.");
     } catch (err) {
       if (!mounted.current) return;
       notify(
@@ -590,7 +600,7 @@ export default function PatternDrawCanvas({
         true,
       );
     } finally {
-      if (mounted.current) setSubmitting(false);
+      if (mounted.current) { setSubmitting(false); setJob(null); }
     }
   }
 
@@ -703,6 +713,10 @@ export default function PatternDrawCanvas({
       >
         <div className="ss-v31-canvas-toolbar">
           <div className="ss-v31-canvas-tools">
+            <button type="button" className={"ss-v31-tool-btn" + (!eraseMode ? " is-teal-active" : "")}
+              aria-pressed={!eraseMode} onClick={() => setEraseMode(false)}>
+              <PenTool size={14} aria-hidden="true" /><span>Draw</span>
+            </button>
             <button
               type="button"
               className="ss-v31-tool-btn"
@@ -712,6 +726,9 @@ export default function PatternDrawCanvas({
             >
               <Undo2 size={14} aria-hidden="true" />
               <span>Undo</span>
+            </button>
+            <button type="button" className="ss-v31-tool-btn" disabled={!redo.length} onClick={handleRedo}>
+              <Redo2 size={14} aria-hidden="true" /><span>Redo</span>
             </button>
             <button
               type="button"
@@ -732,14 +749,6 @@ export default function PatternDrawCanvas({
             >
               <Trash2 size={14} aria-hidden="true" />
               <span>Clear</span>
-            </button>
-            <button
-              type="button"
-              className="ss-v31-tool-btn"
-              onClick={handleReset}
-            >
-              <RotateCcw size={14} aria-hidden="true" />
-              <span>Reset</span>
             </button>
           </div>
           <div className="ss-v31-canvas-tools">
@@ -781,7 +790,12 @@ export default function PatternDrawCanvas({
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={finishPointer}
-          onPointerCancel={finishPointer}
+          onPointerCancel={(event) => {
+            if (activePointerId.current !== event.pointerId) return;
+            activePointerId.current = null;
+            if (preStrokeSnapshot.current) setPoints(preStrokeSnapshot.current);
+            preStrokeSnapshot.current = null;
+          }}
           onLostPointerCapture={finishPointer}
         />
       </div>
@@ -816,6 +830,16 @@ export default function PatternDrawCanvas({
           )}
         </label>
       )}
+
+      {submitting && job?.jobId && <div className="x1-actions">
+        <progress aria-label="Draw scan progress" value={job.progress ?? 0} max={100} />
+        <button type="button" className="x1-secondary" onClick={() => {
+          if (!job.jobId) return;
+          void cancelMarketScan(job.jobId).then((status) => {
+            if (status.state === "CANCELLED") abortRef.current?.abort();
+          }).catch((error: Error) => notify(error.message, true));
+        }}>Cancel</button>
+      </div>}
 
       {/* Single clean Similarity slider */}
       <label className="ss-v31-slider-row" htmlFor="ss-v31-similarity-slider">

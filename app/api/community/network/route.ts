@@ -87,6 +87,13 @@ export async function GET(request: Request): Promise<Response> {
       );
     }
 
+    if (view === "post") {
+      const postId = params.get("postId") ?? "";
+      if (!/^[A-Za-z0-9_-]{8,80}$/.test(postId)) throw new HttpError(404, "Soul unavailable.");
+      const result = await listWebSouls(viewerId, { postId });
+      if (!result.posts.length) throw new HttpError(404, "Soul unavailable.");
+      return json({ post: result.posts[0] }, 200, true);
+    }
     const rawSort = params.get("sort") ?? "newest";
     const sort =
       rawSort === "following" || rawSort === "evidence" ? rawSort : "newest";

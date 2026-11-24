@@ -49,8 +49,7 @@ const SocialWorkspace = lazy(() =>
 
 type PrimaryCommunityTab = "web" | "chats" | "groups";
 
-const COMM_TAB_STORAGE_KEY = "ss-v3-comm-tab";
-const COMM_TAB_ORDER: PrimaryCommunityTab[] = ["web", "chats", "groups"];
+const COMM_TAB_ORDER: PrimaryCommunityTab[] = ["chats", "web", "groups"];
 
 function formatFeedTimeframe(tf: string): string {
   const lower = tf.toLowerCase();
@@ -153,6 +152,11 @@ type Props = {
   profileRevision?: number;
   initialTab?: PrimaryCommunityTab;
   initialProfileHandle?: string | null;
+  initialThread?: string;
+  initialRoom?: string;
+  initialPost?: string;
+  initialAnchor?: string;
+  onOpenNotification?: (id: string) => void;
   savedOnlyRequested?: boolean;
   tabNonce?: number;
   onOpenSettings: (section: SettingsSection) => void;
@@ -170,8 +174,13 @@ export default function ResearchNetworkShell({
   searchQuery,
   currentUser,
   profileRevision = 0,
-  initialTab = "web",
+  initialTab = "chats",
   initialProfileHandle = null,
+  initialThread = "",
+  initialRoom = "",
+  initialPost = "",
+  initialAnchor = "",
+  onOpenNotification,
   savedOnlyRequested = false,
   tabNonce = 0,
   onOpenSettings,
@@ -180,20 +189,7 @@ export default function ResearchNetworkShell({
   onCopyToStrategy,
   onMobileChatActive,
 }: Props) {
-  const [tab, setTab] = useState<PrimaryCommunityTab>(() => {
-    if (initialTab !== "web" || tabNonce > 0) return initialTab;
-    if (typeof window !== "undefined") {
-      try {
-        const saved = window.localStorage.getItem(COMM_TAB_STORAGE_KEY);
-        if (saved === "web" || saved === "chats" || saved === "groups") {
-          return saved;
-        }
-      } catch {
-        /* Storage unavailable */
-      }
-    }
-    return initialTab;
-  });
+  const [tab, setTab] = useState<PrimaryCommunityTab>(initialTab);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [chatView, setChatView] = useState<SocialView>("Messages");
   const [pendingThreadId, setPendingThreadId] = useState("");
@@ -207,9 +203,6 @@ export default function ResearchNetworkShell({
   const [posts, setPosts] = useState<PublishedSoulCard[]>([]);
   const [loadingFeed, setLoadingFeed] = useState(true);
   const [myProfile, setMyProfile] = useState<UserProfileSnapshot | null>(null);
-  const [legacyBannerDismissed, setLegacyBannerDismissed] = useState(false);
-  const [optingPublic, setOptingPublic] = useState(false);
-
   // Author-only Post Insights modal
   const [insightsPost, setInsightsPost] = useState<PublishedSoulCard | null>(null);
   const [insightsData, setInsightsData] = useState<PostInsightsSnapshot | null>(null);
@@ -223,13 +216,10 @@ export default function ResearchNetworkShell({
 
   const selectCommunityTab = useCallback((nextTab: PrimaryCommunityTab) => {
     setTab(nextTab);
-    if (typeof window !== "undefined") {
-      try {
-        window.localStorage.setItem(COMM_TAB_STORAGE_KEY, nextTab);
-      } catch {
-        /* Ignore storage restrictions */
-      }
-    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", "community");
+    url.searchParams.set("tab", nextTab === "web" ? "souls" : nextTab === "groups" ? "rooms" : "chats");
+    window.history.replaceState(window.history.state, "", url);
   }, []);
 
   // Compact researcher search results
@@ -259,6 +249,36 @@ export default function ResearchNetworkShell({
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [actionBusy, setActionBusy] = useState("");
+  const [noticePost, setNoticePost] = useState<PublishedSoulCard | null>(null);
+  const [noticePostError, setNoticePostError] = useState("");
+
+  useEffect(() => {
+    queueMicrotask(() => setTab(initialTab));
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (!initialPost) return;
+    const controller = new AbortController();
+    void api<{ post: PublishedSoulCard }>("/api/community/network?view=post&postId=" + encodeURIComponent(initialPost),
+      undefined, { signal: controller.signal }).then(({ post }) => {
+        if (!controller.signal.aborted) {
+          setNoticePost(post);
+          setNoticePostError("");
+          if (initialAnchor) setDiscussPost(post);
+        }
+      }).catch(() => { if (!controller.signal.aborted) setNoticePostError("This Soul is unavailable."); });
+    return () => controller.abort();
+  }, [initialPost, initialAnchor, authenticated]);
+
+  useEffect(() => {
+    if (initialPost && noticePost?.id === initialPost && !initialAnchor)
+      document.getElementById("ss-linked-soul")?.scrollIntoView({ block: "center" });
+  }, [initialPost, initialAnchor, noticePost]);
+
+  useEffect(() => {
+    if (!initialAnchor || !discussPost || commentsLoading) return;
+    document.getElementById("ss-comment-" + initialAnchor)?.scrollIntoView({ block: "nearest" });
+  }, [initialAnchor, discussPost, commentsLoading]);
 
   useEffect(() => {
     if (tabNonce <= 0) return;
@@ -348,7 +368,7 @@ export default function ResearchNetworkShell({
       notify(
         err instanceof Error
           ? err.message
-          : "Could not load Soul Feed.",
+          : "Could not load Souls.",
         true,
       );
     } finally {
@@ -563,27 +583,6 @@ export default function ResearchNetworkShell({
     }
   }
 
-  async function optInLegacyPublic() {
-    if (!authenticated || optingPublic) return;
-    setOptingPublic(true);
-    try {
-      const res = await api<{ profile: UserProfileSnapshot }>("/api/profile", {
-        action: "update-preferences",
-        social: { discoverable: true },
-      });
-      setMyProfile(res.profile);
-      onProfileSynced?.(res.profile);
-      notify("Your researcher profile is now publicly discoverable.");
-    } catch (err) {
-      notify(
-        err instanceof Error ? err.message : "Could not update profile visibility.",
-        true,
-      );
-    } finally {
-      setOptingPublic(false);
-    }
-  }
-
   async function toggleSaveSoul(post: PublishedSoulCard) {
     if (!authenticated) {
       onRequireAuth?.();
@@ -678,7 +677,7 @@ export default function ResearchNetworkShell({
   async function shareSoul(post: PublishedSoulCard) {
     const shareUrl =
       typeof window !== "undefined"
-        ? `${window.location.origin}/?view=community&profile=${encodeURIComponent(post.authorHandle)}`
+        ? `${window.location.origin}/?view=community&tab=souls&post=${encodeURIComponent(post.id)}`
         : "";
     let channel: "NATIVE" | "COPY" = "COPY";
     let completed = false;
@@ -779,7 +778,7 @@ export default function ResearchNetworkShell({
   }
 
   async function deletePublishedSoul(post: PublishedSoulCard) {
-    if (!window.confirm(`Delete published Soul "${post.title}" from Community?`)) {
+    if (!window.confirm("Delete Soul? This Soul will be permanently deleted. This action cannot be undone. Your saved private run remains in GRAVEYARD.")) {
       return;
     }
     setActionBusy("del:" + post.id);
@@ -871,11 +870,6 @@ export default function ResearchNetworkShell({
   const avatarId = myProfile?.avatarId ?? currentUser?.avatarId ?? "a01";
   const counts = myProfile?.counts ??
     currentUser?.counts ?? { followers: 0, following: 0, publishedSouls: 0 };
-  const isLegacyPrivate =
-    authenticated &&
-    !legacyBannerDismissed &&
-    (myProfile?.legacyPrivateProfile ?? currentUser?.legacyPrivateProfile === true);
-
   return (
     <div className="x51-global-stack" style={{ gap: 12 }}>
       <header className="ss-v3-comm-header">
@@ -943,33 +937,6 @@ export default function ResearchNetworkShell({
           </>
         )}
       </div>
-
-      {/* One-time consent notice ONLY for legacy private profiles (never bulk-exposed silently!) */}
-      {isLegacyPrivate && (
-        <div className="x54-legacy-optin" role="region" aria-label="Legacy private profile notice">
-          <span>
-            Your legacy profile <strong>@{handle}</strong> stays hidden until you opt in.
-            DMs, portfolios, and drafts always stay private.
-          </span>
-          <div className="x1-actions" style={{ gap: 6 }}>
-            <button
-              type="button"
-              className="x54-btn-primary"
-              disabled={optingPublic}
-              onClick={() => void optInLegacyPublic()}
-            >
-              {optingPublic ? "Updating…" : "Make profile public"}
-            </button>
-            <button
-              type="button"
-              className="x54-tiny-btn"
-              onClick={() => setLegacyBannerDismissed(true)}
-            >
-              Keep hidden
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* 2. COMPACT RESEARCHER SEARCH RESULTS */}
       {trimmedSearch.length >= 1 && (
@@ -1065,22 +1032,6 @@ export default function ResearchNetworkShell({
         >
           <button
             ref={(el) => {
-              tabRefs.current.web = el;
-            }}
-            type="button"
-            role="tab"
-            className={"ss-v3-comm-tab" + (tab === "web" ? " is-active" : "")}
-            aria-selected={tab === "web"}
-            tabIndex={tab === "web" ? 0 : -1}
-            onClick={() => selectCommunityTab("web")}
-          >
-            <span className="ss-v3-comm-tab-icon">
-              <IconSoulFeed size={24} />
-            </span>
-            <span>Soul Feed</span>
-          </button>
-          <button
-            ref={(el) => {
               tabRefs.current.chats = el;
             }}
             type="button"
@@ -1105,6 +1056,22 @@ export default function ResearchNetworkShell({
           </button>
           <button
             ref={(el) => {
+              tabRefs.current.web = el;
+            }}
+            type="button"
+            role="tab"
+            className={"ss-v3-comm-tab" + (tab === "web" ? " is-active" : "")}
+            aria-selected={tab === "web"}
+            tabIndex={tab === "web" ? 0 : -1}
+            onClick={() => selectCommunityTab("web")}
+          >
+            <span className="ss-v3-comm-tab-icon">
+              <IconSoulFeed size={24} />
+            </span>
+            <span>Soul Feed</span>
+          </button>
+          <button
+            ref={(el) => {
               tabRefs.current.groups = el;
             }}
             type="button"
@@ -1124,7 +1091,7 @@ export default function ResearchNetworkShell({
 
       {/* TAB 1: SOUL FEED — Published Souls Discovery Feed */}
       {tab === "web" && (
-        <section aria-label="Soul Feed">
+        <section aria-label="Souls">
           <div className="x51-cal-toolbar x55-feed-toolbar">
             <div className="x51-chip-row" role="group" aria-label="Feed mode">
               {(["ALL", "CLASSIC", "ADVANCED"] as const).map((m) => (
@@ -1159,7 +1126,7 @@ export default function ResearchNetworkShell({
                 <option value="1mo">Monthly</option>
               </select>
               <select
-                aria-label="Sort Soul Feed"
+                aria-label="Sort Souls"
                 className="x55-feed-select"
                 value={sort}
                 onChange={(e) =>
@@ -1173,7 +1140,7 @@ export default function ResearchNetworkShell({
           </div>
 
           {loadingFeed ? (
-            <div className="x55-feed-skeleton" aria-busy="true" aria-label="Loading Soul Feed">
+            <div className="x55-feed-skeleton" aria-busy="true" aria-label="Loading Souls">
               <div className="x55-skel-card" />
               <div className="x55-skel-card" />
             </div>
@@ -1186,7 +1153,7 @@ export default function ResearchNetworkShell({
               }
             >
               Run a scan in Strategy and tap <strong>Publish Soul</strong> to share
-              transparent research in the Soul Feed.
+              transparent research in the Souls.
             </Empty>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1380,8 +1347,10 @@ export default function ResearchNetworkShell({
                 onView={setChatView}
                 notify={notify}
                 query={searchQuery}
-                initialThreadId={pendingThreadId}
+                initialThreadId={pendingThreadId || initialThread}
+                initialMessageId={initialAnchor}
                 onClearInitialThread={() => setPendingThreadId("")}
+                onOpenNotification={onOpenNotification}
                 onOpenProfile={openResearcherProfile}
                 onOpenGroup={() => selectCommunityTab("groups")}
                 onMobileChatActive={onMobileChatActive}
@@ -1407,6 +1376,7 @@ export default function ResearchNetworkShell({
           fallback={<WorkspaceSkeleton label="Loading Rooms…" kind="workspace" />}
         >
           <CommunityGroupsWorkspace
+            key={initialRoom || "rooms"}
             authenticated={authenticated}
             onRequireAuth={onRequireAuth}
             notify={notify}
@@ -1415,6 +1385,8 @@ export default function ResearchNetworkShell({
             currentUserDisplayName={displayName}
             profileRevision={profileRevision}
             initialTab="rooms"
+            initialRoom={initialRoom}
+            initialAnchor={initialAnchor}
             onOpenSettings={onOpenSettings}
             onOpenProfile={openResearcherProfile}
           />
@@ -1422,6 +1394,11 @@ export default function ResearchNetworkShell({
       )}
 
       {/* Discuss / Comments Modal — all @handles open canonical PublicProfileSheet */}
+      {initialPost && noticePostError && <p role="status">{noticePostError}</p>}
+      {initialPost && noticePost?.id === initialPost && !discussPost && <section id="ss-linked-soul" className="x1-panel" aria-label="Linked Soul">
+        <h2>{noticePost.title}</h2><p>{noticePost.summary}</p>
+        <button type="button" className="x1-secondary" onClick={() => setDiscussPost(noticePost)}>Open discussion</button>
+      </section>}
       {discussPost && (
         <Modal
           title={`Discuss · ${discussPost.title}`}
@@ -1461,6 +1438,8 @@ export default function ResearchNetworkShell({
               {comments.map((c) => (
                 <div
                   key={c.id}
+                  id={"ss-comment-" + c.id}
+                  className={initialAnchor === c.id ? "x1-alert-selected" : undefined}
                   style={{
                     padding: 10,
                     borderRadius: 10,

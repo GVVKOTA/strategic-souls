@@ -499,7 +499,7 @@ export async function testProvider(
           e instanceof ProviderFailure
             ? e.code === "INVALID_DATA"
               ? "PROVIDER_DOWN"
-              : e.code
+              : e.code === "LOCAL_RATE_BUDGET" ? "RATE_LIMITED" : e.code
             : e instanceof HttpError && e.status === 429
               ? "RATE_LIMITED"
               : "PROVIDER_DOWN";

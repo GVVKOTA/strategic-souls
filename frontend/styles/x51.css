@@ -35,6 +35,55 @@
   min-width: 0;
 }
 
+.x1-india-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: #ffab60;
+  font-size: clamp(.66rem, 1.3vw, .78rem);
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.x1-india-identity img { width: 24px; height: 16px; }
+@media (max-width: 420px) {
+  .x1-app .x1-topbar:has(.x1-india-identity) { height: auto; min-height: 0; flex-wrap: wrap; gap: 5px 8px; }
+  .x1-topbar:has(.x1-india-identity) .x51-topbar-left { flex: 1 0 auto; }
+  .x1-topbar:has(.x1-india-identity) .x51-topbar-search-wrap { flex: 1 0 100%; order: 3; }
+  .x1-footer > div { flex-wrap: wrap; gap: 6px 12px; }
+  .x1-footer a { white-space: nowrap; }
+}
+.x1-global-menu-group { display: grid; gap: 5px; margin-bottom: .9rem; }
+.x1-global-menu-group h3 { margin: .3rem 0; font-size: .82rem; color: var(--x1-text-secondary); }
+.x1-alert-selected { outline: 1px solid var(--x1-title-blue); }
+.x1-asset-actions { padding: .6rem .9rem; justify-content: space-between; }
+.x53-globe-stage.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  max-height: none;
+  z-index: 180;
+  border-radius: 0;
+}
+.x1-regional-layer,
+.x1-regional-layer > .x1-regional-map.maplibregl-map { position: absolute; inset: 0; }
+.x1-regional-layer { opacity: 0; pointer-events: none; transition: opacity var(--x51-dur-menu) var(--x51-ease); }
+.x1-regional-layer.is-visible { opacity: 1; pointer-events: auto; }
+.x1-map-place { color: #d6e2e7; font-size: 11px; text-shadow: 0 1px 3px #030914; pointer-events: none; }
+.x1-app .x1-map-marker { width: 16px; height: 16px; min-height: 16px; padding: 0; border: 2px solid #162331; border-radius: 50%; background: #8ecaff; cursor: pointer; }
+.x1-app .x1-map-marker.is-earthquake, .x1-app .x1-map-marker.is-disaster { background: #ffb370; }
+.x1-app .x1-map-marker.is-conflict { background: #f99da2; }
+.x1-map-marker[aria-pressed="true"] { outline: 2px solid #fff; }
+.x1-map-attribution, .x1-map-status { position: absolute; right: .7rem; bottom: .6rem; font-size: .72rem; background: #10202e;
+  padding: .25rem .4rem; color: #d6e2e7; border-radius: 4px; }
+.x1-map-status { bottom: 3rem; }
+.x1-map-attribution { bottom: 2.6rem; }
+@media (prefers-reduced-motion: reduce) { .x1-regional-layer { transition: none; } }
+[data-motion="minimal"] .x1-regional-layer { transition: none; }
+
 .x51-topbar-center {
   flex: 1 1 auto;
   min-width: 0;
@@ -3034,5 +3083,17 @@
 
   .x53-cal-title {
     font-size: 0.88rem;
+  }
+}
+
+.x52-hm-tile.is-flat {
+  border-color: rgba(160, 185, 205, 0.5);
+}
+.x52-hm-tile {
+  min-width: 0;
+}
+@media (max-width: 430px) {
+  .x51-drawer-item small {
+    display: none;
   }
 }

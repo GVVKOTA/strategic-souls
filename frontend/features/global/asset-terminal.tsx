@@ -1,4 +1,5 @@
 "use client";
+import CompanyReportPeriods from "./company-report-periods";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
@@ -1981,6 +1982,8 @@ export default function AssetTerminal({
                   </tbody>
                 </table>
               </div>
+            ) : authenticated && asset?.instrument?.type === "EQUITY" && id.startsWith("NSE:") ? (
+              <CompanyReportPeriods key={id} instrument={id} />
             ) : (
               <p className="x1-caption">
                 {id.startsWith("ECB:") ||

@@ -366,6 +366,10 @@ export type ScanRun = {
   created_at: string;
   payload: {
     rule: { formula: string; presetId?: string | null };
+    research?: import("../../../backend/services/research/research").ResearchDefinition;
+    origin?: string;
+    coverage?: import("../../features/strategy/market-scan-client").MarketScanCoverage;
+    patternRecipe?: { points: { x: number; y: number }[]; windowBars: number; minPatternFit: number };
     interval?: string;
     results: {
       asOf: string;
@@ -404,6 +408,9 @@ export type WorkspaceState = {
   records: WorkspaceRecord[];
   archivedRecords?: WorkspaceRecord[];
   savedPatterns?: SavedPatternRecord[];
+  researchDrafts?: { id: string; name: string; payload: {
+    definition: import("../../../backend/services/research/research").ResearchDefinition;
+  } }[];
   scanHistoryHasMore?: boolean;
   scanHistoryNextBefore?: string | null;
   scanEventsHasMore?: boolean;

@@ -1,6 +1,7 @@
 /** Versioned data contracts. Missing observations never become zero or synthetic candles. */
+export const SHARED_HISTORY_LABEL = "Licensed exchange history";
 export type Interval = "30m" | "1h" | "1d" | "1wk" | "1mo";
-export type ProviderId = "EODHD" | "TRUEDATA";
+export type ProviderId = "EODHD" | "TRUEDATA" | "INDIANAPI" | "BHARATSTOCK";
 export type Market = "NSE" | "BSE" | "MCX" | "GLOBAL";
 export type Instrument = {
   id: string;
@@ -77,16 +78,36 @@ export type Rights = {
   contractReference: string;
   expiresAt: string;
 };
+export type ProviderCreditWindow = {
+  startsAt: string;
+  endsAt: string;
+  availableCredits: number;
+  callsPerMinute: number;
+};
+
+export type SharedHistoryGrant = {
+  creditWindow?: ProviderCreditWindow;
+  intervals: ("1d" | "30m" | "1h")[];
+  lagMinutes: number;
+  retentionHours: number;
+  dailyLookbackDays: number;
+  dailyRefreshMinutes: number;
+  intradayRefreshMinutes: number;
+  attribution: string;
+  attributionUrl: string;
+};
 export type ProviderConfig = {
   provider: ProviderId;
+  constituentGrant?: { version: string; expiresAt: string };
   enabled: boolean;
   priority: number;
   version: number;
   rights: Rights;
   instruments: Instrument[];
-  datasets: ("candles" | "fundamentals" | "news")[];
+  datasets: ("candles" | "fundamentals" | "news" | "prices")[];
   dailyCallLimit: number;
   lastWrite: string;
+  sharedHistory?: SharedHistoryGrant;
 };
 export type ProviderHealth = {
   state:
@@ -139,6 +160,8 @@ export type AssetResearch = {
     storage: boolean;
   };
   limitations: string[];
+  attribution?: { label: string; url: string };
+  coverage?: { firstDate: string; lastDate: string; bars: number };
 };
 export type Drawing = {
   id: string;

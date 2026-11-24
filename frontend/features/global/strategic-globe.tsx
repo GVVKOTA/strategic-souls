@@ -7,6 +7,7 @@ import {
   Compass,
   Info,
   Layers,
+  Maximize,
   Minus,
   Pause,
   Play,
@@ -41,8 +42,11 @@ import {
   type Notice,
 } from "../../components/workspace/shared";
 import type { FocusCoords, GlobePointMarker } from "./globe-canvas";
+import { MAP_ENTER_GLOBE_ZOOM, MAP_START_ZOOM, RETURN_GLOBE_ZOOM, type GeographicFocus, type RegionalFocus } from "./globe-projection";
+import type { RegionalEvent } from "./regional-map";
 
 const GlobeCanvas = lazy(() => import("./globe-canvas"));
+const RegionalMap = lazy(() => import("./regional-map"));
 
 type ConflictEventItem = {
   eventId: string;
@@ -129,12 +133,6 @@ function DeferredGlobe(props: React.ComponentProps<typeof GlobeCanvas>) {
   );
 }
 
-/**
- * Strategic Souls X5.3 — ONE Unified, Enlarged, Truly Zoomable 3D Strategic Globe.
- * - Pure 3D Earth canvas with zero inline flat map, zero visible List switch, and zero static country tile wall
- * - Perspective camera zoom 1.0x–5.0x with smooth drag, pinch, double-tap, wheel, and keyboard
- * - Renders verified USGS, NASA EONET, 24 Exchange hubs, Country anchors, and configured Conflicts directly on 3D Earth
- */
 export default function StrategicGlobe({
   data,
   hazards,
@@ -153,11 +151,20 @@ export default function StrategicGlobe({
   const [selectedExchange, setSelectedExchange] = useState<Exchange | null>(null);
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity>(null);
   const [zoom, setZoom] = useState(1.0);
-  const [autoRotate, setAutoRotate] = useState(true);
+  const [autoRotate, setAutoRotate] = useState(false);
   const [motionOverride, setMotionOverride] = useState(false);
   const [resetToken, setResetToken] = useState(0);
   const [rendererFallback, setRendererFallback] = useState(false);
   const [focusCoords, setFocusCoords] = useState<FocusCoords | null>(null);
+  const globeCamera = useRef<(() => GeographicFocus | null) | null>(null);
+  const globeStage = useRef<HTMLDivElement>(null);
+  const [regional, setRegional] = useState<RegionalFocus | null>(null);
+  const [regionView, setRegionView] = useState<RegionalFocus | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+  const [mapMessage, setMapMessage] = useState("");
+  const [mapCommand, setMapCommand] = useState({ direction: 0, id: 0 });
+  const [mapDestination, setMapDestination] = useState<(RegionalFocus & { nonce: number }) | null>(null);
+  const [full, setFull] = useState(false);
 
   // Layer toggles
   const [showExchanges, setShowExchanges] = useState(true);
@@ -255,7 +262,11 @@ export default function StrategicGlobe({
 
   const flyTo = (lat: number, lon: number, targetZoom = 2.6) => {
     setAutoRotate(false);
-    setZoom(clampGlobeZoom(targetZoom));
+    if (regional) {
+      setMapDestination((previous) => ({ lat, lon, zoom: MAP_START_ZOOM + .55, nonce: (previous?.nonce ?? 0) + 1 }));
+      return;
+    }
+    changeZoom(targetZoom, { lat, lon });
     setFocusCoords((prev) => ({
       lat,
       lon,
@@ -297,8 +308,55 @@ export default function StrategicGlobe({
     setSelectedExchange(null);
     setSelectedEntity(null);
     setFocusCoords(null);
+    setRegional(null);
+    setMapDestination(null);
+    setMapReady(false);
+    setMapCommand({ id: 0, direction: 0 });
     setResetToken((n) => n + 1);
   };
+
+  function changeZoom(next: number, focus?: GeographicFocus | null) {
+    const size = clampGlobeZoom(next);
+    setZoom(size);
+    if (size < MAP_ENTER_GLOBE_ZOOM && regional && !mapReady) {
+      setRegional(null);
+      setMapDestination(null);
+    }
+    if (size >= MAP_ENTER_GLOBE_ZOOM && !regional && !rendererFallback) {
+      const anchor = focus ?? globeCamera.current?.() ?? focusCoords ?? { lat: 19.5, lon: 78 };
+      const entry = { ...anchor, zoom: MAP_START_ZOOM };
+      setRegionView(entry);
+      setRegional(entry);
+      setMapMessage("");
+    }
+  }
+
+  function returnToEarth(focus: GeographicFocus) {
+    setRegional(null); setMapReady(false); setMapDestination(null);
+    setMapCommand({ id: 0, direction: 0 });
+    setZoom(RETURN_GLOBE_ZOOM);
+    setFocusCoords((previous) => ({ ...focus, zoom: RETURN_GLOBE_ZOOM, nonce: (previous?.nonce ?? 0) + 1 }));
+  }
+
+  useEffect(() => {
+    const onFullscreen = () => setFull(document.fullscreenElement === globeStage.current);
+    document.addEventListener("fullscreenchange", onFullscreen);
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !document.fullscreenElement) setFull(false); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreen);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, []);
+
+  async function toggleFullscreen() {
+    if (document.fullscreenElement === globeStage.current) { await document.exitFullscreen(); return; }
+    if (full) { setFull(false); return; }
+    try {
+      if (!globeStage.current?.requestFullscreen) { setFull(true); return; }
+      await globeStage.current.requestFullscreen();
+    } catch { setFull(true); }
+  }
 
   async function toggleWatchRegion(regionId: string) {
     if (!authenticated) {
@@ -361,12 +419,20 @@ export default function StrategicGlobe({
 
   const zoomStepIn = () => {
     setAutoRotate(false);
-    setZoom((z) => Math.round(clampGlobeZoom(z * 1.38) * 100) / 100);
+    if (mapReady) setMapCommand(({ id }) => ({ id: id + 1, direction: 1 }));
+    else changeZoom(Math.round(clampGlobeZoom(zoom * 1.38) * 100) / 100);
   };
   const zoomStepOut = () => {
     setAutoRotate(false);
-    setZoom((z) => Math.round(clampGlobeZoom(z / 1.38) * 100) / 100);
+    if (mapReady) setMapCommand(({ id }) => ({ id: id + 1, direction: -1 }));
+    else changeZoom(Math.round(clampGlobeZoom(zoom / 1.38) * 100) / 100);
   };
+  const markers: RegionalEvent[] = regional ? [
+    ...(showExchanges ? EXCHANGES.map((venue) => ({ ...venue, label: venue.name, tone: "exchange", onSelect: () => handleSelectExchange(venue) })) : []),
+    ...[...visibleHazardPoints, ...visibleCountryPoints, ...visibleConflictPoints].map((marker) => ({
+      ...marker, label: marker.label ?? marker.id, tone: marker.kind.toLowerCase(), onSelect: () => handleSelectMarker(marker),
+    })),
+  ] : [];
 
   return (
     <section
@@ -376,15 +442,17 @@ export default function StrategicGlobe({
       <div className="x53-globe-head">
         <h2 id="x53-globe-heading">Strategic Globe</h2>
         <span className="x1-caption">
-          3D Earth · NASA Blue Marble · USGS &amp; NASA EONET
+          {mapReady ? "Regional map · Natural Earth" : "3D Earth · NASA Blue Marble"} · USGS &amp; NASA EONET
         </span>
       </div>
 
       <div
-        className={"x53-globe-stage" + (focused ? " is-focused" : "")}
+        ref={globeStage}
+        className={"x53-globe-stage" + (focused ? " is-focused" : "") + (full ? " is-fullscreen" : "")}
         data-globe-zoom={zoom.toFixed(2)}
+        data-projection={mapReady ? "regional" : "earth"}
       >
-        <DeferredGlobe
+        {!mapReady && <DeferredGlobe
           venues={[...EXCHANGES]}
           selected={selectedExchange}
           autoRotate={autoRotate}
@@ -392,6 +460,7 @@ export default function StrategicGlobe({
           zoom={zoom}
           resetToken={resetToken}
           focusCoords={focusCoords}
+          cameraRef={globeCamera}
           hazardPoints={visibleHazardPoints}
           countryPoints={visibleCountryPoints}
           conflictPoints={visibleConflictPoints}
@@ -402,9 +471,20 @@ export default function StrategicGlobe({
           onPause={() => setAutoRotate(false)}
           onSelect={handleSelectExchange}
           onSelectMarker={handleSelectMarker}
-          onZoom={(next) => setZoom(clampGlobeZoom(next))}
+          onZoom={changeZoom}
           onFallbackChange={setRendererFallback}
-        />
+        />}
+        {regional && <div className={"x1-regional-layer" + (mapReady ? " is-visible" : "")} aria-hidden={!mapReady} inert={!mapReady}>
+          <Suspense fallback={null}>
+            <RegionalMap initial={regional} destination={mapDestination} markers={markers} selected={selectedMarkerId ?? selectedExchange?.id ?? null}
+              command={mapCommand} showGeography={showCountries}
+              onReady={() => setMapReady(true)} onChange={setRegionView} onExit={returnToEarth}
+              onUnavailable={() => { returnToEarth(regionView ?? regional); setMapMessage("Regional map unavailable. The 3D globe is available."); }} />
+          </Suspense>
+        </div>}
+        {mapMessage && <p className="x1-map-status" role="status">{mapMessage}</p>}
+        {regionView && mapReady && <a className="x1-map-attribution" href="https://www.naturalearthdata.com/about/terms-of-use/"
+          target="_blank" rel="noreferrer">Natural Earth · 1:50m</a>}
 
         {/* Top-left lightweight overlay controls */}
         <div className="x53-globe-overlay-tl" role="toolbar" aria-label="Globe tools">
@@ -451,6 +531,8 @@ export default function StrategicGlobe({
 
         {/* Top-right Info & Accessibility button */}
         <div className="x53-globe-overlay-tr">
+          <button type="button" className="x53-globe-icon-btn" aria-label={full ? "Exit fullscreen" : "Fullscreen map"}
+            onClick={() => void toggleFullscreen()}><Maximize size={16} /></button>
           <button
             type="button"
             className="x53-globe-icon-btn"
@@ -472,7 +554,7 @@ export default function StrategicGlobe({
             className="x53-globe-icon-btn"
             aria-label={autoRotate ? "Pause globe rotation" : "Start globe rotation"}
             aria-pressed={autoRotate}
-            disabled={rendererFallback}
+            disabled={rendererFallback || !!regional}
             onClick={() => {
               setMotionOverride(true);
               setAutoRotate((v) => !v);
@@ -484,7 +566,7 @@ export default function StrategicGlobe({
             type="button"
             className="x53-globe-icon-btn"
             aria-label="Zoom out"
-            disabled={rendererFallback || zoom <= GLOBE_ZOOM_MIN + 0.01}
+            disabled={rendererFallback || (!regional && zoom <= GLOBE_ZOOM_MIN + 0.01)}
             onClick={zoomStepOut}
           >
             <Minus size={15} />
@@ -494,13 +576,13 @@ export default function StrategicGlobe({
             aria-live="polite"
             title="Current camera magnification"
           >
-            {zoom.toFixed(1)}×
+            {mapReady ? "Map" : zoom.toFixed(1) + "×"}
           </span>
           <button
             type="button"
             className="x53-globe-icon-btn"
             aria-label="Zoom in"
-            disabled={rendererFallback || zoom >= GLOBE_ZOOM_MAX - 0.01}
+            disabled={rendererFallback || (mapReady ? (regionView?.zoom ?? 0) >= 7 : zoom >= GLOBE_ZOOM_MAX - 0.01)}
             onClick={zoomStepIn}
           >
             <Plus size={15} />
@@ -520,7 +602,7 @@ export default function StrategicGlobe({
         <span className="x53-globe-hint" aria-hidden="true">
           {rendererFallback
             ? "Static natural-color Earth"
-            : "Drag · Pinch or double-tap to zoom"}
+            : mapReady ? "Drag to pan · Zoom out to return to 3D" : regional ? "Preparing regional map…" : "Drag · Pinch or double-tap to zoom"}
         </span>
 
         {/* On-demand Popover: Explore / Search */}

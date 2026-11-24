@@ -40,6 +40,7 @@ export type EconomicEventChartContext = {
 
 type Props = {
   authenticated: boolean;
+  initialEventId?: string;
   onRequireAuth?: () => void;
   onOpenEventChart?: (ctx: EconomicEventChartContext) => void;
   notify: Notice;
@@ -141,23 +142,24 @@ export default function EconomicCalendar({
   authenticated,
   onRequireAuth,
   onOpenEventChart,
+  initialEventId,
   notify,
 }: Props) {
   const [range, setRange] = useState<"today" | "week" | "upcoming" | "all">(
-    "upcoming",
+    initialEventId ? "all" : "upcoming",
   );
   const [country, setCountry] = useState<string>("ALL");
   const [timeZone, setTimeZone] = useState<string>("Asia/Kolkata");
   const [events, setEvents] = useState<EconomicEvent[]>([]);
   const [reminderIds, setReminderIds] = useState<string[]>([]);
   const [lastVerified, setLastVerified] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(initialEventId ?? null);
+  const [showAll, setShowAll] = useState(!!initialEventId);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [busyReminder, setBusyReminder] = useState<string | null>(null);
 
-  const loadCalendar = useCallback(async () => {
+  const loadCalendar = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setLoadError("");
     try {
@@ -165,11 +167,13 @@ export default function EconomicCalendar({
         range,
         country,
       });
-      const res = await api<CalendarResponse>(`/api/calendar/events?${qs}`);
+      const res = await api<CalendarResponse>(`/api/calendar/events?${qs}`, undefined, { signal });
+      if (signal?.aborted) return;
       setEvents(res.events);
       setReminderIds(res.reminderIds ?? []);
       setLastVerified(res.lastVerifiedAtUTC ?? null);
     } catch (err) {
+      if (signal?.aborted) return;
       const msg =
         err instanceof Error
           ? err.message
@@ -177,19 +181,21 @@ export default function EconomicCalendar({
       setLoadError(msg);
       notify(msg, true);
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, [range, country, notify]);
 
   useEffect(() => {
-    let alive = true;
+    const controller = new AbortController();
     queueMicrotask(() => {
-      if (alive) void loadCalendar();
+      if (!controller.signal.aborted) void loadCalendar(controller.signal);
     });
-    return () => {
-      alive = false;
-    };
+    return () => controller.abort();
   }, [loadCalendar]);
+
+  useEffect(() => {
+    if (initialEventId && !loading) document.getElementById("ss-calendar-" + initialEventId)?.scrollIntoView({ block: "nearest" });
+  }, [initialEventId, loading]);
 
   async function toggleReminder(eventId: string) {
     if (!authenticated) {
@@ -360,6 +366,7 @@ export default function EconomicCalendar({
               return (
                 <div
                   key={ev.eventId}
+                  id={"ss-calendar-" + ev.eventId}
                   className={"x53-cal-row" + (expanded ? " is-expanded" : "")}
                   role="listitem"
                 >
