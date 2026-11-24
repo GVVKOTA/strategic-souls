@@ -49,6 +49,9 @@ async function handle(request: Request) {
     const input = await body(request, 16384);
     const isScan = ["preflight-scan", "run-scan", "run-draw-scan"].includes(String(input.action));
     traceId = isScan ? crypto.randomUUID() : undefined;
+    if (isScan && (input.universePreset === "MARKET" || input.scopeIntent === "DEFAULT")) {
+      throw new HttpError(409, "Run the complete Nifty 500 universe through Soul Scan. No scan was charged.");
+    }
     const result = await mutateWorkspace(user.userId, input, traceId);
     return Response.json({ ok: true, ...result }, traceId
       ? { headers: { "X-Scan-Trace-Id": traceId, "Cache-Control": "private, no-store" } }

@@ -173,6 +173,7 @@ export default function Community({
   profileRevision = 0,
   initialTab,
   initialRoom = "",
+  initialAnchor = "",
   tabNonce = 0,
   onOpenSettings,
   onOpenProfile,
@@ -186,6 +187,7 @@ export default function Community({
   profileRevision?: number;
   initialTab?: CommunityTab;
   initialRoom?: string;
+  initialAnchor?: string;
   tabNonce?: number;
   onOpenSettings?: (section: SettingsSection) => void;
   onOpenProfile?: (handle: string) => void;
@@ -194,7 +196,7 @@ export default function Community({
     initialTab || (authenticated ? "rooms" : "explore"),
   );
   const [roomSection, setRoomSection] = useState<"research" | "discussion">(
-    "research",
+    initialRoom && initialAnchor ? "discussion" : "research",
   );
   const [topicFilter, setTopicFilter] = useState<string>("all");
   const [publicRooms, setPublicRooms] = useState<PublicRoomDirectoryItem[]>([]);
@@ -1394,6 +1396,7 @@ export default function Community({
                         <GroupNetworkPanel
                           key={`${group.id}-${profileRevision}`}
                           groupId={group.id}
+                          initialDiscussionId={group.id === initialRoom ? initialAnchor : ""}
                           notify={notify}
                           onOpenProfile={(h) => void openPublicProfile(h)}
                         />

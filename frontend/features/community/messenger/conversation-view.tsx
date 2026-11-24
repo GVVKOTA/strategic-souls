@@ -125,6 +125,7 @@ export default function ConversationView({
       resolvedMessage.current = initialMessageId;
       lastThreadIdRef.current = thread.id;
       stickBottomRef.current = false;
+      prevScrollHeightRef.current = null;
       anchor.scrollIntoView({ block: "center" });
       return;
     }

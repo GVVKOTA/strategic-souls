@@ -1591,6 +1591,19 @@ test("X2 preflight blocks all missing sources and never manufactures a zero-matc
   assert.equal(connected.data.preflight.blocked, true);
 });
 
+test("the legacy workspace endpoint cannot bill a partial Market universe as a Nifty 500 scan", async () => {
+  const subject = "x1-rc-harden";
+  seed(subject);
+  const scan = await call({
+    action: "run-scan", scanRequestVersion: 2, universe: "CONNECTED_MARKETS", universePreset: "MARKET",
+    mode: "SIMPLE", interval: "1d", formula: "close > 0", name: "Market guard fixture",
+    description: "Run only through the full-universe scanner.", requestId: key("market-guard-key"),
+  }, subject);
+  assert.equal(scan.status, 409);
+  assert.match(scan.data.error, /No scan was charged/);
+  assert.equal(sql.prepare("SELECT count(*) AS n FROM x51_scan_reservations WHERE subject=?").get(subject).n, 0);
+});
+
 test("scan persistence rolls back if completing the reservation fails", async () => {
   const subject = "x7-atomic-scan";
   seed(subject);

@@ -193,6 +193,10 @@ export default function EconomicCalendar({
     return () => controller.abort();
   }, [loadCalendar]);
 
+  useEffect(() => {
+    if (initialEventId && !loading) document.getElementById("ss-calendar-" + initialEventId)?.scrollIntoView({ block: "nearest" });
+  }, [initialEventId, loading]);
+
   async function toggleReminder(eventId: string) {
     if (!authenticated) {
       onRequireAuth?.();

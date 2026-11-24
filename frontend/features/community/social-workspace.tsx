@@ -1361,10 +1361,12 @@ type GroupNetwork = {
 
 export function GroupNetworkPanel({
   groupId,
+  initialDiscussionId,
   notify,
   onOpenProfile,
 }: {
   groupId: string;
+  initialDiscussionId?: string;
   notify: Notice;
   onOpenProfile?: (handle: string) => void;
 }) {
@@ -1390,6 +1392,11 @@ export function GroupNetworkPanel({
       });
     return () => controller.abort();
   }, [groupId]);
+
+  useEffect(() => {
+    if (initialDiscussionId && data?.group.id === groupId)
+      document.getElementById("ss-discussion-" + initialDiscussionId)?.scrollIntoView({ block: "nearest" });
+  }, [initialDiscussionId, data, groupId]);
 
   async function mutate(input: Record<string, unknown>, success: string) {
     if (lock.current) return false;
@@ -1527,7 +1534,8 @@ export function GroupNetworkPanel({
         )}
         <div className="x2-social-discussions">
           {data?.discussions.map((d) => (
-            <article key={d.id} className={d.parentId ? "is-reply" : ""}>
+            <article key={d.id} id={"ss-discussion-" + d.id}
+              className={(d.parentId ? "is-reply " : "") + (initialDiscussionId === d.id ? "x1-alert-selected" : "")}>
               <small
                 style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
               >

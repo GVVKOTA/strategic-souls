@@ -261,10 +261,19 @@ export default function ResearchNetworkShell({
     const controller = new AbortController();
     void api<{ post: PublishedSoulCard }>("/api/community/network?view=post&postId=" + encodeURIComponent(initialPost),
       undefined, { signal: controller.signal }).then(({ post }) => {
-        if (!controller.signal.aborted) { setNoticePost(post); setNoticePostError(""); }
+        if (!controller.signal.aborted) {
+          setNoticePost(post);
+          setNoticePostError("");
+          if (initialAnchor) setDiscussPost(post);
+        }
       }).catch(() => { if (!controller.signal.aborted) setNoticePostError("This Soul is unavailable."); });
     return () => controller.abort();
-  }, [initialPost, authenticated]);
+  }, [initialPost, initialAnchor, authenticated]);
+
+  useEffect(() => {
+    if (initialPost && noticePost?.id === initialPost && !initialAnchor)
+      document.getElementById("ss-linked-soul")?.scrollIntoView({ block: "center" });
+  }, [initialPost, initialAnchor, noticePost]);
 
   useEffect(() => {
     if (!initialAnchor || !discussPost || commentsLoading) return;
@@ -1367,6 +1376,7 @@ export default function ResearchNetworkShell({
           fallback={<WorkspaceSkeleton label="Loading Rooms…" kind="workspace" />}
         >
           <CommunityGroupsWorkspace
+            key={initialRoom || "rooms"}
             authenticated={authenticated}
             onRequireAuth={onRequireAuth}
             notify={notify}
@@ -1376,6 +1386,7 @@ export default function ResearchNetworkShell({
             profileRevision={profileRevision}
             initialTab="rooms"
             initialRoom={initialRoom}
+            initialAnchor={initialAnchor}
             onOpenSettings={onOpenSettings}
             onOpenProfile={openResearcherProfile}
           />
@@ -1384,7 +1395,7 @@ export default function ResearchNetworkShell({
 
       {/* Discuss / Comments Modal — all @handles open canonical PublicProfileSheet */}
       {initialPost && noticePostError && <p role="status">{noticePostError}</p>}
-      {initialPost && noticePost?.id === initialPost && !discussPost && <section className="x1-panel" aria-label="Linked Soul">
+      {initialPost && noticePost?.id === initialPost && !discussPost && <section id="ss-linked-soul" className="x1-panel" aria-label="Linked Soul">
         <h2>{noticePost.title}</h2><p>{noticePost.summary}</p>
         <button type="button" className="x1-secondary" onClick={() => setDiscussPost(noticePost)}>Open discussion</button>
       </section>}
