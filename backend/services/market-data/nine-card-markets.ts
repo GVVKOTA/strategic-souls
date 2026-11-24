@@ -70,6 +70,14 @@ const BROKER_SESSIONS: Record<
   SCHEDULE_UNKNOWN: { state: "UNKNOWN", label: "Market hours" },
 };
 
+function usablePrivateQuote(quote: NormalizedMarketQuote | null): quote is NormalizedMarketQuote {
+  return !!quote && typeof quote.id === "string" && quote.sourceMode === "PRIVATE_OWNER_FEED" &&
+    ["NSE", "BSE", "MCX"].includes(quote.exchange) && typeof quote.currency === "string" && typeof quote.unit === "string" &&
+    typeof quote.ltp === "number" && Number.isFinite(quote.ltp) && quote.ltp > 0 &&
+    Object.hasOwn(BROKER_SESSIONS, quote.marketState) && Object.hasOwn(BROKER_QUOTE_QUALITY, quote.quality) &&
+    (quote.quality !== "VERIFIED_REAL_LIVE" || !!quote.exchangeTimestampUTC && Number.isFinite(Date.parse(quote.exchangeTimestampUTC)));
+}
+
 function resolveSession(
   canonicalId: string,
   market: string,
@@ -313,7 +321,7 @@ export function buildMarketOverviewCards(
   const allPoints = [...snapshot.quotes, ...snapshot.yields];
   const pointMap = new Map(allPoints.map((p) => [p.id.toUpperCase(), p]));
   const histMap = new Map(snapshot.fxHistory.map((h) => [h.id.toUpperCase(), h]));
-  const privateQuoteMap = new Map(privateQuotes.map((quote) => [quote.id, quote]));
+  const privateQuoteMap = new Map(privateQuotes.filter(usablePrivateQuote).map((quote) => [quote.id, quote]));
 
   return reconciled.map((canonicalId) => {
     const entry = registryInstrument(canonicalId);
@@ -356,7 +364,9 @@ export function buildMarketOverviewCards(
           quality,
           marketSession: session.state,
           sessionLabel: session.label,
-          reasonCode: privateQuote.freshnessReason.replace(/broker|angel\s*one|smartapi/gi, "exchange"),
+          reasonCode: typeof privateQuote.freshnessReason === "string"
+            ? privateQuote.freshnessReason.replace(/broker|angel\s*one|smartapi/gi, "exchange")
+            : "Exchange observation received.",
           redistributable: false,
         };
       }
@@ -538,9 +548,10 @@ export async function getMarketOverviewPayload(
     const uniqueFetchIds = [...new Set(fetchIds.filter((id): id is string => id !== null))];
     if (!uniqueFetchIds.length) return emptyExchange;
 
-    const { quotes } = await gatewayQuotes({ ...access, ids: uniqueFetchIds, timeoutMs: 3_000 });
+    const response = await gatewayQuotes({ ...access, ids: uniqueFetchIds, timeoutMs: 3_000 });
+    const quotes = Array.isArray(response.quotes) ? response.quotes.filter(usablePrivateQuote) : [];
     const sparklines = new Map<string, number[]>();
-    const quotedIds = new Set(quotes.filter((quote) => quote.ltp !== null).map((quote) => quote.id));
+    const quotedIds = new Set(quotes.map((quote) => quote.id));
     const candleResults = await Promise.allSettled(
       uniqueFetchIds.filter((id) => quotedIds.has(id)).map(async (id) => {
         const { candles } = await gatewayCandles({ ...access, id, interval: "1d", days: 45, timeoutMs: 1_200 });
