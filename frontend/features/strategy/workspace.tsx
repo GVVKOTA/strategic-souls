@@ -334,14 +334,20 @@ function formatScanBarTimestamp(
   interval?: string,
 ): string {
   if (!iso) return "";
-  if (
-    interval === "30m" ||
-    interval === "1h" ||
-    (iso.includes("T") && !iso.endsWith("T00:00:00.000Z"))
-  ) {
+  if (interval === "30m" || interval === "1h") {
     return moment(iso);
   }
-  return iso.slice(0, 10);
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return iso.slice(0, 10);
+  // Daily/Weekly/Monthly bars from NSE/BSE/MCX use IST session midnight UTC (e.g. T18:30:00Z = next day IST)
+  // while date-only ECB bars end in T00:00:00.000Z. Format cleanly as a calendar date with zero 12:00 am noise.
+  const tz = iso.endsWith("T00:00:00.000Z") ? "UTC" : "Asia/Kolkata";
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: tz,
+  }).format(new Date(ms));
 }
 
 /**
@@ -2140,26 +2146,32 @@ export default function Strategy({
                                   </div>
 
                                   <div className="ss-v32-metric-cell">
-                                    <span className="ss-v32-metric-k">Vol / ATR(14)</span>
+                                    <span className="ss-v32-metric-k">
+                                      {typeof m.volRatio === "number" ? "Vol / ATR(14)" : "ATR(14) / SMA50"}
+                                    </span>
                                     <div className="ss-v32-metric-v-row">
-                                      <strong
-                                        className={
-                                          typeof m.volRatio === "number" && m.volRatio >= 1.5
-                                            ? "ss-v32-vol-surge"
-                                            : undefined
-                                        }
-                                      >
-                                        {typeof m.volRatio === "number"
-                                          ? `${m.volRatio.toFixed(2)}× vol`
-                                          : "No vol"}
-                                      </strong>
+                                      {typeof m.volRatio === "number" ? (
+                                        <strong
+                                          className={
+                                            m.volRatio >= 1.5 ? "ss-v32-vol-surge" : undefined
+                                          }
+                                        >
+                                          {`${m.volRatio.toFixed(2)}× vol`}
+                                        </strong>
+                                      ) : typeof m.atrPct === "number" ? (
+                                        <strong>{`ATR ${m.atrPct.toFixed(2)}%`}</strong>
+                                      ) : (
+                                        <strong>—</strong>
+                                      )}
                                     </div>
                                     <span className="ss-v32-metric-sub">
-                                      {typeof m.atrPct === "number"
+                                      {typeof m.volRatio === "number" && typeof m.atrPct === "number"
                                         ? `ATR ${m.atrPct.toFixed(2)}%`
                                         : typeof m.sma50 === "number"
                                           ? `SMA50 ${formatScanPrice(item.instrumentId, m.sma50)}`
-                                          : "—"}
+                                          : typeof m.atr14 === "number"
+                                            ? `ATR ${formatScanPrice(item.instrumentId, m.atr14)}`
+                                            : "—"}
                                     </span>
                                   </div>
 
@@ -2302,13 +2314,12 @@ export default function Strategy({
                                 <tr>
                                   <th>Instrument</th>
                                   <th>Status</th>
-                                  <th>Close</th>
-                                  <th>1-Bar %</th>
-                                  <th>RSI(14)</th>
-                                  <th>vs EMA20</th>
-                                  <th>Vol ×</th>
-                                  <th>20B Pos</th>
-                                  <th>Action</th>
+                                  <th className="ss-v32-num">Close</th>
+                                  <th className="ss-v32-num">1-Bar %</th>
+                                  <th className="ss-v32-num">RSI(14)</th>
+                                  <th className="ss-v32-num">vs EMA20</th>
+                                  <th className="ss-v32-num">Vol ×</th>
+                                  <th className="ss-v32-num">20B Pos</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -2339,6 +2350,7 @@ export default function Strategy({
                                         <button
                                           type="button"
                                           className="x1-text-button ss-v32-tbl-sym"
+                                          title={`Open ${sym} chart`}
                                           onClick={() => openAsset(row.instrumentId)}
                                         >
                                           <strong>{sym}</strong>
@@ -2376,15 +2388,6 @@ export default function Strategy({
                                         {typeof m?.rangePosPct === "number"
                                           ? `${m.rangePosPct.toFixed(0)}%`
                                           : "—"}
-                                      </td>
-                                      <td>
-                                        <button
-                                          type="button"
-                                          className="ss-v32-tbl-chart"
-                                          onClick={() => openAsset(row.instrumentId)}
-                                        >
-                                          Chart
-                                        </button>
                                       </td>
                                     </tr>
                                   );

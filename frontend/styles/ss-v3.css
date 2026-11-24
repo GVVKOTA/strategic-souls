@@ -2165,6 +2165,13 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
   color: var(--ss-blue);
 }
 
+.ss-v32-breadth-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
 .ss-v32-breadth-item strong {
   color: var(--ss-text-strong);
 }
@@ -2417,7 +2424,7 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
 
 .ss-v32-table th {
   text-align: left;
-  padding: 8px 10px;
+  padding: 7px 8px;
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--ss-text-muted);
@@ -2426,7 +2433,7 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
 }
 
 .ss-v32-table td {
-  padding: 8px 10px;
+  padding: 7px 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   color: var(--ss-text-body);
 }
