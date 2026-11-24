@@ -68,7 +68,7 @@ const GLOBAL_THOUGHTS = [
 export default function X1Workspace() {
   const [view, setView] = useState<View>("Global"),
     [settingsSection, setSettingsSection] = useState<SettingsSection>("profile"),
-    [communityTab, setCommunityTab] = useState<"web" | "chats" | "groups">("web"),
+    [communityTab, setCommunityTab] = useState<"web" | "chats" | "groups">("chats"),
     [communitySavedOnly, setCommunitySavedOnly] = useState(false),
     [communityTabNonce, setCommunityTabNonce] = useState(0),
     [communitySearch, setCommunitySearch] = useState(""),
@@ -88,7 +88,6 @@ export default function X1Workspace() {
     [workspace, setWorkspace] = useState<WorkspaceState | null>(null),
     [authenticated, setAuthenticated] = useState<boolean | null>(null),
     [authUser, setAuthUser] = useState<AuthSessionResponse["user"]>(null),
-    [googleEnabled, setGoogleEnabled] = useState(false),
     [accepted, setAccepted] = useState<boolean | null>(null),
     [authModal, setAuthModal] = useState<"signin" | "register" | null>(null),
     [message, setMessage] = useState<{ text: string; error: boolean } | null>(
@@ -242,7 +241,6 @@ export default function X1Workspace() {
     async (session: AuthSessionResponse, aliveCheck: () => boolean) => {
       setAuthenticated(session.authenticated);
       setAuthUser(session.user);
-      setGoogleEnabled(!!session.googleEnabled);
       setIsOwner(!!session.isOwner);
       setAccepted(session.authenticated ? session.accepted : null);
       setSessionError("");
@@ -295,7 +293,10 @@ export default function X1Workspace() {
         .replace(/^@+/, "");
       if (target === "community" || rawProf) {
         setView("Community");
+        const tab = params.get("tab")?.toLowerCase();
         if (rawProf) setInitialProfileHandle(rawProf);
+        if (rawProf || tab === "souls" || tab === "web") setCommunityTab("web");
+        else if (tab === "rooms" || tab === "groups") setCommunityTab("groups");
       }
       if (target === "settings") {
         setView("Settings");
@@ -392,6 +393,11 @@ export default function X1Workspace() {
       previousView.current = next;
     }
     setQuickMenuOpen(false);
+    if (next !== "Community") {
+      setCommunityTab("chats");
+      setCommunitySavedOnly(false);
+      setInitialProfileHandle(null);
+    }
     setView(next);
     window.history.replaceState(null, "", "/?view=" + next.toLowerCase());
     document.getElementById("x1-main")?.focus();
@@ -561,6 +567,7 @@ export default function X1Workspace() {
     }
   }
 
+  const [initialScanWatchlist, setInitialScanWatchlist] = useState("");
   const analyze = (
     formula = "close > sma(close, 20)",
     instrumentId = "",
@@ -570,7 +577,9 @@ export default function X1Workspace() {
       | "MY_WATCHLIST"
       | "ECB_DAILY"
       | "CUSTOM_CSV",
+    watchlistId?: string,
   ) => {
+    setInitialScanWatchlist(watchlistId ?? "");
     setInitialInstrument(instrumentId);
     setInitialFormula(formula);
     setInitialUniversePreset(universePreset);
@@ -1176,7 +1185,7 @@ export default function X1Workspace() {
                     "-" +
                     initialInstrument +
                     "-" +
-                    (initialUniversePreset ?? "") +
+                    (initialUniversePreset ?? "") + initialScanWatchlist +
                     "-" +
                     strategyPanel
                   }
@@ -1190,6 +1199,7 @@ export default function X1Workspace() {
                   initialFormula={initialFormula}
                   initialInstrument={initialInstrument}
                   initialUniversePreset={initialUniversePreset}
+                  initialWatchlistId={initialScanWatchlist}
                   initialPanel={strategyPanel}
                   onOpenCommunityWeb={() => {
                     setCommunityTab("web");
@@ -1271,7 +1281,7 @@ export default function X1Workspace() {
               )}
             </div>
           </Suspense>
-          {!(view === "Community" && (communityTab === "chats" || mobileChatActive)) && (
+          {!(view === "Community" && mobileChatActive) && (
             <footer className="x1-footer">
               <span>STRATEGIC SOULS / GLOBAL VERTEX VECTORS</span>
               <p>
@@ -1377,7 +1387,6 @@ export default function X1Workspace() {
         >
           <AuthPanel
             initialMode={authModal}
-            googleEnabled={googleEnabled}
             onAuthenticated={(session) => {
               setAuthModal(null);
               void hydrateForSession(session, () => true);

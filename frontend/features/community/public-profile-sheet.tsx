@@ -489,7 +489,7 @@ export default function PublicProfileSheet({
       });
       setConfirmDeleteId(null);
       await loadProfile();
-      notify("Removed from Soul Feed (private Graveyard scan kept).");
+      notify("Removed from Souls (private Graveyard scan kept).");
       onProfileMutated?.();
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not delete post.", true);

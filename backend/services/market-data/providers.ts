@@ -131,9 +131,9 @@ export function validateConfig(value: unknown): ProviderConfig {
   if (
     !Array.isArray(v.instruments) ||
     v.instruments.length < 1 ||
-    v.instruments.length > 50
+    v.instruments.length > 800
   )
-    throw new Error("Map 1–50 exact licensed instruments.");
+    throw new Error("Map 1–800 exact licensed instruments.");
   const instruments = v.instruments.map((i) => validateInstrument(i, p));
   if (new Set(instruments.map((i) => i.id)).size !== instruments.length)
     throw new Error("Duplicate instrument mapping.");

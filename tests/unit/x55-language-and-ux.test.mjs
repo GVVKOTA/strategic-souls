@@ -60,7 +60,7 @@ test("X5.5 P2: canonical brand vocabulary applied and internal jargon removed fr
     "frontend/features/community/research-network-shell.tsx",
     "utf8",
   );
-  assert.match(commShell, />Soul Feed</);
+  assert.match(commShell, />Souls</);
   assert.match(commShell, />Chats</);
   assert.match(commShell, />Rooms</);
   assert.match(commShell, />Soul Network</);

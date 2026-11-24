@@ -114,6 +114,7 @@ type Props = {
       | "MY_WATCHLIST"
       | "ECB_DAILY"
       | "CUSTOM_CSV",
+    watchlistId?: string,
   ) => void;
   openAsset: (id: string) => void;
   openEventChart?: (ctx: EconomicEventChartContext) => void;
@@ -960,6 +961,10 @@ export default function Global({
                     {activeList.payload.items?.length || 0} saved instruments
                   </p>
                   <div className="x1-actions">
+                    <button type="button" className="x1-secondary" disabled={!activeList.payload.items?.length}
+                      onClick={() => analyze(undefined, undefined, "MY_WATCHLIST", activeList.id)}>
+                      Scan this watchlist
+                    </button>
                     <button
                       className="x1-text-button"
                       onClick={() => setEdit("rename")}

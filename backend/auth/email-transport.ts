@@ -44,8 +44,8 @@ export function isSecurityEmailConfigured(): boolean {
   if (testTransportOverride) return true;
   const e = runtimeEnv();
   return Boolean(
-    (e.RESEND_API_KEY?.trim() && (e.SS_EMAIL_FROM?.trim() || "no-reply@strategicsouls.app")) ||
-      e.SS_EMAIL_WEBHOOK_URL?.trim(),
+    (e.RESEND_API_KEY?.trim() && e.SS_EMAIL_FROM?.trim()) ||
+      (e.SS_EMAIL_WEBHOOK_URL?.trim() && /^https:\/\//i.test(e.SS_EMAIL_WEBHOOK_URL.trim())),
   );
 }
 
@@ -62,9 +62,8 @@ export async function sendSecurityEmail(
   }
   const e = runtimeEnv();
   const resendKey = e.RESEND_API_KEY?.trim();
-  if (resendKey) {
-    const from =
-      e.SS_EMAIL_FROM?.trim() || "Strategic Souls <no-reply@strategicsouls.app>";
+  const from = e.SS_EMAIL_FROM?.trim();
+  if (resendKey && from) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     try {

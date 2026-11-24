@@ -149,12 +149,13 @@ const scanView = async (
   };
 };
 // Review state is current metadata, not a mutation of the creation-time scan snapshot.
+const SCAN_TITLE = "COALESCE((SELECT r.name FROM x1_records r WHERE r.id='scan-title:'||s.id AND r.subject=s.subject AND r.kind='scan-title'),s.name) AS name";
 const SCAN_REVIEW_STATE =
   "(SELECT e.kind FROM x1_scan_events e WHERE e.subject=s.subject AND e.scan_id=s.id ORDER BY e.created_at DESC,e.rowid DESC LIMIT 1) AS review_state";
 async function ownedScanSnapshot(subject: string, scanId: unknown) {
   const scan = await database()
     .prepare(
-      `SELECT s.id,s.name,s.mode,s.payload,s.digest,s.created_at,${SCAN_REVIEW_STATE} FROM x1_scans s WHERE s.subject=? AND s.id=?`,
+      `SELECT s.id,${SCAN_TITLE},s.mode,s.payload,s.digest,s.created_at,${SCAN_REVIEW_STATE} FROM x1_scans s WHERE s.subject=? AND s.id=?`,
     )
     .bind(subject, text(scanId))
     .first<RawScan>();
@@ -189,7 +190,7 @@ export async function workspaceState(
       .all<RawRecord>(),
     db
       .prepare(
-        "SELECT * FROM x1_records WHERE subject=? AND archived=1 ORDER BY updated_at DESC,id DESC LIMIT ?",
+        "SELECT * FROM x1_records WHERE subject=? AND archived=1 AND kind<>'scan-title' ORDER BY updated_at DESC,id DESC LIMIT ?",
       )
       .bind(subject, archivedLimit + 1)
       .all<RawRecord>(),
@@ -206,7 +207,7 @@ export async function workspaceState(
       }>(),
     db
       .prepare(
-        `SELECT s.id,s.name,s.mode,${includeSnapshots ? "s.payload" : "json_remove(s.payload,'$.datasets') AS payload"},s.digest,s.created_at,${SCAN_REVIEW_STATE} FROM x1_scans s WHERE s.subject=? ${cursor ? "AND (s.created_at<? OR (s.created_at=? AND s.id<?))" : ""} ORDER BY s.created_at DESC,s.id DESC LIMIT 101`,
+        `SELECT s.id,${SCAN_TITLE},s.mode,${includeSnapshots ? "s.payload" : "json_remove(s.payload,'$.datasets') AS payload"},s.digest,s.created_at,${SCAN_REVIEW_STATE} FROM x1_scans s WHERE s.subject=? ${cursor ? "AND (s.created_at<? OR (s.created_at=? AND s.id<?))" : ""} ORDER BY s.created_at DESC,s.id DESC LIMIT 101`,
       )
       .bind(
         ...(cursor
@@ -576,6 +577,28 @@ export async function mutateWorkspace(
     }
   }
   await rate(subject + ":x1write", 120, 60000);
+  if (action === "rename-scan") {
+    const id = text(input.scanId);
+    const name = text(input.name, 100);
+    const key = retryKey(input.requestId);
+    const updated = await db.prepare(
+      `INSERT INTO x1_records (id,subject,kind,name,payload,archived,last_write,created_at,updated_at)
+       SELECT ?,?,'scan-title',?,'{}',1,?,?,? WHERE EXISTS
+         (SELECT 1 FROM x1_scans WHERE id=? AND subject=?)
+       ON CONFLICT(id) DO UPDATE SET name=excluded.name,last_write=excluded.last_write,updated_at=excluded.updated_at
+       WHERE x1_records.subject=excluded.subject AND x1_records.kind='scan-title'`,
+    ).bind("scan-title:" + id, subject, name, key, now, now, id, subject).run();
+    if (!updated.meta.changes) throw new HttpError(404, "Scan not found.");
+    return { id, name };
+  }
+  if (action === "delete-scan") {
+    const id = text(input.scanId);
+    await db.batch([
+      db.prepare("DELETE FROM x1_records WHERE id=? AND subject=? AND kind='scan-title'").bind("scan-title:" + id, subject),
+      db.prepare("DELETE FROM x1_scans WHERE id=? AND subject=?").bind(id, subject),
+    ]);
+    return { deleted: true };
+  }
   if (action === "pin-formula" || action === "unpin-formula") {
     const formulaId = typeof input.formulaId === "string" ? input.formulaId.trim() : "";
     if (!VALID_CLASSIC_FORMULA_IDS.has(formulaId)) {
@@ -1173,6 +1196,7 @@ export async function mutateWorkspace(
         research: definition,
         description,
         drawReport,
+        patternRecipe: { points: strokePoints, windowBars, minPatternFit },
         soulGenome,
         requestDigest: signature,
         rule: { version: "x1-rule-1", formula: results.formula },

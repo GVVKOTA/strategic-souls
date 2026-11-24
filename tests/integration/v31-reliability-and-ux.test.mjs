@@ -99,8 +99,7 @@ const {
   thirtyMinBarCloseMs,
 } = await loadTs("backend/services/market-data/angelone/scan-history.ts");
 const {
-  CLASSIC_DAILY_LIMIT,
-  ADVANCED_ROLLING_LIMIT,
+  SCAN_DAILY_LIMIT,
   getScanQuotaSummary,
   persistReservedScan,
   reserveScanSlot,
@@ -240,9 +239,8 @@ test("V3.1 R05: MCX partial-holiday schedule and NYMEX Globex CL schedule are ti
 
 // ── 2. R09 & R19: Atomic 20/day Classic quota, concurrency & parity ──────────
 
-test("V3.1 R09/R19: Classic quota enforces exact 20/day limit, blocks concurrent 20th-slot race, enforces owner/member parity, and recovers expired leases", async () => {
-  assert.equal(CLASSIC_DAILY_LIMIT, 20);
-  assert.equal(ADVANCED_ROLLING_LIMIT, 1);
+test("V3.1 R09/R19: Shared quota enforces exact 20/day limit, blocks concurrent 20th-slot race, enforces owner/member parity, and recovers expired leases", async () => {
+  assert.equal(SCAN_DAILY_LIMIT, 20);
 
   const db = createTestQuotaDb();
   const baseMs = Date.parse("2026-11-23T06:00:00.000Z"); // 11:30 IST
@@ -250,7 +248,7 @@ test("V3.1 R09/R19: Classic quota enforces exact 20/day limit, blocks concurrent
   // Complete 19 distinct scans for ordinary member
   for (let i = 1; i <= 19; i++) {
     const reqKey = `member_scan_${i}_${randomUUID().slice(0, 8)}`;
-    const res = await reserveScanSlot(db, "member-1", "CLASSIC", reqKey, baseMs + i * 1000);
+    const res = await reserveScanSlot(db, "member-1", i % 2 ? "CLASSIC" : "ADVANCED", reqKey, baseMs + i * 1000);
     await persistReservedScan(db, {
       reservationId: res.id,
       subject: "member-1",
@@ -271,7 +269,7 @@ test("V3.1 R09/R19: Classic quota enforces exact 20/day limit, blocks concurrent
   // Two simultaneous requests racing for final 20th slot: strictly ONE succeeds, ONE rejected 429
   const raceOutcomes = await Promise.allSettled([
     reserveScanSlot(db, "member-1", "CLASSIC", "race_req_alpha_12345", baseMs + 30_000),
-    reserveScanSlot(db, "member-1", "CLASSIC", "race_req_beta_67890", baseMs + 30_000),
+    reserveScanSlot(db, "member-1", "ADVANCED", "race_req_beta_67890", baseMs + 30_000),
   ]);
   const fulfilled = raceOutcomes.filter((r) => r.status === "fulfilled");
   const rejected = raceOutcomes.filter((r) => r.status === "rejected");
@@ -573,8 +571,8 @@ test("V3.1 R17/R18: Pattern Scan rejects flat/invalid shapes, ignores future bar
 // ── 6. R01, R05, R07, R08, R10, R17, R23: V3.1 UI & Security Contracts ──────
 
 test("V3.1 UI & Release Contracts: zero 'Last available', clean chart-first Asset Research, editable Classic 20/day, simplified Pattern Scan, teal tokens, clean release meta", () => {
-  assert.equal(APP_RELEASE.releaseTrack, "V3.1");
-  assert.equal(APP_RELEASE.revisionMarker, "x8-v3.1-reliability-2026-11-24");
+  assert.equal(APP_RELEASE.releaseTrack, "X7.8");
+  assert.equal(APP_RELEASE.revisionMarker, "x7.8-market-research-2026-11-24");
 
   const gridSrc = readFileSync("frontend/features/global/market-grid.tsx", "utf8");
   assert.doesNotMatch(gridSrc, /Last available/i, "Repetitive 'Last available' badge must be removed");

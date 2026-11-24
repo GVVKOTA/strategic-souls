@@ -1,4 +1,5 @@
 "use client";
+import { cancelMarketScan, waitForMarketScan, type MarketScanProgress } from "./market-scan-client";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
@@ -12,6 +13,7 @@ import {
   Info,
   Layers,
   LineChart,
+  MoreHorizontal,
   PenTool,
   Plus,
   RefreshCw,
@@ -49,6 +51,7 @@ import {
   type RuleTree,
   type ScanUniversePreset,
 } from "../../../backend/services/research/research";
+import type { DrawPoint } from "../../../backend/engines/pattern-draw";
 import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import { TradingViewWidget } from "../../components/tradingview-widget";
 import {
@@ -85,6 +88,7 @@ type Props = {
   onOpenWatchlist?: () => void;
   initialFormula: string;
   initialInstrument?: string;
+  initialWatchlistId?: string;
   initialUniversePreset?: ScanUniversePreset;
   initialPanel?: string;
 };
@@ -125,13 +129,6 @@ const TIMEFRAME_LABEL: Record<string, string> = {
   "1wk": "Weekly",
   "1mo": "Monthly",
 };
-
-const EXTRA_SCOPES: readonly { id: ScanUniversePreset; label: string }[] = [
-  { id: "INDIAN_EQUITIES", label: "NSE / BSE" },
-  { id: "MCX_FUTURES", label: "MCX Futures" },
-  { id: "ECB_DAILY", label: "ECB FX (Daily)" },
-  { id: "CUSTOM_CSV", label: "Private CSV" },
-];
 
 const DEFAULT_OUTCOME: OutcomeDefinition = {
   family: "POSITIVE_RETURN",
@@ -431,6 +428,7 @@ export default function Strategy({
   initialFormula,
   initialInstrument,
   initialUniversePreset,
+  initialWatchlistId,
   initialPanel,
 }: Props) {
   const [section, setSection] = useState<StrategyTab>(
@@ -448,6 +446,11 @@ export default function Strategy({
   const [formulaCategory, setFormulaCategory] = useState<"ALL" | ClassicPresetCategory>("ALL");
   const [expandedFormulaId, setExpandedFormulaId] = useState<string | null>(null);
   const [activeInfoOpen, setActiveInfoOpen] = useState(false);
+  const [scanDialog, setScanDialog] = useState<{ scan: ScanRun; action: "rename" | "delete" } | null>(null);
+  const [scanActionBusy, setScanActionBusy] = useState(false);
+  const [nextName, setNextName] = useState("");
+  const [loadedRecipe, setLoadedRecipe] = useState<{ key: string; points: DrawPoint[]; windowBars: number; minPatternFit: number } | null>(null);
+
   const [guideOpen, setGuideOpen] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
 
@@ -477,12 +480,7 @@ export default function Strategy({
       ? "ECB_DAILY"
       : initialUniversePreset ?? "MARKET",
   );
-  const [moreScopesOpen, setMoreScopesOpen] = useState(
-    !!initialUniversePreset &&
-      initialUniversePreset !== "MARKET" &&
-      initialUniversePreset !== "MY_WATCHLIST",
-  );
-  const [watchlistId, setWatchlistId] = useState<string>("");
+  const [watchlistId, setWatchlistId] = useState<string>(initialWatchlistId ?? "");
   const [customCsv, setCustomCsv] = useState<string>("");
 
   // Timeframe (30m, 1h, Daily, Weekly, Monthly; default Daily)
@@ -491,6 +489,26 @@ export default function Strategy({
   // Explicit scan execution lifecycle & cancellation
   const [scanPhase, setScanPhase] = useState<ScanPhase>("IDLE");
   const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState<MarketScanProgress | null>(null);
+  const [activeJobs, setActiveJobs] = useState<(MarketScanProgress & { name: string })[]>([]);
+  useEffect(() => {
+    if (!authenticated) return;
+    let previouslyActive = new Set<string | undefined>();
+    const controller = new AbortController();
+    const refresh = () => void api<{ jobs: (MarketScanProgress & { name: string })[] }>(
+      "/api/strategy/scan", undefined, { signal: controller.signal },
+    ).then((value) => {
+      if (controller.signal.aborted) return;
+      setActiveJobs(value.jobs);
+      const next = new Set(value.jobs.map((item) => item.jobId));
+      const changed = [...previouslyActive].some((id) => !next.has(id));
+      previouslyActive = next;
+      if (changed) void reload();
+    }).catch(() => {});
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [authenticated, reload]);
   const [scanError, setScanError] = useState("");
   const [selectedScanId, setSelectedScanId] = useState<string | null>(null);
   const [justCompletedId, setJustCompletedId] = useState<string | null>(null);
@@ -563,7 +581,6 @@ export default function Strategy({
       setScopedInstrument(clean);
       if (clean.startsWith("ECB:")) {
         setScanSource("ECB_DAILY");
-        setMoreScopesOpen(true);
         setInterval((cur) => (cur === "30m" || cur === "1h" ? "1d" : cur));
       } else {
         setScanSource("MARKET");
@@ -707,6 +724,14 @@ export default function Strategy({
   }
 
   function applyClassicPreset(preset: ClassicPreset) {
+    if (scanTier === "ADVANCED") {
+      setAdvancedFormula(preset.formula);
+      setTree(treeFromFormula(preset.formula) ?? DEFAULT_ADVANCED_TREE);
+      setAdvancedEntry("BUILD");
+      setScanError("");
+      if (!nameEditedManually) setName(defaultSoulNameForPreset(preset));
+      return;
+    }
     setClassicPresetId(preset.id);
     setClassicFormula(preset.formula);
     setScanError("");
@@ -844,12 +869,18 @@ export default function Strategy({
     }
   }
 
-  function handleCancelScan() {
-    if (!busy) return;
-    invalidatePendingRun();
-    setScanError(
-      "Stopped waiting in this tab. If the server had already finished saving the scan, it will appear in GRAVEYARD after refresh.",
-    );
+  async function handleCancelScan() {
+    if (!job?.jobId) return;
+    try {
+      const result = await cancelMarketScan(job.jobId);
+      if (result.state !== "CANCELLED") return;
+      invalidatePendingRun();
+      setJob(null);
+      await reload();
+      notify("Scan cancelled.");
+    } catch (error) {
+      notify((error as Error).message, true);
+    }
   }
 
   async function executeScan() {
@@ -932,13 +963,10 @@ export default function Strategy({
     scanAbortRef.current = ctrl;
 
     try {
-      const res = await api<{
-        id: string;
-        results?: { matches?: number };
-      }>(
-        "/api/strategy/scan",
+      const initial = await api<MarketScanProgress & { results?: { matches?: number } }>(
+        scopedInstrument || (scanSource !== "MARKET" && scanSource !== "MY_WATCHLIST") ? "/api/x1/workspace" : "/api/strategy/scan",
         {
-          action: "run-scan",
+          action: scanSource === "MY_WATCHLIST" ? "run-watchlist-scan" : "run-scan",
           scanRequestVersion: SCAN_REQUEST_VERSION,
           scanTier,
           origin: scanTier === "CLASSIC" ? "CLASSIC" : advancedEntry,
@@ -948,16 +976,17 @@ export default function Strategy({
         },
         { signal: ctrl.signal, timeoutMs: 65_000 },
       );
-      if (seq !== runSeqRef.current) return;
+      const res = await waitForMarketScan(initial, ctrl.signal, setJob);
+      if (seq !== runSeqRef.current || !res.id) return;
       await reload();
       if (seq !== runSeqRef.current) return;
       setSelectedScanId(res.id);
       setUniverseTableOpen(null);
       setJustCompletedId(res.id);
       setScanPhase(
-        (res.results?.matches ?? 0) > 0 ? "COMPLETE" : "NO_MATCHES",
+        res.state || (res.results?.matches ?? 0) > 0 ? "COMPLETE" : "NO_MATCHES",
       );
-      notify("Scan completed and archived to GRAVEYARD.");
+      notify(res.state === "PARTIAL" ? "Some market data was unavailable. Partial results were saved." : "Scan complete.");
     } catch (err) {
       if (seq !== runSeqRef.current) return;
       const msg =
@@ -975,8 +1004,99 @@ export default function Strategy({
       if (seq === runSeqRef.current) {
         lock.current = false;
         setBusy(false);
+        setJob(null);
         setRunningContext(null);
       }
+    }
+  }
+
+  function restoreDefinition(definition: ResearchDefinition, title: string, origin?: string) {
+    setSection("scan");
+    setName(title);
+    setNameEditedManually(true);
+    setInterval(definition.interval);
+    setScanSource(definition.universePreset ?? (definition.universe === "ECB_DAILY" ? "ECB_DAILY" : "MARKET"));
+    setWatchlistId(definition.watchlistId ?? "");
+    setScopedInstrument(definition.instrumentIds.length === 1 ? definition.instrumentIds[0] : "");
+    setScanTier(definition.mode === "SIMPLE" ? "CLASSIC" : "ADVANCED");
+    setAdvancedEntry(origin === "DRAW" ? "DRAW" : origin === "DISCOVER" ? "DISCOVER" : "BUILD");
+    if (definition.mode === "SIMPLE") {
+      setClassicFormula(definition.formula);
+      const preset = findClassicPresetByFormula(definition.formula);
+      if (preset) setClassicPresetId(preset.id);
+    } else {
+      setAdvancedFormula(definition.formula);
+      const parsed = treeFromFormula(definition.formula);
+      if (parsed) setTree(parsed);
+    }
+  }
+
+  async function reuseScan(scan: ScanRun, action: "edit" | "duplicate" | "rerun") {
+    if (busy || scanActionBusy) return;
+    setScanActionBusy(true);
+    try {
+      const record = await api<ScanRun>("/api/x1/workspace?scanId=" + encodeURIComponent(scan.id));
+      const recipe = record.payload.research;
+      const shape = record.payload.patternRecipe;
+      if (!recipe || (record.payload.origin === "DRAW" && !shape))
+        throw new Error("This older scan did not retain an editable recipe.");
+      const title = action === "duplicate" ? (scan.name.slice(0, 95) + " copy") : scan.name;
+      if (action === "rerun") {
+        const customScope = !!recipe.instrumentIds.length || recipe.universePreset !== "MARKET";
+        if (recipe.universePreset === "CUSTOM_CSV")
+          throw new Error("Edit this scan and upload its source CSV again to rerun it.");
+        const initial = await api<MarketScanProgress>(customScope ? "/api/x1/workspace" : "/api/strategy/scan", {
+          ...recipe, name: title, origin: record.payload.origin,
+          action: shape ? "run-draw-scan" : "run-scan", scanRequestVersion: SCAN_REQUEST_VERSION,
+          requestId: crypto.randomUUID(),
+          ...(shape && { strokePoints: shape.points, windowBars: shape.windowBars, minPatternFit: shape.minPatternFit }),
+        });
+        await reload();
+        if (initial.jobId) {
+          setActiveJobs((items) => [...items, { ...initial, name: title }]);
+          notify("Scan queued.");
+        } else if (initial.id) {
+          setSelectedScanId(initial.id);
+          notify("Scan complete.");
+        }
+        return;
+      }
+      if (action === "duplicate") {
+        await api("/api/x1/workspace", shape ? {
+          action: "save-pattern", requestId: crypto.randomUUID(), name: title,
+          points: shape.points, windowBars: shape.windowBars, minPatternFit: shape.minPatternFit,
+        } : {
+          action: "save-scan-draft", requestId: crypto.randomUUID(), definition: { ...recipe, name: title },
+        });
+        await reload();
+        notify("Private copy saved.");
+      }
+      restoreDefinition(recipe, title, record.payload.origin);
+      setLoadedRecipe(shape ? { ...shape, key: crypto.randomUUID() } : null);
+      window.scrollTo({ top: 0, behavior: "instant" });
+    } catch (error) {
+      notify((error as Error).message, true);
+    } finally {
+      setScanActionBusy(false);
+    }
+  }
+
+  async function confirmScanAction() {
+    if (!scanDialog || scanActionBusy) return;
+    setScanActionBusy(true);
+    try {
+      await api("/api/x1/workspace", {
+        action: scanDialog.action + "-scan", scanId: scanDialog.scan.id,
+        requestId: crypto.randomUUID(), ...(scanDialog.action === "rename" && { name: nextName }),
+      });
+      if (scanDialog.action === "delete" && selectedScanId === scanDialog.scan.id)
+        setSelectedScanId(null);
+      setScanDialog(null);
+      await reload();
+    } catch (error) {
+      notify((error as Error).message, true);
+    } finally {
+      setScanActionBusy(false);
     }
   }
 
@@ -1078,32 +1198,7 @@ export default function Strategy({
 
   const scopeAndTimeframeControls = (
     <>
-      {/* Scan Source: Market default + Watchlist + expandable scopes */}
-      <div className="x54-field-group">
-        <div className="x54-field-label">
-          <span>Scan Source</span>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <span className="x1-caption">
-              {scopedInstrument
-                ? scopedInstrument
-                : scanSource === "MARKET"
-                  ? "NSE · BSE · MCX"
-                  : scanSource === "MY_WATCHLIST"
-                    ? `${watchlistItems.length} symbol${watchlistItems.length === 1 ? "" : "s"}`
-                    : SCAN_UNIVERSE_LABEL[scanSource]}
-            </span>
-            <button
-              type="button"
-              className="x1-text-button"
-              style={{ padding: "2px 4px", fontSize: "0.78rem" }}
-              aria-expanded={moreScopesOpen}
-              onClick={() => setMoreScopesOpen((v) => !v)}
-            >
-              {moreScopesOpen ? "Fewer scopes" : "More scopes"}
-            </button>
-          </div>
-        </div>
-
+      {(scopedInstrument || scanSource !== "MARKET") && <div className="x54-field-group">
         {scopedInstrument && (
           <div className="ss-v31-scope-chip" role="status">
             <span>Scoped to <strong>{scopedInstrument}</strong></span>
@@ -1118,56 +1213,6 @@ export default function Strategy({
             >
               Scan all
             </button>
-          </div>
-        )}
-
-        <div
-          className="ss-v3-source-grid"
-          role="group"
-          aria-label="Primary scan source"
-        >
-          <button
-            type="button"
-            aria-pressed={scanSource === "MY_WATCHLIST"}
-            className={
-              "ss-v3-seg-btn" +
-              (scanSource === "MY_WATCHLIST" ? " is-active" : "")
-            }
-            onClick={() => handleScopeChange("MY_WATCHLIST")}
-          >
-            Watchlist
-          </button>
-          <button
-            type="button"
-            aria-pressed={scanSource === "MARKET"}
-            className={
-              "ss-v3-seg-btn" + (scanSource === "MARKET" ? " is-active" : "")
-            }
-            onClick={() => handleScopeChange("MARKET")}
-          >
-            Market
-          </button>
-        </div>
-
-        {moreScopesOpen && (
-          <div
-            className="ss-v31-extra-scopes"
-            role="group"
-            aria-label="Additional scan scopes"
-          >
-            {EXTRA_SCOPES.map((sc) => (
-              <button
-                key={sc.id}
-                type="button"
-                aria-pressed={scanSource === sc.id}
-                className={
-                  "ss-v31-scope-pill" + (scanSource === sc.id ? " is-active" : "")
-                }
-                onClick={() => handleScopeChange(sc.id)}
-              >
-                {sc.label}
-              </button>
-            ))}
           </div>
         )}
 
@@ -1235,7 +1280,7 @@ export default function Strategy({
             />
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Timeframe: 30m, 1 Hour, Daily, Weekly, Monthly */}
       <div className="x54-field-group">
@@ -1335,9 +1380,7 @@ export default function Strategy({
                     Soul Scan
                   </h2>
                   <p className="ss-v31-quota-inline" aria-live="polite">
-                    {scanTier === "CLASSIC"
-                      ? `${classicRemaining} of ${classicLimit} scans left today`
-                      : `Advanced: ${quota?.advanced.remaining ?? 1}/${quota?.advanced.limit ?? 1} available this hour`}
+                    {classicRemaining} of {classicLimit} scans left today
                   </p>
                 </div>
               </div>
@@ -1619,7 +1662,7 @@ export default function Strategy({
                     onClick={() => setAdvancedEntry("DRAW")}
                   >
                     <PenTool size={15} aria-hidden="true" />
-                    <span>Pattern</span>
+                    <span>Draw</span>
                   </button>
                 </div>
 
@@ -1681,6 +1724,8 @@ export default function Strategy({
                       }
                     >
                       <PatternDrawCanvas
+                        key={loadedRecipe?.key ?? "new-drawing"}
+                        initialRecipe={loadedRecipe ?? undefined}
                         authenticated={authenticated}
                         onRequireAuth={onRequireAuth}
                         scanName={name}
@@ -1700,7 +1745,7 @@ export default function Strategy({
                           setSelectedScanId(res.id);
                           setJustCompletedId(res.id);
                           setScanPhase(
-                            (res.drawReport?.matches?.length ?? 0) > 0
+                            res.state || (res.drawReport?.matches?.length ?? 0) > 0
                               ? "COMPLETE"
                               : "NO_MATCHES",
                           );
@@ -1712,6 +1757,14 @@ export default function Strategy({
                   </>
                 ) : (
                   <>
+                    <div className="x1-actions">
+                      <button type="button" className="x1-secondary" onClick={() => setFormulaPickerOpen(true)}>
+                        Browse formulas
+                      </button>
+                      <button type="button" className="x1-secondary" onClick={() => {
+                        setTree(DEFAULT_ADVANCED_TREE); setAdvancedFormula(DEFAULT_ADVANCED_FORMULA); setScanError("");
+                      }}>Reset rules</button>
+                    </div>
                     <RuleEditor
                       tree={tree}
                       onChange={(nextTree) => {
@@ -1754,6 +1807,18 @@ export default function Strategy({
 
             {/* 5 & 6. Scope & Timeframe (placed here for Classic, Build & Discover) */}
             {!isDrawMode && scopeAndTimeframeControls}
+            {busy && job?.jobId && <progress aria-label="Scan progress" value={job.progress ?? 0} max={100} />}
+            {!busy && activeJobs.map((item) => <div className="x1-actions" key={item.jobId}>
+              <span>{item.name}</span>
+              <progress aria-label="Scan progress" value={item.progress ?? 0} max={100} />
+              <button type="button" className="x1-secondary" onClick={() => {
+                if (!item.jobId) return;
+                void cancelMarketScan(item.jobId).then(() => {
+                  setActiveJobs((items) => items.filter((value) => value.jobId !== item.jobId));
+                  return reload();
+                }).catch((error: Error) => notify(error.message, true));
+              }}>Cancel</button>
+            </div>)}
 
             {scanError && (
               <div className="x1-callout" role="alert" style={{ margin: 0 }}>
@@ -1792,11 +1857,11 @@ export default function Strategy({
                   <span>{busy ? "Scanning completed bars…" : "Run Scan"}</span>
                   {!busy && <ArrowRight size={17} aria-hidden="true" />}
                 </button>
-                {busy && (
+                {busy && job?.jobId && (
                   <button
                     type="button"
                     className="x1-secondary ss-v31-cancel-btn"
-                    onClick={handleCancelScan}
+                    onClick={() => void handleCancelScan()}
                   >
                     <X size={15} aria-hidden="true" />
                     <span>Cancel</span>
@@ -1866,6 +1931,8 @@ export default function Strategy({
                 const sortedEvaluated = sortScanRows(evaluatedRows, resultSort);
                 const nonMatchCount = res?.failed ?? 0;
                 const unknownCount = res?.unknown ?? 0;
+                const marketRun = (activeScan.payload as { runState?: string }).runState;
+                const partialMarket = marketRun === "PARTIAL";
                 const accounting = (
                   activeScan.payload as {
                     preflight?: {
@@ -1923,10 +1990,11 @@ export default function Strategy({
 
                 return (
                   <>
+                    {partialMarket && <p className="x1-callout" role="status">Some market data was unavailable. Results are partial.</p>}
                     <div className="ss-v32-results-headline">
                       <div className="ss-v3-results-count">
                         {sortedMatched.length === 0
-                          ? "0 instruments matched"
+                          ? partialMarket ? "No matches in available data" : "0 instruments matched"
                           : `${sortedMatched.length} instrument${sortedMatched.length === 1 ? "" : "s"} matched`}
                       </div>
                       {allRows.length > 0 && (
@@ -2400,8 +2468,7 @@ export default function Strategy({
               })()
             ) : (
               <Empty title="Ready for your first scan">
-                Classic mode with Market and Daily is pre-configured — tap Run
-                Scan above whenever you are ready.
+                Choose a rule or draw a pattern, then run a scan.
               </Empty>
             )}
           </section>
@@ -2425,6 +2492,13 @@ export default function Strategy({
               </span>
             </div>
 
+            {!!workspace?.researchDrafts?.length && <details>
+              <summary>Saved rule drafts</summary>
+              <div className="x1-actions">{workspace.researchDrafts.map((draft) => <button key={draft.id}
+                type="button" className="x1-secondary" onClick={() => restoreDefinition(draft.payload.definition, draft.name)}>
+                {draft.name}
+              </button>)}</div>
+            </details>}
             <div className="x51-chip-row" role="group" aria-label="Filter GRAVEYARD">
               {(["ALL", "CLASSIC", "ADVANCED", "RETIRED"] as const).map((f) => (
                 <button
@@ -2514,6 +2588,16 @@ export default function Strategy({
                       </button>
 
                       <div className="ss-v3-graveyard-actions">
+                        <details className="x78-scan-actions">
+                          <summary aria-label={"Actions for " + s.name}><MoreHorizontal size={18} aria-hidden="true" /></summary>
+                          <div className="x1-form">
+                            <button type="button" className="x1-secondary" disabled={scanActionBusy} onClick={() => void reuseScan(s, "rerun")}>Run again</button>
+                            <button type="button" className="x1-secondary" disabled={scanActionBusy} onClick={() => void reuseScan(s, "edit")}>Edit</button>
+                            <button type="button" className="x1-secondary" onClick={() => { setNextName(s.name); setScanDialog({ scan: s, action: "rename" }); }}>Rename</button>
+                            <button type="button" className="x1-secondary" disabled={scanActionBusy} onClick={() => void reuseScan(s, "duplicate")}>Duplicate</button>
+                            <button type="button" className="x1-secondary" onClick={() => setScanDialog({ scan: s, action: "delete" })}>Delete</button>
+                          </div>
+                        </details>
                         <button
                           type="button"
                           className="x51-accent-btn"
@@ -2551,10 +2635,25 @@ export default function Strategy({
         </>
       )}
 
+      {scanDialog && <Modal title={scanDialog.action === "delete" ? "Delete scan" : "Rename scan"}
+        onClose={() => { if (!scanActionBusy) setScanDialog(null); }}>
+        <form className="x1-form" onSubmit={(event) => { event.preventDefault(); void confirmScanAction(); }}>
+          {scanDialog.action === "delete"
+            ? <p>Delete {scanDialog.scan.name} and its private results? Published Souls are managed in Community.</p>
+            : <label>Scan name<input autoFocus maxLength={100} required value={nextName} onChange={(event) => setNextName(event.target.value)} /></label>}
+          <div className="x1-actions">
+            <button type="button" className="x1-secondary" disabled={scanActionBusy} onClick={() => setScanDialog(null)}>Cancel</button>
+            <button type="submit" className="x1-primary" disabled={scanActionBusy}>
+              {scanDialog.action === "delete" ? "Delete" : "Save name"}
+            </button>
+          </div>
+        </form>
+      </Modal>}
+
       {/* 50-Formula Picker Modal with Pinned Section First */}
       {formulaPickerOpen && (
         <Modal
-          title="Browse all 50 Classic Formulas"
+          title="Browse scan formulas"
           onClose={() => setFormulaPickerOpen(false)}
         >
           <div className="x56-formula-modal-shell">
@@ -2781,9 +2880,7 @@ export default function Strategy({
           <div className="x54-quota-popover" style={{ marginBottom: 14 }}>
             <strong>Daily scan allowance</strong>
             <div style={{ marginTop: 4 }}>
-              Classic: {classicRemaining}/{classicLimit} scans remaining today
-              (resets 00:00 IST) · Advanced: {quota?.advanced.remaining ?? 1}/
-              {quota?.advanced.limit ?? 1} available per rolling 60 minutes.
+              {classicRemaining}/{classicLimit} scans remaining across all modes. Resets at midnight IST.
             </div>
             <div className="x1-caption" style={{ marginTop: 4 }}>
               Failed, invalid, or unentitled scans release their reservation and

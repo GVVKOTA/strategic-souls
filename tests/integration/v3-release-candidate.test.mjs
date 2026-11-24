@@ -355,8 +355,8 @@ async function registerUser(email, password, displayName, ua = "Mozilla/5.0 (Win
 // 1. V3 S01–S09: Ordinary Users, Unified Market + Watchlist, Genuine 1h Candles
 // ---------------------------------------------------------------------------
 test("V3 S01/S05/S07: Unentitled ordinary user Market scan fails closed honestly without leaking owner data or charging quota", async () => {
-  const alice = await registerUser("alice_v3@example.test", "StrongPass123!", "Alice V3");
-  const bob = await registerUser("bob_v3@example.test", "StrongPass456!", "Bob V3");
+  const alice = await registerUser("alice_v3@example.test", "StrongPass123!fixture", "Alice V3");
+  const bob = await registerUser("bob_v3@example.test", "StrongPass456!fixture", "Bob V3");
 
   // Unentitled ordinary user runs Market Daily scan -> fails closed cleanly, zero quota charged, zero Angel One leak
   await assert.rejects(
@@ -413,8 +413,8 @@ test("V3 S01/S05/S07: Unentitled ordinary user Market scan fails closed honestly
 });
 
 test("V3 S02/S03/S04/S06: Licensed shared commercial NSE+BSE+MCX provider serves ordinary users A & B on Market & Watchlist across 1h, 1d, 1wk, 1mo", async () => {
-  const alice = await registerUser("alice_shared@example.test", "StrongPass123!", "Alice Shared");
-  const bob = await registerUser("bob_shared@example.test", "StrongPass456!", "Bob Shared");
+  const alice = await registerUser("alice_shared@example.test", "StrongPass123!fixture", "Alice Shared");
+  const bob = await registerUser("bob_shared@example.test", "StrongPass456!fixture", "Bob Shared");
 
   // Provision a licensed shared commercial TrueData provider config in x2_providers (NSE + BSE + active MCX future)
   const now = new Date().toISOString();
@@ -612,8 +612,8 @@ test("V3 S04/S08: Genuine 1h completed-session boundaries (NSE 15:15–15:30 ter
 // 2. V2 P01–P05: Strict 8-Tile Allowlist, Legacy 9-Card Reconciliation, Pins, Banners
 // ---------------------------------------------------------------------------
 test("V2 P01/P03/P05: Strict 8-tile Global allowlist reconciles legacy 9-card layouts; zero Angel One in /api/release; D1 pins & dual banners isolated", async () => {
-  const userA = await registerUser("pin_a@example.test", "StrongPass123!", "Pin User A");
-  const userB = await registerUser("pin_b@example.test", "StrongPass456!", "Pin User B");
+  const userA = await registerUser("pin_a@example.test", "StrongPass123!fixture", "Pin User A");
+  const userB = await registerUser("pin_b@example.test", "StrongPass456!fixture", "Pin User B");
 
   // 1. Seed legacy 9-card D1 layout with removed SPX/NDX/N225/BRENT/XAUUSD/XAGUSD
   const nowIso = new Date().toISOString();
@@ -709,8 +709,8 @@ test("V2 P01/P03/P05: Strict 8-tile Global allowlist reconciles legacy 9-card la
 // 3. V2 P17: Truthful Soul Post Metrics (Likes, Views, Shares) & Author-Only Insights
 // ---------------------------------------------------------------------------
 test("V2 P17: Soul Post Likes, Daily-Dedup Views (self-view excluded), Shares & strictly author-only Insights", async () => {
-  const author = await registerUser("author_v3@example.test", "StrongPass123!", "Author V3");
-  const reader = await registerUser("reader_v3@example.test", "StrongPass456!", "Reader V3");
+  const author = await registerUser("author_v3@example.test", "StrongPass123!fixture", "Author V3");
+  const reader = await registerUser("reader_v3@example.test", "StrongPass456!fixture", "Reader V3");
 
   await profileMod.mutatePrivateProfile(
     { userId: author.userId, displayName: "Author V3", email: author.email, authProvider: "email" },
@@ -804,7 +804,7 @@ test("V2 P09: Password change, non-enumerating single-use reset, email change ve
 
   try {
     const user = await registerUser("sec_v3@example.test", "InitialPass123!", "Security Tester");
-    const otherUser = await registerUser("other_v3@example.test", "OtherPass123!", "Other Tester");
+    const otherUser = await registerUser("other_v3@example.test", "OtherPass123!fixture", "Other Tester");
 
     // Sign in from a second device ("Firefox on Linux")
     const signIn2 = await authRoute.POST(

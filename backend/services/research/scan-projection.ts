@@ -1,5 +1,7 @@
 /** Read-time licence enforcement. Stored snapshots and their digests are never modified. */
 import { currentDisplayRights } from "../market-data/data-service";
+import type { ProviderConfig } from "../market-data/data-types";
+
 type DisplayRights = {
   displayAllowed: boolean;
   derivedDisplayAllowed: boolean;
@@ -13,6 +15,7 @@ type ResultRow = {
   latestEventAt?: string | null;
   source?: string;
   metrics?: Record<string, number | null>;
+  patternFit?: number;
 };
 type Snapshot = {
   sourceLineage?: Lineage[];
@@ -57,7 +60,7 @@ export async function snapshotDisplayRights(
     ...(payload.results?.results ?? []),
   ];
   for (const row of sourceRows)
-    if (typeof row.instrumentId === "string" && !entries.has(row.instrumentId))
+    if (!(payload.runState && "status" in row && row.status === "UNKNOWN" && !entries.has(row.instrumentId)) && typeof row.instrumentId === "string" && !entries.has(row.instrumentId))
       entries.set(row.instrumentId, {
         instrumentId: row.instrumentId,
         provider: legacyECB(row.instrumentId, row.source)
@@ -68,13 +71,14 @@ export async function snapshotDisplayRights(
         rightsExpiresAt: null,
       });
   const rights = new Map<string, DisplayRights>();
+  const configs = new Map<string, Promise<ProviderConfig[]>>();
   await Promise.all(
     [...entries].map(async ([id, creation]) => {
       const key = creation.provider + "|" + id;
       if (!cache.has(key))
         cache.set(
           key,
-          currentDisplayRights(id, creation.provider).catch(() => ({
+          currentDisplayRights(id, creation.provider, configs).catch(() => ({
             displayAllowed: false,
             derivedDisplayAllowed: false,
             rightsExpiresAt: null,
@@ -138,6 +142,12 @@ export async function projectResearchSnapshot(
   const projected: Snapshot = {};
   for (const key of [
     "requestDigest",
+    "scanTier",
+    "origin",
+    "runState",
+    "universeVersion",
+    "completedAt",
+    "patternRecipe",
     "rule",
     "research",
     "description",
@@ -172,6 +182,9 @@ export async function projectResearchSnapshot(
       const r = rights.get(row.instrumentId),
         raw = r?.displayAllowed === true,
         derived = r?.derivedDisplayAllowed === true;
+      if (payload.runState && !r && row.status === "UNKNOWN")
+        return { instrumentId: row.instrumentId, status: "UNKNOWN", reasons: ["Completed history unavailable."],
+          latestEventAt: null, source: "Unavailable" };
       return {
         instrumentId: row.instrumentId,
         status: derived ? row.status : "WITHHELD",
@@ -185,6 +198,7 @@ export async function projectResearchSnapshot(
         latestEventAt: row.latestEventAt ?? null,
         source: row.source,
         ...(raw && derived && row.metrics ? { metrics: row.metrics } : {}),
+        ...(derived && typeof row.patternFit === "number" ? { patternFit: row.patternFit } : {}),
       };
     });
     const allDerived = derivedHidden.length === 0;

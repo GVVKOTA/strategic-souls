@@ -78,9 +78,9 @@ test("X5.3 Global three-dot menu has EXACTLY 4 items in locked order with exact 
   assert.deepEqual(
     GLOBAL_MENU_ITEMS.map((i) => i.label),
     [
-      "Strategic Dashboard",
-      "Market Intelligence / Economic Calendar",
-      "Heatmap",
+      "Dashboard",
+      "Market Intelligence",
+      "Sector Heatmaps",
       "Strategic Globe",
     ],
   );

@@ -1,6 +1,13 @@
 import handler from "vinext/server/fetch-handler";
+import { processMarketScanBatch } from "../services/research/market-scan-jobs";
 
 const worker = {
+  async scheduled() {
+    // One lease across events, at most 20 instruments per scheduler tick.
+    const deadline = Date.now() + 35_000;
+    for (let batch = 0; batch < 4 && Date.now() < deadline; batch++)
+      if (!await processMarketScanBatch()) break;
+  },
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext) {
     const startedAt = Date.now();
     const requestId = crypto.randomUUID().slice(0, 12);

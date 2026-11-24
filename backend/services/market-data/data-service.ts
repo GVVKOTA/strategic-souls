@@ -41,6 +41,7 @@ import {
   completedBrokerObservations,
   completedCommercialIntradayObservations,
 } from "./angelone/scan-history";
+import { getIndianExchangeSession } from "./angelone/calendar";
 import { VERIFIED_SEED_INSTRUMENTS } from "./angelone/instrument-master";
 import type {
   CandleInterval,
@@ -932,6 +933,7 @@ export async function assetResearch(
 export async function currentDisplayRights(
   instrumentId: string,
   provider: string,
+  configuration?: Map<string, Promise<ProviderConfig[]>>,
 ) {
   if (provider === "ECB" && instrumentId.startsWith("ECB:"))
     return {
@@ -954,7 +956,15 @@ export async function currentDisplayRights(
       rightsExpiresAt: null,
     };
   }
-  const c = (await providerConfigs()).find(
+  if (!["TRUEDATA", "EODHD"].includes(provider)) {
+    return { displayAllowed: false, derivedDisplayAllowed: false, rightsExpiresAt: null };
+  }
+  let configured = configuration?.get("provider-configs");
+  if (!configured) {
+    configured = providerConfigs();
+    configuration?.set("provider-configs", configured);
+  }
+  const c = (await configured).find(
     (c) =>
       c.provider === provider &&
       c.instruments.some((i) => i.id === instrumentId),
@@ -1027,6 +1037,19 @@ function dateInZone(zone: string, now = new Date()) {
   }).format(now);
 }
 
+export async function canScanExchange(subject: string, interval: Interval) {
+  const gateway = resolveGatewayConfig(environment());
+  if ((isDataOwner(subject) && gateway.flags.enablePrivateBrokerData) ||
+      (gateway.flags.mode === "public_licensed" && gateway.flags.enablePublicExchangeQuotes))
+    return true;
+  return (await providerConfigs()).some((config) =>
+    rightsActive(config, "analysis") && rightsActive(config, "storage") &&
+    !!secretFrom(config.provider, environment()) && config.datasets.includes("candles") &&
+    (interval !== "30m" || config.provider === "TRUEDATA") &&
+    config.instruments.some((i) => i.market === "NSE" && i.type === "EQUITY"),
+  );
+}
+
 export async function researchUniverse(
   subject: string,
   options: {
@@ -1037,6 +1060,7 @@ export async function researchUniverse(
     minimumBars?: number;
     universePreset?: ScanUniversePreset;
     traceId?: string;
+    eventCutoff?: string;
   } = {},
 ): Promise<ResearchUniverse> {
   if (options.interval && !["30m", "1h", "1d", "1wk", "1mo"].includes(options.interval))
@@ -1178,7 +1202,7 @@ export async function researchUniverse(
       const observations = completedCommercialIntradayObservations(
         a.candles,
         mappedInst?.market ?? "GLOBAL",
-        a.retrievedAt ?? out.asOf,
+        options.eventCutoff ?? a.retrievedAt ?? out.asOf,
         interval,
       );
       const latest = observations.at(-1);
@@ -1225,7 +1249,17 @@ export async function researchUniverse(
       });
       continue;
     }
-    const rows = completedPublishedPeriods(a.candles, interval, dateInZone(a.instrument?.timezone ?? "UTC"));
+    const cutoff = options.eventCutoff ? new Date(options.eventCutoff) : new Date();
+    const currentDate = dateInZone(a.instrument?.timezone ?? "UTC", cutoff);
+    const exchange = mappedInst?.market;
+    const session = exchange === "NSE" || exchange === "BSE" || exchange === "MCX"
+      ? getIndianExchangeSession(exchange, cutoff.getTime()) : null;
+    const includeToday = session?.state === "CLOSED" && !session.specialSessionNote &&
+      session.localTimeIST >= (exchange === "MCX" ? "23:55:00" : "15:30:00");
+    const closed = options.eventCutoff
+      ? a.candles.filter((bar) => bar.date < currentDate || (bar.date === currentDate && includeToday))
+      : a.candles;
+    const rows = completedPublishedPeriods(closed, interval, currentDate);
     const closes = aggregateReferences(rows, interval);
     const candles = aggregateCandles(rows, interval);
     if (
@@ -1396,12 +1430,12 @@ export async function researchUniverse(
           consecutiveAuthFailures = 0;
           succeededCount += 1;
           if (series.sourceMode === "PRIVATE_OWNER_FEED" && series.candles.length > 0) {
-            if (ownerBrokerCandleCache.size >= 160) {
+            if (ownerBrokerCandleCache.size >= 520) {
               const nowCleanup = Date.now();
               for (const [k, v] of ownerBrokerCandleCache) {
                 if (v.until <= nowCleanup) ownerBrokerCandleCache.delete(k);
               }
-              if (ownerBrokerCandleCache.size >= 160) {
+              if (ownerBrokerCandleCache.size >= 520) {
                 const oldest = ownerBrokerCandleCache.keys().next().value;
                 if (oldest) ownerBrokerCandleCache.delete(oldest);
               }
@@ -1461,7 +1495,9 @@ export async function researchUniverse(
         }
         const observations =
           series.sourceMode === "PRIVATE_OWNER_FEED"
-            ? completedBrokerObservations(series, interval).slice(-targetBars)
+            ? completedBrokerObservations(options.eventCutoff
+                ? { ...series, retrievalTimestampUTC: options.eventCutoff } : series, interval)
+              .slice(-targetBars).map((bar) => ({ ...bar, knownAt: series.retrievalTimestampUTC }))
             : [];
         const latest = observations.at(-1);
         if (!latest) {

@@ -168,9 +168,13 @@ export function validateStrokePoints(points: readonly DrawPoint[]): DrawPoint[] 
       Number.isFinite(p.x) &&
       Number.isFinite(p.y),
   );
-  if (clean.length < 2) {
+  if (clean.length !== points.length || clean.length < 2) {
     throw new Error("Valid finite stroke points are required.");
   }
+  const width = Math.max(...clean.map((point) => point.x)) - Math.min(...clean.map((point) => point.x));
+  const height = Math.max(...clean.map((point) => point.y)) - Math.min(...clean.map((point) => point.y));
+  if (width < 0.02 || width < height * 0.06)
+    throw new Error("Draw across the canvas from left to right to give the pattern a time axis.");
   const meanY = clean.reduce((s, p) => s + p.y, 0) / clean.length;
   const varianceY =
     clean.reduce((s, p) => s + (p.y - meanY) ** 2, 0) / clean.length;

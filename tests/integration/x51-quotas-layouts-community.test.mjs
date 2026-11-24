@@ -194,9 +194,10 @@ function load(path) {
     }
     if (normalized.endsWith("/backend/services/market-data/data-service.ts")) {
       return new vm.SyntheticModule(
-        ["researchUniverse", "currentDisplayRights", "isDataOwner", "PRIVATE_EXCHANGE_FEED_LABEL"],
+        ["researchUniverse", "currentDisplayRights", "isDataOwner", "PRIVATE_EXCHANGE_FEED_LABEL", "canScanExchange"],
         function () {
           this.setExport("isDataOwner", () => false);
+          this.setExport("canScanExchange", async () => true);
           this.setExport("PRIVATE_EXCHANGE_FEED_LABEL", "Configured Exchange Feed (Private)");
           this.setExport("currentDisplayRights", async () => ({
             displayAllowed: true,
@@ -300,7 +301,7 @@ async function importMod(path) {
 }
 
 const overviewRoute = await importMod("app/api/markets/overview/route.ts");
-const strategyScanRoute = await importMod("app/api/strategy/scan/route.ts");
+const strategyScanRoute = await importMod("app/api/x1/workspace/route.ts");
 const networkRoute = await importMod("app/api/community/network/route.ts");
 const mediaUploadRoute = await importMod("app/api/media/upload/route.ts");
 const scanQuotaMod = await importMod("backend/services/research/scan-quota.ts");
@@ -415,7 +416,7 @@ test("Classic Quota enforces 20 completed scans per IST civil day, counts valid 
 
   // Failed/blocked intraday 30m scan on daily-only ECB must NOT deduct quota
   const blockedRes = await strategyScanRoute.POST(
-    makeReq("/api/strategy/scan", "POST", {
+    makeReq("/api/x1/workspace", "POST", {
       action: "run-scan",
       scanTier: "CLASSIC",
       requestId: "classic_fail_intraday_1",
@@ -437,7 +438,7 @@ test("Classic Quota enforces 20 completed scans per IST civil day, counts valid 
   for (let i = 1; i <= 20; i++) {
     const formula = i === 20 ? "close > 999999" : "close > sma(close, 20)";
     const r = await strategyScanRoute.POST(
-      makeReq("/api/strategy/scan", "POST", {
+      makeReq("/api/x1/workspace", "POST", {
         action: "run-scan",
         scanTier: "CLASSIC",
         requestId: `classic_run_${i}_day1`,
@@ -458,7 +459,7 @@ test("Classic Quota enforces 20 completed scans per IST civil day, counts valid 
 
   // 21st Classic scan on the same IST day MUST fail with 429
   const r21 = await strategyScanRoute.POST(
-    makeReq("/api/strategy/scan", "POST", {
+    makeReq("/api/x1/workspace", "POST", {
       action: "run-scan",
       scanTier: "CLASSIC",
       requestId: "classic_run_21_blocked",
@@ -477,7 +478,7 @@ test("Classic Quota enforces 20 completed scans per IST civil day, counts valid 
   // Advance clock across 00:00 Asia/Kolkata (2026-11-21T18:35:00Z = 2026-11-22 00:05 IST) -> quota resets!
   nowMs = Date.parse("2026-11-21T18:35:00.000Z");
   const rReset = await strategyScanRoute.POST(
-    makeReq("/api/strategy/scan", "POST", {
+    makeReq("/api/x1/workspace", "POST", {
       action: "run-scan",
       scanTier: "CLASSIC",
       requestId: "classic_run_day2_ok",
@@ -494,17 +495,17 @@ test("Classic Quota enforces 20 completed scans per IST civil day, counts valid 
   assert.equal(rReset.status, 200);
 });
 
-test("Advanced Quota enforces 1 completed scan per rolling 60 minutes even under concurrent Promise.all requests", async () => {
+test("Advanced reservations share the Classic daily window and support distinct concurrent submissions", async () => {
   currentUser = { userId: "user-b", displayName: "Bob Macro", email: "b@test.local", authProvider: "email" };
 
   const mkAdv = (reqId) =>
     strategyScanRoute.POST(
-      makeReq("/api/strategy/scan", "POST", {
+      makeReq("/api/x1/workspace", "POST", {
         action: "run-scan",
         scanTier: "ADVANCED",
         requestId: reqId,
         name: "Advanced Genome Scan",
-        description: "Concurrent race test for rolling 60-minute Advanced scan allowance.",
+        description: "Concurrent Advanced scans use the shared daily allowance.",
         formula: "close > sma(close, 20)",
         mode: "ADVANCED",
         universe: "ECB_DAILY",
@@ -520,17 +521,18 @@ test("Advanced Quota enforces 1 completed scan per rolling 60 minutes even under
     mkAdv("adv_concurrent_two"),
   ]);
   const statuses = [res1.status, res2.status].sort((a, b) => a - b);
-  assert.deepEqual(statuses, [200, 429], `Expected exactly one 200 and one 429 under concurrency, got ${statuses}`);
+  assert.deepEqual(statuses, [200, 200]);
 
-  // 30 minutes later: STILL blocked (rolling 60m, no midnight shortcut)
+  // The previous one-per-hour limit has been removed.
   nowMs += 30 * 60 * 1000;
   const res30 = await mkAdv("adv_after_30min_test");
-  assert.equal(res30.status, 429);
+  assert.equal(res30.status, 200);
 
   // 61 minutes after initial completion: permitted again!
   nowMs += 32 * 60 * 1000;
   const res62 = await mkAdv("adv_after_62min_test");
   assert.equal(res62.status, 200);
+  assert.equal((await scanQuotaMod.getScanQuotaSummary(DB, "user-b", nowMs)).classic.used, 4);
 });
 
 test("Community Research Network: One-Click Post Soul, Angel One redaction (403), Follow Requests, Save/Comment/Copy/Pin/Delete & Privacy", async () => {
@@ -728,4 +730,74 @@ test("Media Upload validator enforces auth (401), same-origin CSRF (403), reject
   assert.equal(rNoR2.status, 503);
   const noR2Json = await rNoR2.json();
   assert.equal(noR2Json.code, "OBJECT_STORAGE_NOT_CONFIGURED");
+});
+
+test("X7.8 market jobs pin all 500 IDs across modes, reconcile results and protect ownership", async () => {
+  const { importNiftyUniverse, niftyUniverse } = await importMod("backend/services/market-data/nifty-500.ts");
+  const { processMarketScanBatch } = await importMod("backend/services/research/market-scan-jobs.ts");
+  const route = await importMod("app/api/strategy/scan/route.ts");
+  const { PATTERN_TEMPLATES } = await importMod("backend/engines/pattern-draw.ts");
+  const constituents = Array.from({ length: 500 }, (_, i) => ({
+    id: "NSE:FIX" + String(i).padStart(3, "0"),
+    isin: "IN" + String(i).padStart(10, "0"),
+    name: "Fixture equity " + i,
+    industry: "Fixture industry",
+  }));
+  const raw = { constituents, effectiveDate: "2026-11-21", provenance: "Isolated test constituent snapshot", rightsConfirmed: true };
+  const saved = await importNiftyUniverse(raw);
+  assert.equal(saved.count, 500);
+  await assert.rejects(() => importNiftyUniverse({ ...raw, constituents: [...constituents.slice(1), constituents[1]] }), /Duplicate/);
+  assert.equal((await niftyUniverse()).version, saved.version);
+
+  currentUser = { userId: "user-b", displayName: "Bob Macro", email: "b@test.local", authProvider: "email" };
+  const start = performance.now();
+  for (const variant of ["CLASSIC", "BUILD", "DISCOVER", "CUSTOM_DRAW", "TEMPLATE_DRAW"]) {
+    const isDraw = variant.endsWith("_DRAW");
+    const input = {
+      action: isDraw ? "run-draw-scan" : "run-scan", origin: variant, scanRequestVersion: 2,
+      requestId: randomUUID(), name: "Market fixture " + variant,
+      description: "Run a full canonical market fixture through the durable scan pipeline.",
+      formula: "close > 100", interval: "1d", mode: variant === "CLASSIC" ? "SIMPLE" : "ADVANCED",
+      universe: "ECB_DAILY", universePreset: "ECB_DAILY", instrumentIds: ["ECB:USDINR"],
+      outcome: { family: "POSITIVE_RETURN", horizon: 10, threshold: 0, target: 5, stop: 3, costBps: 0 },
+      ...(isDraw && { strokePoints: variant === "TEMPLATE_DRAW" ? PATTERN_TEMPLATES[0].points :
+        [{ x: 0, y: 0.2 }, { x: 0.4, y: 0.8 }, { x: 0.7, y: 0.3 }, { x: 1, y: 0.7 }] }),
+    };
+    const submitted = await route.POST(makeReq("/api/strategy/scan", "POST", input));
+    const job = await submitted.json();
+    assert.equal(submitted.status, 202, JSON.stringify(job));
+    const replay = await route.POST(makeReq("/api/strategy/scan", "POST", input));
+    assert.equal((await replay.json()).jobId, job.jobId);
+    const requests = [];
+    const fixture = async (_subject, options) => {
+      requests.push(...options.instrumentIds);
+      const asOf = new Date(nowMs).toISOString();
+      const datasets = options.instrumentIds.filter((id) => id !== "NSE:FIX499").map((id) => ({
+        instrumentId: id, permitted: true, source: "Fixture OHLCV", currency: "INR",
+        observations: Array.from({ length: 30 }, (_, i) => ({
+          eventAt: new Date(nowMs - (30 - i) * 86_400_000).toISOString(), knownAt: asOf,
+          close: 100 + (Number(id.slice(-3)) % 2 ? 2 : -2) + Math.sin(i) * 0.4,
+        })),
+      }));
+      return { datasets, excluded: [], lineage: [], asOf, source: "Fixture OHLCV" };
+    };
+    for (let iteration = 0; iteration < 101; iteration++)
+      assert.equal(await processMarketScanBatch(fixture), true);
+    assert.deepEqual(requests, constituents.map((row) => row.id));
+    const completed = await route.GET(makeReq("/api/strategy/scan?jobId=" + job.jobId));
+    assert.equal((await completed.json()).state, "PARTIAL");
+    const stored = JSON.parse(sql.prepare("SELECT payload FROM x1_scans WHERE id=?").get(job.jobId).payload);
+    assert.equal(stored.universeVersion, saved.version);
+    assert.equal(stored.results.eligible, 499);
+    assert.equal(stored.results.unknown, 1);
+    assert.equal(stored.results.matches + stored.results.failed + stored.results.unknown, 500);
+    assert.equal(new Set(stored.results.results.map((row) => row.instrumentId)).size, 500);
+    if (variant === "CLASSIC") {
+      currentUser = { userId: "user-a", displayName: "Alice Quant", email: "a@test.local", authProvider: "email" };
+      assert.equal((await route.GET(makeReq("/api/strategy/scan?jobId=" + job.jobId))).status, 404);
+      assert.equal((await route.POST(makeReq("/api/strategy/scan", "POST", { action: "cancel", jobId: job.jobId }))).status, 404);
+      currentUser = { userId: "user-b", displayName: "Bob Macro", email: "b@test.local", authProvider: "email" };
+    }
+  }
+  console.info("X7.8 5 × 500 synthetic jobs, simulated provider and D1, " + Math.round(performance.now() - start) + "ms");
 });

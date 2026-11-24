@@ -3,6 +3,7 @@ import { HttpError, body, protectMutation } from "../../../../backend/middleware
 import {
   configureProvider,
   isDataOwner,
+  requireDataOwner,
   providerSettings,
   testProvider,
 } from "../../../../backend/services/market-data/data-service";
@@ -20,8 +21,9 @@ async function handle(request: Request) {
         );
       return Response.json(await providerSettings(user.userId), { headers });
     }
-    protectMutation(request, 32768);
-    const input = await body(request, 32768);
+    requireDataOwner(user.userId);
+    protectMutation(request, 524_288);
+    const input = await body(request, 524_288);
     if (input.op !== "configure" && input.op !== "test")
       throw new HttpError(400, "Choose a supported settings action.");
     return Response.json(

@@ -5,26 +5,17 @@ import {
   completePasswordReset,
   confirmEmailChange,
   createSession,
-  findOrCreateGoogleUser,
-  formatCookie,
   getAuthenticatedUser,
   getEmailVerificationStatus,
-  getGoogleOAuthConfig,
   getSessionTokenHashFromRequest,
-  isGoogleOAuthConfigured,
   listActiveSessions,
-  parseCookieHeader,
-  randomToken,
   registerEmailUser,
   requestEmailChange,
   requestPasswordReset,
   revokeOtherUserSessions,
   revokeSessionBySafeId,
   revokeSessionFromRequest,
-  safeRelativeReturnPath,
-  sha256Base64Url,
   sha256Hex,
-  timingSafeEqualStrings,
 } from "../../../../backend/auth/session";
 import { HttpError, body, protectMutation } from "../../../../backend/middleware/security";
 import { RELEASE_GATES } from "../../../../backend/services/legacy/gates";
@@ -34,44 +25,6 @@ import { account, database, rate } from "../../../../database/queries/repository
 
 export const dynamic = "force-dynamic";
 const CONSENT_VERSION = "2026-11-14-v4";
-const OAUTH_STATE_COOKIE = "__ss_oauth_state";
-const OAUTH_PKCE_COOKIE = "__ss_oauth_pkce";
-const OAUTH_RETURN_COOKIE = "__ss_oauth_return";
-
-function clearOAuthCookies(headers: Headers, request: Request): void {
-  headers.append("Set-Cookie", formatCookie(OAUTH_STATE_COOKIE, "", request, 0));
-  headers.append("Set-Cookie", formatCookie(OAUTH_PKCE_COOKIE, "", request, 0));
-  headers.append("Set-Cookie", formatCookie(OAUTH_RETURN_COOKIE, "", request, 0));
-}
-
-async function fetchBoundedOAuth(
-  url: string,
-  init: RequestInit,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 8000);
-  try {
-    const res = await fetch(url, {
-      ...init,
-      redirect: "manual",
-      signal: controller.signal,
-    });
-    if (res.status >= 300 && res.status < 400) {
-      await res.body?.cancel();
-      throw new HttpError(502, "Google authentication returned an unexpected redirect.");
-    }
-    return res;
-  } catch (error) {
-    if (error instanceof HttpError) throw error;
-    throw new HttpError(
-      502,
-      "Google authentication request timed out or could not be reached.",
-    );
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function json(data: unknown, status = 200, headers?: Headers): Response {
   const h = headers ?? new Headers();
   h.set("Cache-Control", "private, no-store");
@@ -95,7 +48,7 @@ async function sessionPayload(user: Awaited<ReturnType<typeof getAuthenticatedUs
       alias: null,
       consentVersion: CONSENT_VERSION,
       isOwner: false,
-      googleEnabled: isGoogleOAuthConfigured(),
+      googleEnabled: false,
       user: null,
       gates: RELEASE_GATES,
     };
@@ -113,7 +66,7 @@ async function sessionPayload(user: Awaited<ReturnType<typeof getAuthenticatedUs
     alias: current?.alias ?? user.displayName,
     consentVersion: CONSENT_VERSION,
     isOwner: isDataOwner(user.userId),
-    googleEnabled: isGoogleOAuthConfigured(),
+    googleEnabled: false,
     user: {
       displayName: current?.alias ?? user.displayName,
       email: user.email,
@@ -331,148 +284,6 @@ async function handle(request: Request): Promise<Response> {
         headers.append("Set-Cookie", clearSessionCookie(request));
       }
       return json({ ok: true, ...res }, 200, headers);
-    }
-
-    if (action === "google" && method === "GET") {
-      const oauth = getGoogleOAuthConfig();
-      if (!oauth) {
-        throw new HttpError(
-          503,
-          "Google sign-in is not configured on this deployment. Use email and password sign-in.",
-        );
-      }
-      const state = randomToken(24);
-      const verifier = randomToken(32);
-      const challenge = await sha256Base64Url(verifier);
-      const returnTo = safeRelativeReturnPath(
-        url.searchParams.get("return_to"),
-      );
-      const redirectUri = `${url.origin}/api/auth/google/callback`;
-      const target = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-      target.searchParams.set("client_id", oauth.clientId);
-      target.searchParams.set("redirect_uri", redirectUri);
-      target.searchParams.set("response_type", "code");
-      target.searchParams.set("scope", "openid email profile");
-      target.searchParams.set("state", state);
-      target.searchParams.set("code_challenge", challenge);
-      target.searchParams.set("code_challenge_method", "S256");
-
-      const headers = new Headers({
-        Location: target.toString(),
-        "Cache-Control": "private, no-store",
-      });
-      headers.append(
-        "Set-Cookie",
-        formatCookie(OAUTH_STATE_COOKIE, state, request, 600),
-      );
-      headers.append(
-        "Set-Cookie",
-        formatCookie(OAUTH_PKCE_COOKIE, verifier, request, 600),
-      );
-      headers.append(
-        "Set-Cookie",
-        formatCookie(
-          OAUTH_RETURN_COOKIE,
-          encodeURIComponent(returnTo),
-          request,
-          600,
-        ),
-      );
-      return new Response(null, { status: 302, headers });
-    }
-
-    if (action === "google/callback" && method === "GET") {
-      const oauth = getGoogleOAuthConfig();
-      if (!oauth) {
-        throw new HttpError(503, "Google sign-in is not configured.");
-      }
-      const jar = parseCookieHeader(request.headers.get("cookie"));
-      const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state");
-      if (
-        !code ||
-        !state ||
-        !jar[OAUTH_STATE_COOKIE] ||
-        !timingSafeEqualStrings(state, jar[OAUTH_STATE_COOKIE]) ||
-        !jar[OAUTH_PKCE_COOKIE]
-      ) {
-        const errHeaders = new Headers();
-        clearOAuthCookies(errHeaders, request);
-        return json(
-          {
-            error:
-              "Sign-in verification expired or did not match. Start again from Strategic Souls.",
-          },
-          400,
-          errHeaders,
-        );
-      }
-      const redirectUri = `${url.origin}/api/auth/google/callback`;
-      const tokenRes = await fetchBoundedOAuth(
-        "https://oauth2.googleapis.com/token",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            code,
-            client_id: oauth.clientId,
-            client_secret: oauth.clientSecret,
-            redirect_uri: redirectUri,
-            grant_type: "authorization_code",
-            code_verifier: jar[OAUTH_PKCE_COOKIE],
-          }),
-        },
-      );
-      if (!tokenRes.ok) {
-        throw new HttpError(502, "Google authentication could not be verified.");
-      }
-      const tokenData = (await tokenRes.json()) as { access_token?: string };
-      if (!tokenData.access_token) {
-        throw new HttpError(502, "Google authentication returned no token.");
-      }
-      const userRes = await fetchBoundedOAuth(
-        "https://openidconnect.googleapis.com/v1/userinfo",
-        {
-          headers: { Authorization: `Bearer ${tokenData.access_token}` },
-        },
-      );
-      if (!userRes.ok) {
-        throw new HttpError(502, "Google account profile could not be verified.");
-      }
-      const profile = (await userRes.json()) as {
-        sub?: string;
-        email?: string;
-        email_verified?: boolean;
-        name?: string;
-      };
-      if (!profile.sub || !profile.email || profile.email_verified !== true) {
-        throw new HttpError(
-          403,
-          "A verified Google email address is required to sign in.",
-        );
-      }
-
-      const user = await findOrCreateGoogleUser({
-        sub: profile.sub,
-        email: profile.email,
-        name: profile.name,
-      });
-      await revokeSessionFromRequest(request);
-      let decodedReturn = "/";
-      try {
-        decodedReturn = safeRelativeReturnPath(
-          decodeURIComponent(jar[OAUTH_RETURN_COOKIE] ?? "/"),
-        );
-      } catch {
-        decodedReturn = "/";
-      }
-      const headers = new Headers({
-        Location: decodedReturn,
-        "Cache-Control": "private, no-store",
-      });
-      headers.append("Set-Cookie", await createSession(user.userId, request));
-      clearOAuthCookies(headers, request);
-      return new Response(null, { status: 302, headers });
     }
 
     throw new HttpError(404, "Auth endpoint not found.");

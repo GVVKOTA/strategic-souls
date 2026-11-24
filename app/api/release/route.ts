@@ -1,8 +1,7 @@
 import { resolveGatewayConfig } from "../../../backend/services/market-data/angelone/gateway";
 import { APP_RELEASE } from "../../../backend/services/release-meta";
 import {
-  ADVANCED_ROLLING_LIMIT,
-  CLASSIC_DAILY_LIMIT,
+  SCAN_DAILY_LIMIT,
 } from "../../../backend/services/research/scan-quota";
 
 export const dynamic = "force-dynamic";
@@ -26,8 +25,7 @@ export function GET(request: Request) {
       globalMarketTiles: 8,
       exchangeVenues: 24,
       classicPresets: 50,
-      classicDailyLimit: CLASSIC_DAILY_LIMIT,
-      advancedRollingLimit: ADVANCED_ROLLING_LIMIT,
+      scanDailyLimit: SCAN_DAILY_LIMIT,
       avatarPresets: 50,
       profileBannerPresets: 8,
       portfolioBackdropPresets: 8,

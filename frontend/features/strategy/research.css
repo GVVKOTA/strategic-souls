@@ -278,3 +278,23 @@
     grid-column: 1/-1;
   }
 }
+
+.x78-scan-actions summary {
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  min-width: 44px;
+  min-height: 44px;
+}
+.x78-scan-actions[open] {
+  position: relative;
+}
+.x78-scan-actions[open] > div {
+  position: absolute;
+  inset-inline-end: 0;
+  z-index: 4;
+  min-width: 9rem;
+  padding: 0.45rem;
+  border-radius: 0.5rem;
+  background: var(--x1-surface-2);
+}

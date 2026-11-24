@@ -10,13 +10,17 @@ import {
   HttpError,
   protectMutation,
 } from "../../../../backend/middleware/security";
+import { cancelMarketScan, listActiveMarketScans, marketScanStatus, submitMarketScan } from "../../../../backend/services/research/market-scan-jobs";
 import { mutateWorkspace } from "../../../../backend/services/research/workspace";
 
 export const dynamic = "force-dynamic";
 
 const MAX_SCAN_BODY_BYTES = 524_288; // 512 KB for private CSV OHLCV / Draw payloads
 
-export async function POST(request: Request): Promise<Response> {
+export const GET = handle;
+export const POST = handle;
+
+async function handle(request: Request): Promise<Response> {
   const traceId = crypto.randomUUID();
   const started = Date.now();
   const headers = { "Cache-Control": "private, no-store", "X-Scan-Trace-Id": traceId };
@@ -32,14 +36,32 @@ export async function POST(request: Request): Promise<Response> {
         current.adult_confirmed === 1 &&
         current.consent_version === "2026-11-14-v4",
     );
+    if (request.method === "GET") {
+      const jobId = new URL(request.url).searchParams.get("jobId");
+      return Response.json(jobId
+        ? await marketScanStatus(user.userId, jobId)
+        : { jobs: await listActiveMarketScans(user.userId) }, { headers });
+    }
     protectMutation(request, MAX_SCAN_BODY_BYTES);
     const input = await body(request, MAX_SCAN_BODY_BYTES);
     if (
-      !["preflight-scan", "run-scan", "parse-discover", "run-draw-scan"].includes(
+      !["run-scan", "parse-discover", "run-draw-scan", "cancel", "run-watchlist-scan", "run-watchlist-draw"].includes(
         String(input.action ?? ""),
       )
     ) {
       throw new HttpError(400, "Unsupported strategy scan action.");
+    }
+    const action = input.action;
+    if (action === "cancel")
+      return Response.json(await cancelMarketScan(user.userId, input.jobId), { headers });
+    if (action === "run-scan" || action === "run-draw-scan")
+      return Response.json(await submitMarketScan(user.userId, input), { status: 202, headers });
+    if (action === "run-watchlist-scan" || action === "run-watchlist-draw") {
+      const result = await mutateWorkspace(user.userId, {
+        ...input, action: action === "run-watchlist-scan" ? "run-scan" : "run-draw-scan",
+        universe: "CONNECTED_MARKETS", universePreset: "MY_WATCHLIST", instrumentIds: [], customCsv: undefined,
+      }, traceId);
+      return Response.json({ ok: true, ...result }, { headers });
     }
     const result = await mutateWorkspace(user.userId, input, traceId);
     console.info({ event: "soul_scan_request", traceId, action: input.action, status: 200, durationMs: Date.now() - started });

@@ -207,7 +207,7 @@ async function importMod(path) {
 const profileRoute = await importMod("app/api/profile/route.ts");
 const networkRoute = await importMod("app/api/community/network/route.ts");
 const socialRoute = await importMod("app/api/x2/social/route.ts");
-const strategyScanRoute = await importMod("app/api/strategy/scan/route.ts");
+const strategyScanRoute = await importMod("app/api/x1/workspace/route.ts");
 const workspaceRoute = await importMod("app/api/x1/workspace/route.ts");
 const messengerTypes = await importMod("frontend/features/community/messenger/types.ts");
 
@@ -273,7 +273,7 @@ test("X5.4 Phase 2: Blank or whitespace Soul names are rejected on run-scan, sav
 
   for (const blankName of ["", "   ", "\t\n"]) {
     const runRes = await strategyScanRoute.POST(
-      req("/api/strategy/scan", "POST", {
+      req("/api/x1/workspace", "POST", {
         action: "run-scan",
         scanTier: "CLASSIC",
         requestId: "x54_blank_run_0001",
@@ -310,7 +310,7 @@ test("X5.4 Phase 2: Blank or whitespace Soul names are rejected on run-scan, sav
     assert.match((await draftRes.json()).error, /Enter a Soul name/i);
 
     const drawRes = await strategyScanRoute.POST(
-      req("/api/strategy/scan", "POST", {
+      req("/api/x1/workspace", "POST", {
         action: "run-draw-scan",
         requestId: "x54_blank_draw_0001",
         name: blankName,
@@ -347,7 +347,7 @@ test("X5.4 Phase 2: Blank or whitespace Soul names are rejected on run-scan, sav
   assert.equal(validDraft.status, 200);
 
   const validRun = await strategyScanRoute.POST(
-    req("/api/strategy/scan", "POST", {
+    req("/api/x1/workspace", "POST", {
       action: "run-scan",
       scanTier: "CLASSIC",
       requestId: "x54_valid_run_0001",

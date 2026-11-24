@@ -271,10 +271,10 @@ test("owner Classic coverage uses longer candle history and saves a daily scan o
   };
   let activeUser = { userId: "owner" };
   const harness = buildWorkerHarness(env, () => activeUser);
-  const route = await harness.load("app/api/strategy/scan/route.ts");
+  const route = await harness.load("app/api/x1/workspace/route.ts");
   const base = "https://example.invalid";
   const call = async (action, id, extra = {}) => {
-    const response = await route.POST(new Request(`${base}/api/strategy/scan`, {
+    const response = await route.POST(new Request(`${base}/api/x1/workspace`, {
       method: "POST",
       headers: { origin: base, "content-type": "application/json" },
       body: JSON.stringify({

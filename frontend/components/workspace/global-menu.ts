@@ -25,28 +25,28 @@ export type GlobalMenuItem = {
 
 /**
  * Exact 4-entry Global three-dot menu contract (X5.3 Section 03).
- * Order and user-facing labels are strictly locked.
+ * Preserve the destination IDs for deep links.
  */
 export const GLOBAL_MENU_ITEMS: readonly GlobalMenuItem[] = Object.freeze([
   {
     id: "DASHBOARD",
-    label: "Strategic Dashboard",
-    description: "9 markets, portfolio, 3D globe & calendar",
+    label: "Dashboard",
+    description: "Markets & portfolio",
   },
   {
     id: "INTELLIGENCE",
-    label: "Market Intelligence / Economic Calendar",
-    description: "Headlines, official calendar & Market Vox",
+    label: "Market Intelligence",
+    description: "News & economic calendar",
   },
   {
     id: "HEATMAP",
-    label: "Heatmap",
-    description: "NSE sector explorer, heatmaps & comparison",
+    label: "Sector Heatmaps",
+    description: "Sector performance & compare",
   },
   {
     id: "GLOBE_FOCUS",
     label: "Strategic Globe",
-    description: "Interactive 3D Earth, events & venues",
+    description: "Events & world markets",
   },
 ]);
 

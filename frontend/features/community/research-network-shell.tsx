@@ -49,8 +49,7 @@ const SocialWorkspace = lazy(() =>
 
 type PrimaryCommunityTab = "web" | "chats" | "groups";
 
-const COMM_TAB_STORAGE_KEY = "ss-v3-comm-tab";
-const COMM_TAB_ORDER: PrimaryCommunityTab[] = ["web", "chats", "groups"];
+const COMM_TAB_ORDER: PrimaryCommunityTab[] = ["chats", "web", "groups"];
 
 function formatFeedTimeframe(tf: string): string {
   const lower = tf.toLowerCase();
@@ -170,7 +169,7 @@ export default function ResearchNetworkShell({
   searchQuery,
   currentUser,
   profileRevision = 0,
-  initialTab = "web",
+  initialTab = "chats",
   initialProfileHandle = null,
   savedOnlyRequested = false,
   tabNonce = 0,
@@ -180,20 +179,7 @@ export default function ResearchNetworkShell({
   onCopyToStrategy,
   onMobileChatActive,
 }: Props) {
-  const [tab, setTab] = useState<PrimaryCommunityTab>(() => {
-    if (initialTab !== "web" || tabNonce > 0) return initialTab;
-    if (typeof window !== "undefined") {
-      try {
-        const saved = window.localStorage.getItem(COMM_TAB_STORAGE_KEY);
-        if (saved === "web" || saved === "chats" || saved === "groups") {
-          return saved;
-        }
-      } catch {
-        /* Storage unavailable */
-      }
-    }
-    return initialTab;
-  });
+  const [tab, setTab] = useState<PrimaryCommunityTab>(initialTab);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [chatView, setChatView] = useState<SocialView>("Messages");
   const [pendingThreadId, setPendingThreadId] = useState("");
@@ -223,13 +209,10 @@ export default function ResearchNetworkShell({
 
   const selectCommunityTab = useCallback((nextTab: PrimaryCommunityTab) => {
     setTab(nextTab);
-    if (typeof window !== "undefined") {
-      try {
-        window.localStorage.setItem(COMM_TAB_STORAGE_KEY, nextTab);
-      } catch {
-        /* Ignore storage restrictions */
-      }
-    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", "community");
+    url.searchParams.set("tab", nextTab === "web" ? "souls" : nextTab === "groups" ? "rooms" : "chats");
+    window.history.replaceState(window.history.state, "", url);
   }, []);
 
   // Compact researcher search results
@@ -348,7 +331,7 @@ export default function ResearchNetworkShell({
       notify(
         err instanceof Error
           ? err.message
-          : "Could not load Soul Feed.",
+          : "Could not load Souls.",
         true,
       );
     } finally {
@@ -1065,22 +1048,6 @@ export default function ResearchNetworkShell({
         >
           <button
             ref={(el) => {
-              tabRefs.current.web = el;
-            }}
-            type="button"
-            role="tab"
-            className={"ss-v3-comm-tab" + (tab === "web" ? " is-active" : "")}
-            aria-selected={tab === "web"}
-            tabIndex={tab === "web" ? 0 : -1}
-            onClick={() => selectCommunityTab("web")}
-          >
-            <span className="ss-v3-comm-tab-icon">
-              <IconSoulFeed size={24} />
-            </span>
-            <span>Soul Feed</span>
-          </button>
-          <button
-            ref={(el) => {
               tabRefs.current.chats = el;
             }}
             type="button"
@@ -1105,6 +1072,22 @@ export default function ResearchNetworkShell({
           </button>
           <button
             ref={(el) => {
+              tabRefs.current.web = el;
+            }}
+            type="button"
+            role="tab"
+            className={"ss-v3-comm-tab" + (tab === "web" ? " is-active" : "")}
+            aria-selected={tab === "web"}
+            tabIndex={tab === "web" ? 0 : -1}
+            onClick={() => selectCommunityTab("web")}
+          >
+            <span className="ss-v3-comm-tab-icon">
+              <IconSoulFeed size={24} />
+            </span>
+            <span>Souls</span>
+          </button>
+          <button
+            ref={(el) => {
               tabRefs.current.groups = el;
             }}
             type="button"
@@ -1124,7 +1107,7 @@ export default function ResearchNetworkShell({
 
       {/* TAB 1: SOUL FEED — Published Souls Discovery Feed */}
       {tab === "web" && (
-        <section aria-label="Soul Feed">
+        <section aria-label="Souls">
           <div className="x51-cal-toolbar x55-feed-toolbar">
             <div className="x51-chip-row" role="group" aria-label="Feed mode">
               {(["ALL", "CLASSIC", "ADVANCED"] as const).map((m) => (
@@ -1159,7 +1142,7 @@ export default function ResearchNetworkShell({
                 <option value="1mo">Monthly</option>
               </select>
               <select
-                aria-label="Sort Soul Feed"
+                aria-label="Sort Souls"
                 className="x55-feed-select"
                 value={sort}
                 onChange={(e) =>
@@ -1173,7 +1156,7 @@ export default function ResearchNetworkShell({
           </div>
 
           {loadingFeed ? (
-            <div className="x55-feed-skeleton" aria-busy="true" aria-label="Loading Soul Feed">
+            <div className="x55-feed-skeleton" aria-busy="true" aria-label="Loading Souls">
               <div className="x55-skel-card" />
               <div className="x55-skel-card" />
             </div>
@@ -1186,7 +1169,7 @@ export default function ResearchNetworkShell({
               }
             >
               Run a scan in Strategy and tap <strong>Publish Soul</strong> to share
-              transparent research in the Soul Feed.
+              transparent research in the Souls.
             </Empty>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

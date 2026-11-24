@@ -100,6 +100,39 @@ export default function DataControl({
     [brokerHealth, setBrokerHealth] = useState<MarketHealthResponse | null>(null),
     [totpCode, setTotpCode] = useState(""),
     [totpBusy, setTotpBusy] = useState(false);
+  const [universeFile, setUniverseFile] = useState<File | null>(null);
+  const [universeImportBusy, setUniverseImportBusy] = useState(false);
+  const [universeStatus, setUniverseStatus] = useState("");
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
+
+  async function importUniverse(event: React.FormEvent) {
+    event.preventDefault();
+    if (!universeFile || !rightsConfirmed || universeImportBusy) return;
+    if (universeFile.size > 190_000) {
+      setUniverseStatus("The JSON snapshot exceeds 190 KB.");
+      return;
+    }
+    setUniverseImportBusy(true);
+    setUniverseStatus("");
+    try {
+      const snapshot = JSON.parse(await universeFile.text());
+      const response = await fetch("/api/strategy/universe", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...snapshot, rightsConfirmed: true }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const result = await response.json() as { count?: number; version?: string; active?: boolean; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "Snapshot import failed.");
+      setUniverseStatus((result.active ? "Active" : "Saved historical") +
+        " snapshot · " + result.count + " constituents · " + result.version?.slice(0, 12));
+    } catch (error) {
+      setUniverseStatus((error as Error).message);
+    } finally {
+      setUniverseImportBusy(false);
+    }
+  }
+
   const active = useRef(false),
     key = useRef<string | null>(null);
   const current = state?.providers.find((p) => p.id === selected);
@@ -314,6 +347,22 @@ export default function DataControl({
         <p role="status">{busy || "Settings unavailable. Reload to retry."}</p>
       ) : (
         <>
+          {state.isOwner && <details className="x2-inline-help">
+            <summary>Nifty 500 constituent snapshot</summary>
+            <form className="x1-form" onSubmit={(event) => void importUniverse(event)}>
+              <label>Approved snapshot JSON
+                <input type="file" accept=".json,application/json" onChange={(event) => setUniverseFile(event.target.files?.[0] ?? null)} />
+              </label>
+              <label className="x1-check">
+                <input type="checkbox" checked={rightsConfirmed} onChange={(event) => setRightsConfirmed(event.target.checked)} />
+                The source permits use and display of these constituent identities.
+              </label>
+              <button type="submit" className="x1-secondary" disabled={!universeFile || !rightsConfirmed || universeImportBusy}>
+                {universeImportBusy ? "Validating snapshot…" : "Import snapshot"}
+              </button>
+              {universeStatus && <p role="status">{universeStatus}</p>}
+            </form>
+          </details>}
           <label>
             Implemented provider
             <select

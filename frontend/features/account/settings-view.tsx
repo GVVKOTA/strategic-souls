@@ -1392,7 +1392,7 @@ export default function SettingsView({
                             <input
                               type="password"
                               autoComplete="new-password"
-                              minLength={10}
+                              minLength={15}
                               maxLength={128}
                               required
                               value={newPassword}
@@ -1406,7 +1406,7 @@ export default function SettingsView({
                             <input
                               type="password"
                               autoComplete="new-password"
-                              minLength={10}
+                              minLength={15}
                               maxLength={128}
                               required
                               value={confirmNewPassword}

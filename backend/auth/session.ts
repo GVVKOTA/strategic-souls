@@ -1,4 +1,3 @@
-import { env } from "cloudflare:workers";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { database } from "../../database/queries/repository";
@@ -34,9 +33,6 @@ type AuthUserRow = {
   google_sub: string | null;
 };
 
-function runtimeEnv(): Record<string, string | undefined> {
-  return env as unknown as Record<string, string | undefined>;
-}
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -156,18 +152,17 @@ export function normalizeEmail(value: unknown): string {
   return email;
 }
 
+const commonlyUsedPassphrases = new Set([
+  "123456789012345", "1234567890123456", "passwordpassword", "passwordpassword1",
+  "qwertyuiopasdfgh", "abcdefghijklmnop", "correcthorsebatterystaple",
+]);
+
 export function validatePassword(value: unknown): string {
-  if (typeof value !== "string") {
-    throw new HttpError(400, "Enter a password of 10–128 characters.");
+  if (typeof value !== "string" || [...value].length < 15 || value.length > 128) {
+    throw new HttpError(400, "Use a password of 15–128 characters.");
   }
-  if (value.length < 10 || value.length > 128) {
-    throw new HttpError(400, "Password must be 10–128 characters.");
-  }
-  if (!/[A-Za-z]/.test(value) || !/[0-9]/.test(value)) {
-    throw new HttpError(
-      400,
-      "Password must include at least one letter and one number.",
-    );
+  if (commonlyUsedPassphrases.has(value.trim().toLowerCase()) || new Set([...value]).size === 1) {
+    throw new HttpError(400, "Choose a less common password.");
   }
   return value;
 }
@@ -517,101 +512,6 @@ export function safeRelativeReturnPath(value: string | null | undefined): string
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
-export function getGoogleOAuthConfig(): {
-  clientId: string;
-  clientSecret: string;
-} | null {
-  const e = runtimeEnv();
-  const clientId = e.GOOGLE_CLIENT_ID?.trim();
-  const clientSecret = e.GOOGLE_CLIENT_SECRET?.trim();
-  if (!clientId || !clientSecret) return null;
-  return { clientId, clientSecret };
-}
-
-export function isGoogleOAuthConfigured(): boolean {
-  return getGoogleOAuthConfig() !== null;
-}
-
-export async function findOrCreateGoogleUser(profile: {
-  sub: string;
-  email: string;
-  name?: string;
-}): Promise<AuthenticatedUser> {
-  const db = database();
-  const email = normalizeEmail(profile.email);
-  const bySub = await db
-    .prepare(
-      "SELECT id, email, display_name, auth_provider FROM auth_users WHERE google_sub = ?",
-    )
-    .bind(profile.sub)
-    .first<{
-      id: string;
-      email: string;
-      display_name: string;
-      auth_provider: string;
-    }>();
-
-  if (bySub) {
-    return {
-      userId: bySub.id,
-      displayName: bySub.display_name,
-      email: bySub.email,
-      fullName: bySub.display_name,
-      authProvider: "google",
-    };
-  }
-
-  const byEmail = await db
-    .prepare("SELECT id, auth_provider FROM auth_users WHERE email = ?")
-    .bind(email)
-    .first<{ id: string; auth_provider: string }>();
-  if (byEmail) {
-    throw new HttpError(
-      409,
-      "An email/password account already exists for this address. Sign in with your password.",
-    );
-  }
-
-  const id = "usr_" + crypto.randomUUID();
-  const displayName = validateDisplayName(profile.name, email);
-  const now = new Date().toISOString();
-  const recentAvatars = await db
-    .prepare(
-      "SELECT avatar_id FROM auth_users WHERE avatar_id IS NOT NULL ORDER BY created_at DESC LIMIT 8",
-    )
-    .all<{ avatar_id: string }>()
-    .then((r) => (r.results ?? []).map((x) => x.avatar_id))
-    .catch(() => [] as string[]);
-  const initialAvatarId = pickRandomAvatarId(recentAvatars);
-  try {
-    await db
-      .prepare(
-        "INSERT INTO auth_users (id, email, display_name, password_hash, password_salt, auth_provider, google_sub, avatar_id, created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, 'google', ?, ?, ?, ?)",
-      )
-      .bind(id, email, displayName, profile.sub, initialAvatarId, now, now)
-      .run();
-  } catch (colErr) {
-    if (/no column named avatar_id/i.test(String(colErr))) {
-      await db
-        .prepare(
-          "INSERT INTO auth_users (id, email, display_name, password_hash, password_salt, auth_provider, google_sub, created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, 'google', ?, ?, ?)",
-        )
-        .bind(id, email, displayName, profile.sub, now, now)
-        .run();
-    } else {
-      throw colErr;
-    }
-  }
-
-  return {
-    userId: id,
-    displayName,
-    email,
-    fullName: displayName,
-    authProvider: "google",
-  };
-}
-
 export type ActiveSessionItem = {
   id: string;
   deviceLabel: string;
@@ -834,12 +734,12 @@ export async function requestPasswordReset(
   const configured = isSecurityEmailConfigured();
   const user = await db
     .prepare(
-      "SELECT id, email, password_hash FROM auth_users WHERE email = ? LIMIT 1",
+      "SELECT id, email, password_hash, auth_provider, google_sub FROM auth_users WHERE email = ? LIMIT 1",
     )
     .bind(email)
-    .first<{ id: string; email: string; password_hash: string | null }>();
+    .first<{ id: string; email: string; password_hash: string | null; auth_provider: string; google_sub: string | null }>();
 
-  if (user && user.password_hash) {
+  if (configured && user && (user.password_hash || (user.auth_provider === "google" && user.google_sub))) {
     const rawToken = randomToken(32);
     const tokenHash = await sha256Hex(rawToken);
     const nowMs = Date.now();
@@ -884,9 +784,8 @@ export async function requestPasswordReset(
     accepted: true,
     emailDeliveryConfigured: configured,
     message: configured
-      ? "If an account exists for that email address, password reset instructions have been sent. Reset links expire in 30 minutes."
-      : `If an account exists for that email address, a reset request was recorded. Outbound email delivery is not configured on this deployment yet — contact ${APP_RELEASE.supportEmail} if you need manual recovery assistance.`,
-  };
+      ? "If an account exists for that email address, you may receive a password reset email. The link expires in 30 minutes."
+      : `Email recovery is unavailable on this deployment. Contact ${APP_RELEASE.supportEmail} for account assistance.`,  };
 }
 
 /**
@@ -906,7 +805,6 @@ export async function completePasswordReset(
   const validatedNew = validatePassword(newPassword);
   const tokenHash = await sha256Hex(rawToken.trim());
   const nowMs = Date.now();
-  const nowIso = new Date(nowMs).toISOString();
   const db = database();
 
   const row = await db
@@ -928,29 +826,22 @@ export async function completePasswordReset(
     throw new HttpError(400, "Reset token is invalid or has expired.");
   }
 
-  const consumed = await db
-    .prepare(
-      `UPDATE v3_auth_tokens
-       SET consumed_at = ?
-       WHERE id = ? AND consumed_at IS NULL AND expires_at > ?`,
-    )
-    .bind(nowIso, row.id, nowMs)
-    .run();
-  if (!consumed.meta.changes) {
-    throw new HttpError(400, "Reset token has already been used or expired.");
-  }
-
   const { hashHex, saltHex } = await hashPassword(validatedNew);
-  await db.batch([
-    db
-      .prepare(
-        "UPDATE auth_users SET password_hash = ?, password_salt = ?, updated_at = ? WHERE id = ?",
-      )
-      .bind(hashHex, saltHex, nowIso, row.user_id),
-    db
-      .prepare("DELETE FROM auth_sessions WHERE user_id = ?")
-      .bind(row.user_id),
+  const completionTime = Date.now();
+  const completed = new Date(completionTime).toISOString();
+  const usable = "EXISTS (SELECT 1 FROM v3_auth_tokens WHERE id=? AND consumed_at IS NULL AND expires_at>?)";
+  const [updated, , consumed] = await db.batch([
+    db.prepare(
+      `UPDATE auth_users SET password_hash=?,password_salt=?,auth_provider='email',
+          google_sub=NULL,updated_at=? WHERE id=? AND ${usable}`,
+    ).bind(hashHex, saltHex, completed, row.user_id, row.id, completionTime),
+    db.prepare(`DELETE FROM auth_sessions WHERE user_id=? AND ${usable}`)
+      .bind(row.user_id, row.id, completionTime),
+    db.prepare("UPDATE v3_auth_tokens SET consumed_at=? WHERE id=? AND consumed_at IS NULL AND expires_at>?")
+      .bind(completed, row.id, completionTime),
   ]);
+  if (updated.meta.changes !== 1 || consumed.meta.changes !== 1)
+    throw new HttpError(400, "Reset token has already been used or expired.");
   return { reset: true };
 }
 

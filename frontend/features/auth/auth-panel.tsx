@@ -48,12 +48,11 @@ export type AuthSessionResponse = {
 type Props = {
   initialMode?: "signin" | "register";
   returnTo?: string;
-  googleEnabled?: boolean;
   onAuthenticated?: (session: AuthSessionResponse) => void;
 };
 
 function sanitizeReturnTo(value?: string): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/";
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\") || /[\r\n]/.test(value)) return "/";
   if (value === "/signin" || value.startsWith("/api/auth")) return "/";
   return value;
 }
@@ -61,7 +60,6 @@ function sanitizeReturnTo(value?: string): string {
 export default function AuthPanel({
   initialMode = "signin",
   returnTo = "/",
-  googleEnabled: googleEnabledProp,
   onAuthenticated,
 }: Props) {
   const [mode, setMode] = useState<"signin" | "register" | "forgot" | "reset">(
@@ -78,7 +76,6 @@ export default function AuthPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
-  const [googleEnabled, setGoogleEnabled] = useState(!!googleEnabledProp);
   const submitLock = useRef(false);
 
   useEffect(() => {
@@ -89,6 +86,9 @@ export default function AuthPanel({
       let alive = true;
       queueMicrotask(() => {
         if (!alive) return;
+        const url = new URL(window.location.href);
+        url.searchParams.delete("reset_token");
+        window.history.replaceState(window.history.state, "", url);
         setResetToken(tok.trim());
         setMode("reset");
       });
@@ -99,22 +99,17 @@ export default function AuthPanel({
   }, []);
 
   useEffect(() => {
-    if (googleEnabledProp !== undefined) return;
     let alive = true;
     api<AuthSessionResponse>("/api/auth/session")
       .then((s) => {
         if (!alive) return;
-        setGoogleEnabled(!!s.googleEnabled);
         if (s.authenticated && onAuthenticated) onAuthenticated(s);
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [googleEnabledProp, onAuthenticated]);
-
-  const effectiveGoogleEnabled =
-    googleEnabledProp !== undefined ? googleEnabledProp : googleEnabled;
+  }, [onAuthenticated]);
 
   const safeTarget = sanitizeReturnTo(returnTo);
 
@@ -202,19 +197,6 @@ export default function AuthPanel({
         </button>
       </div>
 
-      {effectiveGoogleEnabled && (mode === "signin" || mode === "register") && (
-        <div className="x2-auth-oauth">
-          <a
-            className="x1-secondary x1-motion-button"
-            href={`/api/auth/google?return_to=${encodeURIComponent(safeTarget)}`}
-          >
-            Continue with Google
-            <ArrowRight size={15} />
-          </a>
-          <p className="x1-caption">Or continue with email and password</p>
-        </div>
-      )}
-
       <form className="x1-form" onSubmit={handleSubmit}>
         {mode === "register" && (
           <label>
@@ -278,7 +260,7 @@ export default function AuthPanel({
                     ? "new-password"
                     : "current-password"
                 }
-                minLength={mode === "register" || mode === "reset" ? 10 : 1}
+                minLength={mode === "register" || mode === "reset" ? 15 : 1}
                 maxLength={128}
                 required
                 value={password}
@@ -364,7 +346,7 @@ export default function AuthPanel({
         {mode === "register" && (
           <>
             <p className="x1-caption">
-              Use at least 10 characters including one letter and one number.
+              Use at least 15 characters. A passphrase works well.
               Your password is never stored as plain text.
             </p>
             <label className="x1-checkbox">
