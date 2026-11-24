@@ -910,15 +910,19 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
 }
 
 /* ---------- White Major Page & Section Headings (High-Contrast Hierarchy) ---------- */
-.x51-topbar-title,
-.x53-dashboard-title,
-.x53-focused-title,
-.x53-cal-header h2,
-.x53-pw-card-head h2,
-.ss-v3-strategy-head h2,
-.ss-v3-results-title,
-.ss-v3-comm-header h1,
-.ss-v31-heading-white {
+.x1-app .x51-topbar-title,
+.x1-app .x53-dashboard-title,
+.x1-app .x53-focused-title,
+.x1-app .x53-cal-header h2,
+.x1-app .x53-pw-card-head h2,
+.x1-app .x53-globe-title,
+.x1-app .x53-graveyard-title,
+.x1-app .ss-v3-strategy-head h2,
+.x1-app .ss-v3-results-title,
+.x1-app .ss-v3-comm-header h1,
+.x1-app .ss-v31-heading-white,
+.x1-app .ss-v31-asset-title,
+.x1-app .ss-v31-pattern-title {
   color: var(--ss-text-strong) !important;
   font-weight: 700;
   letter-spacing: -0.015em;

@@ -156,6 +156,9 @@ function sourceBadgeLabel(rawPreset?: string, rawSource?: string): string {
   if (rawPreset && rawPreset in SCAN_UNIVERSE_LABEL) {
     return SCAN_UNIVERSE_LABEL[rawPreset as ScanUniversePreset];
   }
+  if (rawSource && /private\s*owner|configured exchange feed/i.test(rawSource)) {
+    return "Market";
+  }
   return rawSource || "Market";
 }
 

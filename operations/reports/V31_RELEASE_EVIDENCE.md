@@ -70,6 +70,7 @@ No secrets or paid services were created or requested during this release. To en
    - Optional for password reset / email verification outbound mail: `RESEND_API_KEY` or `SS_EMAIL_WEBHOOK_URL`
 3. **Register Entitled Instrument Mapping & Rights in `x2_providers`:** Sign in as the configured `X2_OWNER_SUBJECT`, open owner Data Connections (`/api/x2/providers`), save the verified contract expiry, rights (`display`, `analysis`, `derivedDisplay`, `storage`, `redistribution`), and licensed symbol list, then run `Test connection` to transition health to `CONNECTED`.
 4. **Verify Live Ordinary-Member Scan:** Test with a non-owner account on `Market` (`1d`, `1h`, and `30m` on TrueData) and confirm closed-session evaluation + GRAVEYARD reload.
+5. **Restart Private VPC `MARKET_DATA_ADAPTER` Host (Owner `NIFTY MIDCAP` Live Tile):** Pull `main` on the private VPC adapter host and restart `pnpm run broker:adapter` so the adapter process loads the verified `NSE:NIFTYMIDCAP100` (`99926011`) seed & `30m` candle support alongside the deployed Worker.
 
 ---
 

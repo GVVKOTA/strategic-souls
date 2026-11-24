@@ -268,7 +268,10 @@ export default function AssetTerminal({
   onAnalyze,
   notify,
 }: Props) {
-  const [assetState, setAsset] = useState<AssetResearch | null>(null);
+  const [assetEntry, setAssetEntry] = useState<{
+    requestedId: string;
+    data: AssetResearch;
+  } | null>(null);
   const [ownerQuote, setOwnerQuote] = useState<NormalizedMarketQuote | null>(null);
   const [layout, setLayout] = useState<ChartLayout>(emptyLayout);
   const [interval, setInterval] = useState<Interval>("1d");
@@ -299,7 +302,7 @@ export default function AssetTerminal({
   const [ideas, setIdeas] = useState<PublishedSoulCard[]>([]);
   const [ideasLoading, setIdeasLoading] = useState(false);
 
-  const asset = assetState?.id === id ? assetState : null;
+  const asset = assetEntry?.requestedId === id ? assetEntry.data : null;
   const surface = useRef<HTMLElement>(null);
   const chartBoxRef = useRef<HTMLDivElement>(null);
   const activeIdRef = useRef(id);
@@ -359,7 +362,7 @@ export default function AssetTerminal({
     )
       .then((v) => {
         if (!alive || activeIdRef.current !== reqId) return;
-        setAsset(v.asset);
+        setAssetEntry({ requestedId: reqId, data: v.asset });
         if (loadedId.current !== reqId) {
           loadedId.current = reqId;
           setLayout(v.layout);

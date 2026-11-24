@@ -73,11 +73,18 @@ function formatCompactObservation(
   }
 
   if (card.quality === "REFERENCE") {
-    const datePart = card.sourceObservedAtUTC
+    const rawDate = card.sourceObservedAtUTC
       ? card.sourceObservedAtUTC.slice(0, 10)
       : "";
+    const shortDate = rawDate
+      ? new Intl.DateTimeFormat("en-IN", {
+          timeZone: "UTC",
+          day: "numeric",
+          month: "short",
+        }).format(new Date(`${rawDate}T00:00:00Z`))
+      : "";
     return {
-      text: datePart ? `${datePart} · Reference` : "Reference",
+      text: shortDate ? `${shortDate} · Ref` : "Reference",
       statusKind: "reference",
       statusText: "Reference",
     };
@@ -517,7 +524,7 @@ export default function MarketOverviewGrid({
           const obs = formatCompactObservation(card, asOfUTC);
           const sparkReturn = card.sparklineReturnPct ?? null;
 
-          const venueInName = card.name.toUpperCase().includes(`(${card.venue.toUpperCase()})`);
+          const venueInName = card.name.toUpperCase().includes(card.venue.toUpperCase());
           const cardTitle = `${card.name}${venueInName ? "" : ` (${card.venue})`}${card.contractLabel ? ` · ${card.contractLabel}` : ""} · ${obs.text}`;
 
           return (

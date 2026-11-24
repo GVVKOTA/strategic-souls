@@ -667,10 +667,41 @@ async function sourceResearch(
   ) {
     try {
       const isIntraday = interval === "30m" || interval === "1h";
+      let targetGatewayId = id;
+      if (/^MCX:(GOLD|SILVER)$/i.test(id)) {
+        const root = id.split(":")[1].toUpperCase();
+        const nowMs = Date.now();
+        const pickActive = (list: typeof VERIFIED_SEED_INSTRUMENTS) =>
+          list
+            .filter(
+              (i) =>
+                i.exchange === "MCX" &&
+                i.segment === "FUTURE" &&
+                i.symbol.toUpperCase() === root &&
+                (!i.expiry || Date.parse(`${i.expiry}T23:59:59+05:30`) >= nowMs),
+            )
+            .sort((a, b) => (a.expiry ?? "9999").localeCompare(b.expiry ?? "9999"))[0];
+        let matched = pickActive(VERIFIED_SEED_INSTRUMENTS);
+        try {
+          const found = await gatewaySearchInstruments({
+            isOwner: isDataOwner(subject),
+            exchange: "MCX",
+            segment: "FUTURE",
+            q: root,
+            limit: 40,
+            runtimeEnv: environment(),
+          });
+          const livePick = pickActive(found.instruments);
+          if (livePick) matched = livePick;
+        } catch {
+          /* Fall back cleanly to verified unexpired seed contract */
+        }
+        if (matched) targetGatewayId = matched.id;
+      }
       const series = await gatewayCandles({
         authenticated: true,
         isOwner: isDataOwner(subject),
-        id,
+        id: targetGatewayId,
         interval: isIntraday ? interval : "1d",
         days: interval === "30m" ? 30 : interval === "1h" ? 45 : 180,
         runtimeEnv: environment(),
@@ -692,7 +723,7 @@ async function sourceResearch(
         const aggregated = isIntraday ? rawBars : aggregateCandles(rawBars, interval);
         return {
           ...result,
-          id: series.instrument.id,
+          id,
           name: series.instrument.name,
           instrument: {
             id: series.instrument.id,
