@@ -333,50 +333,23 @@ test("signin rejects wrong password or unknown email with uniform 401 and succee
   assert.equal(freshCheck.data.authenticated, true);
 });
 
-test("Google OAuth callback rejects mismatched state, clears OAuth cookies, and blocks upstream redirects", async () => {
+test("Google initiation and callback are retired even when old server configuration remains", async () => {
   env.GOOGLE_CLIENT_ID = "test-client-id";
   env.GOOGLE_CLIENT_SECRET = "test-client-secret";
   try {
-    const start = await callAuth("google?return_to=%2Fworkspace");
-    assert.equal(start.status, 302);
-    const location = start.headers.get("location") || "";
-    assert.match(location, /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
-
-    const badState = await callAuth(
-      "google/callback?code=fake-code&state=wrong-state",
-      undefined,
-      { cookie: "__ss_oauth_state=expected-state; __ss_oauth_pkce=verifier123" },
-    );
-    assert.equal(badState.status, 400);
-    const cleared = badState.headers.get("set-cookie") || "";
-    assert.match(cleared, /__ss_oauth_state=;/);
-    assert.match(cleared, /Max-Age=0/);
-
-    let sawManual = false;
-    mockFetch = async (_url, init) => {
-      sawManual = init?.redirect === "manual";
-      return new Response(null, { status: 302, headers: { location: "https://evil.invalid" } });
-    };
-    const redirected = await callAuth(
-      "google/callback?code=fake-code&state=expected-state",
-      undefined,
-      { cookie: "__ss_oauth_state=expected-state; __ss_oauth_pkce=verifier123" },
-    );
-    assert.equal(sawManual, true);
-    assert.equal(redirected.status, 502);
+    for (const path of ["google?return_to=%2Fworkspace", "google/callback?code=test&state=test"]) {
+      const result = await callAuth(path);
+      assert.equal(result.status, 404);
+      assert.equal(result.headers.get("location"), null);
+      assert.equal(result.headers.get("set-cookie"), null);
+    }
   } finally {
     delete env.GOOGLE_CLIENT_ID;
     delete env.GOOGLE_CLIENT_SECRET;
-    mockFetch = () => {
-      throw new Error("Unexpected network fetch in auth tests.");
-    };
   }
 });
 
-test("Google OAuth fails closed when credentials are missing and return paths block open redirects", async () => {
-  const google = await callAuth("google");
-  assert.equal(google.status, 503);
-
+test("Sign-in return paths reject open redirects and auth endpoints", () => {
   assert.equal(sessionMod.safeRelativeReturnPath("/workspace"), "/workspace");
   assert.equal(sessionMod.safeRelativeReturnPath("/?view=strategy"), "/?view=strategy");
   assert.equal(sessionMod.safeRelativeReturnPath("//evil.example"), "/");
