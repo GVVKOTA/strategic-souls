@@ -10,11 +10,12 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const [configured, dashboard, membership] = await Promise.all([
-    sharedHistoryGrants().catch(() => []),
-    sharedHistoryGrants(Date.now(), "dashboard").catch(() => []),
+  const [grants, membership] = await Promise.all([
+    sharedHistoryGrants(Date.now(), "ingestion").catch(() => []),
     niftyUniverse().catch(() => null),
   ]);
+  const configured = grants.filter(({ provider }) => provider !== "BHARATSTOCK");
+  const dashboard = grants.filter(({ provider }) => provider === "BHARATSTOCK");
   const dates = await readSharedDailyQuotes([...BHARATSTOCK_INDEX_SYMBOLS.keys()], dashboard).catch(() => null);
   const connectedTiles = dates ? [...dates.values()].filter(({ quality }) => quality === "PUBLISHED_EOD").length : 0;
   const [daily, halfHour, hourly] = await Promise.all((["1d", "30m", "1h"] as const).map((resolution) =>

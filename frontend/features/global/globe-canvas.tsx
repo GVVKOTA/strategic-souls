@@ -339,6 +339,7 @@ export default function GlobeCanvas({
         id: number;
       } | null = null,
       pinchDistance: number | null = null,
+      pinchStartZoom = GLOBE_ZOOM_MIN,
       selectedId = "",
       target: { yaw: number; pitch: number } | null = null;
 
@@ -1091,11 +1092,13 @@ export default function GlobeCanvas({
 
     const onDown = (e: PointerEvent) => {
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      el.setPointerCapture(e.pointerId);
       if (activePointers.size === 2) {
         drag = null;
         velYaw = 0;
         velPitch = 0;
         pinchDistance = currentPinchDistance();
+        pinchStartZoom = settings.current.zoom;
         settings.current.onPause();
         return;
       }
@@ -1111,7 +1114,6 @@ export default function GlobeCanvas({
       velYaw = 0;
       velPitch = 0;
       settings.current.onPause();
-      el.setPointerCapture(e.pointerId);
     };
 
     const onMove = (e: PointerEvent) => {
@@ -1122,9 +1124,13 @@ export default function GlobeCanvas({
         const nextDist = currentPinchDistance();
         if (nextDist !== null && pinchDistance !== null && pinchDistance > 8) {
           const ratio = nextDist / pinchDistance;
-          const nextZoom = clampGlobeZoom(settings.current.zoom * ratio);
-          settings.current.onZoom(Math.round(nextZoom * 100) / 100);
-          pinchDistance = nextDist;
+          const nextZoom = clampGlobeZoom(pinchStartZoom * ratio);
+          const [first, second] = [...activePointers.values()];
+          const bounds = el.getBoundingClientRect();
+          const focus = unprojectScreenToLatLon((first.x + second.x) / 2 - bounds.left,
+            (first.y + second.y) / 2 - bounds.top, rotation.current.yaw, rotation.current.pitch,
+            bounds.width, bounds.height, currentZoom.current);
+          settings.current.onZoom(Math.round(nextZoom * 100) / 100, focus);
           start();
         }
         return;
