@@ -360,11 +360,12 @@ export function buildShareSafeSoulSummary(
     (l) => l.displayAllowed === false || l.derivedDisplayAllowed === false,
   );
 
-  if (usesPrivateBroker && audience === "PUBLIC") {
+  if (usesPrivateBroker || lineage.some((entry) => entry.attribution)) {
     return {
       allowed: false,
-      blockReason:
-        "This scan used private non-redistributable market data, which cannot be published publicly. Run on licensed shared market data to publish.",
+      blockReason: usesPrivateBroker
+        ? "This scan uses private non-redistributable market data."
+        : "The market-data grant for this scan does not cover Community publication.",
       mode: "CLASSIC",
       formula: "",
       timeframe: "1d",

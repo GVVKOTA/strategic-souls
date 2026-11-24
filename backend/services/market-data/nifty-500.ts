@@ -3,6 +3,7 @@ import { digest } from "../../engines/engine";
 import { HttpError } from "../../middleware/security";
 
 export const NIFTY_500_COUNT = 500;
+export const EXPLICIT_SCOPE_VERSION = "x8-scoped-v1";
 export type NiftyConstituent = { id: string; isin: string; name: string; industry: string };
 type UniverseRow = {
   version: string;
@@ -37,7 +38,7 @@ export async function niftyUniverse(version?: string) {
   const db = database();
   const row = await (version
     ? db.prepare("SELECT * FROM x78_market_universes WHERE version=?").bind(version)
-    : db.prepare("SELECT * FROM x78_market_universes ORDER BY effective_date DESC,sequence DESC LIMIT 1")
+    : db.prepare("SELECT * FROM x78_market_universes WHERE version<>? AND effective_date<=? ORDER BY effective_date DESC,sequence DESC LIMIT 1").bind(EXPLICIT_SCOPE_VERSION, new Intl.DateTimeFormat("en-CA",{ timeZone: "Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit" }).format(Date.now()))
   ).first<UniverseRow>();
   if (!row) return null;
   return {

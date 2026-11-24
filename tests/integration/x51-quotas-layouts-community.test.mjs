@@ -1,3 +1,4 @@
+import { OFFICIAL_FX_PAIRS } from "../../backend/services/market-data/market-data.ts";
 /**
  * Strategic Souls X5.1 — Integration & Negative Security Tests:
  * - 9-Card Market Grid D1 persistence, optimistic concurrency (409), validation (400), IDOR isolation
@@ -194,10 +195,11 @@ function load(path) {
     }
     if (normalized.endsWith("/backend/services/market-data/data-service.ts")) {
       return new vm.SyntheticModule(
-        ["researchUniverse", "currentDisplayRights", "isDataOwner", "PRIVATE_EXCHANGE_FEED_LABEL", "canScanExchange"],
+        ["researchUniverse", "currentDisplayRights", "isDataOwner", "PRIVATE_EXCHANGE_FEED_LABEL", "canScanExchange", "scanScopeInstruments"],
         function () {
           this.setExport("isDataOwner", () => false);
           this.setExport("canScanExchange", async () => true);
+          this.setExport("scanScopeInstruments", async () => ["ECB:USDINR"]);
           this.setExport("PRIVATE_EXCHANGE_FEED_LABEL", "Configured Exchange Feed (Private)");
           this.setExport("currentDisplayRights", async () => ({
             displayAllowed: true,
@@ -247,9 +249,10 @@ function load(path) {
     }
     if (normalized.endsWith("/backend/services/market-data/market-data.ts")) {
       return new vm.SyntheticModule(
-        ["loadMarketData", "marketSnapshot"],
+        ["OFFICIAL_FX_PAIRS", "loadMarketData", "marketSnapshot"],
         function () {
           const fn = async () => structuredClone(marketFixture);
+          this.setExport("OFFICIAL_FX_PAIRS", OFFICIAL_FX_PAIRS);
           this.setExport("loadMarketData", fn);
           this.setExport("marketSnapshot", fn);
         },
@@ -732,7 +735,7 @@ test("Media Upload validator enforces auth (401), same-origin CSRF (403), reject
   assert.equal(noR2Json.code, "OBJECT_STORAGE_NOT_CONFIGURED");
 });
 
-test("X7.8 market jobs pin all 500 IDs across modes, reconcile results and protect ownership", async () => {
+test("Market jobs pin all 500 IDs across modes, reconcile results and protect ownership", async () => {
   const { importNiftyUniverse, niftyUniverse } = await importMod("backend/services/market-data/nifty-500.ts");
   const { processMarketScanBatch } = await importMod("backend/services/research/market-scan-jobs.ts");
   const route = await importMod("app/api/strategy/scan/route.ts");
@@ -790,6 +793,10 @@ test("X7.8 market jobs pin all 500 IDs across modes, reconcile results and prote
     assert.equal(stored.universeVersion, saved.version);
     assert.equal(stored.results.eligible, 499);
     assert.equal(stored.results.unknown, 1);
+    assert.equal(stored.coverage.selected, 500);
+    assert.equal(stored.coverage.evaluated, 499);
+    assert.equal(stored.coverage.insufficient, 1);
+    assert.equal(stored.coverage.deferred, 0);
     assert.equal(stored.results.matches + stored.results.failed + stored.results.unknown, 500);
     assert.equal(new Set(stored.results.results.map((row) => row.instrumentId)).size, 500);
     if (variant === "CLASSIC") {
@@ -825,5 +832,55 @@ test("X7.8 market jobs pin all 500 IDs across modes, reconcile results and prote
   assert.equal(sql.prepare("SELECT count(*) AS n FROM x78_market_scan_batches WHERE job_id=?").get(cancelled.jobId).n, 0);
   const afterCancel = await scanQuotaMod.getScanQuotaSummary(DB, "user-b", nowMs);
   assert.equal(afterCancel.classic.used, count.classic.used - 1);
-  console.info("X7.8 5 × 500 synthetic jobs plus cancellation, simulated provider and D1, " + Math.round(performance.now() - start) + "ms");
+  const { POST } = await importMod("app/api/x1/workspace/route.ts");
+  const ownerList = await POST(makeReq("/api/x1/workspace", "POST", {
+    action: "create-list", name: "Scoped test watchlist", requestId: randomUUID(),
+  }));
+  const { id: watchlistId } = await ownerList.json();
+  assert.equal(ownerList.status, 200);
+  const assets = Array.from({ length: 7 }, (_, i) => "NSE:FIX" + String(i).padStart(3, "0"));
+  assert.equal((await POST(makeReq("/api/x1/workspace", "POST", {
+    action: "list-items", id: watchlistId, version: 1, items: assets, requestId: randomUUID(),
+  }))).status, 200);
+  const scopeRequest = {
+    action: "run-scan", scopeIntent: "EXPLICIT", universePreset: "MY_WATCHLIST", watchlistId,
+    mode: "SIMPLE", interval: "1d", scanRequestVersion: 2, requestId: randomUUID(),
+    name: "Pinned watchlist fixture", description: "Two-batch watchlist with deliberately successful matches.",
+    formula: "close > 0",
+    outcome: { family: "POSITIVE_RETURN", horizon: 5, threshold: 0, target: 5, stop: 3, costBps: 0 },
+  };
+  const submittedScope = await route.POST(makeReq("/api/strategy/scan", "POST", scopeRequest));
+  assert.equal(submittedScope.status, 202);
+  const scoped = await submittedScope.json();
+  assert.equal(scoped.coverage.selected, 7);
+  // Another account must not resolve the private watchlist by its ID.
+  currentUser = { userId: "user-a", displayName: "Alice Quant", email: "a@test.local", authProvider: "email" };
+  assert.equal((await route.POST(makeReq("/api/strategy/scan", "POST", { ...scopeRequest, requestId: randomUUID() }))).status, 404);
+  currentUser = { userId: "user-b", displayName: "Bob Macro", email: "b@test.local", authProvider: "email" };
+  const loader = async (_subject, options) => {
+    const asOf = new Date(nowMs).toISOString();
+    return { datasets: options.instrumentIds.map((instrumentId) => ({
+      instrumentId, permitted: true, source: "Fixture", observations: [{ eventAt: asOf, knownAt: asOf, close: 10 }],
+    })), excluded: [], lineage: [], source: "Fixture", asOf };
+  };
+  assert.equal(await processMarketScanBatch(loader), true);
+  const progress = await (await route.GET(makeReq("/api/strategy/scan?jobId=" + scoped.jobId))).json();
+  assert.equal(progress.coverage.evaluated, 5);
+  assert.equal(progress.coverage.deferred, 2);
+  const chargedWhileRunning = (await scanQuotaMod.getScanQuotaSummary(DB, "user-b", nowMs)).classic.used;
+  assert.equal((await (await route.POST(makeReq("/api/strategy/scan", "POST", { action: "cancel", jobId: scoped.jobId }))).json()).state, "CANCELLED");
+  assert.equal((await scanQuotaMod.getScanQuotaSummary(DB, "user-b", nowMs)).classic.used, chargedWhileRunning - 1,
+    "Cancellation after evaluation releases the reservation");
+  const deadlineSubmission = await route.POST(makeReq("/api/strategy/scan", "POST", { ...scopeRequest, requestId: randomUUID() }));
+  assert.equal(deadlineSubmission.status, 202);
+  const overdue = await deadlineSubmission.json();
+  assert.equal(await processMarketScanBatch(loader), true);
+  sql.prepare("UPDATE x78_market_scan_jobs SET deadline=? WHERE id=?").run(new Date(nowMs - 1).toISOString(), overdue.jobId);
+  assert.equal(await processMarketScanBatch(loader), true);
+  const timedOut = await (await route.GET(makeReq("/api/strategy/scan?jobId=" + overdue.jobId))).json();
+  assert.equal(timedOut.state, "PARTIAL");
+  assert.equal(timedOut.coverage.evaluated, 5);
+  assert.equal(timedOut.coverage.deferred, 2);
+  assert.equal(timedOut.coverage.deniedOrFailed, 0);
+  console.info("X8 5 × 500 synthetic jobs plus scoped cancellation and timeout, simulated provider and D1, " + Math.round(performance.now() - start) + "ms");
 });

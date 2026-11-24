@@ -1,12 +1,13 @@
+import { archivalScanRows } from "./scan-retention";
 import { database } from "../../../database/queries/repository";
 import { digest } from "../../engines/engine";
 import { compileFormula, computeScanMetrics, evaluateScan, requiredScanBars,
   type ScanReport, type ScanResult } from "../../engines/scan";
 import { matchDrawnPattern, validateStrokePoints, type DrawPoint, type DrawScanReport } from "../../engines/pattern-draw";
 import { HttpError } from "../../middleware/security";
-import { canScanExchange, researchUniverse, type ResearchUniverse } from "../market-data/data-service";
-import { NIFTY_500_COUNT, niftyUniverse } from "../market-data/nifty-500";
-import { validateResearch, validateScanRequestScope, type ResearchDefinition } from "./research";
+import { canScanExchange, isDataOwner, researchUniverse, scanScopeInstruments, type ResearchUniverse } from "../market-data/data-service";
+import { EXPLICIT_SCOPE_VERSION, niftyUniverse } from "../market-data/nifty-500";
+import { isScanUniversePreset, scanUniverseForPreset, validateResearch, validateScanRequestScope, type ResearchDefinition } from "./research";
 import { reserveScanSlot, releaseScanReservation, type ScanQuotaTier } from "./scan-quota";
 
 const BATCH_SIZE = 5;
@@ -23,22 +24,44 @@ type State = "QUEUED" | "RUNNING" | "COMPLETE" | "PARTIAL" | "FAILED" | "CANCELL
 type Job = {
   id: string; subject: string; request_key: string; reservation_id: string; request_digest: string;
   universe_version: string; input: string; cutoff: string; deadline: string; state: State;
-  cursor: number; evaluated: number; lease: string | null; attempts: number; scan_id: string | null;
+  cursor: number; evaluated: number; selected_count: number; scope_members: string | null;
+  coverage: string | null; lease: string | null; attempts: number; scan_id: string | null;
 };
-type Outcome = ScanResult & { patternFit?: number };
+type Classification = "matched" | "unmatched" | "insufficient" | "deniedOrFailed" | "deferred";
+type Coverage = Record<Classification, number> & { selected: number; evaluated: number };
+type Outcome = ScanResult & { patternFit?: number; classification?: Classification };
 type Batch = { rows: Outcome[]; lineage: ResearchUniverse["lineage"]; drawReport?: DrawScanReport };
 
+const startingCoverage = (selected: number): Coverage => ({
+  selected, evaluated: 0, matched: 0, unmatched: 0, insufficient: 0, deniedOrFailed: 0, deferred: selected,
+});
+function recordCoverage(coverage: Coverage, rows: Outcome[]): Coverage {
+  const next = { ...coverage };
+  for (const row of rows) {
+    const group = row.classification ?? (row.status === "PASS" ? "matched" : row.status === "FAIL" ? "unmatched" : "insufficient");
+    if (group !== "deferred") next[group]++;
+  }
+  next.evaluated = next.matched + next.unmatched;
+  next.deferred = next.selected - next.evaluated - next.insufficient - next.deniedOrFailed;
+  return next;
+}
 const jobStatus = (job: Job) => ({
-  jobId: job.id, state: job.state, progress: Math.round(job.cursor * 100 / NIFTY_500_COUNT),
+  jobId: job.id, state: job.state, progress: Math.round(job.cursor * 100 / job.selected_count),
+  coverage: job.coverage ? JSON.parse(job.coverage) as Coverage : startingCoverage(job.selected_count),
   ...(job.scan_id ? { id: job.scan_id } : {}),
 });
 
 function parseInput(raw: Record<string, unknown>): Input {
+  const chosen = raw.scopeIntent === "EXPLICIT" ? raw.universePreset : "MARKET";
+  if (!isScanUniversePreset(chosen)) throw new HttpError(400, "Choose a supported scan scope.");
   const definitionInput = {
-    ...raw, instrumentIds: [], universe: "CONNECTED_MARKETS", universePreset: "MARKET",
-    watchlistId: undefined, customCsv: undefined, partialPolicy: "ALLOW_UNKNOWN",
+    ...raw, universe: scanUniverseForPreset(chosen), universePreset: chosen,
+    instrumentIds: chosen === "INDIVIDUAL" ? raw.instrumentIds : [],
+    watchlistId: chosen === "MY_WATCHLIST" ? raw.watchlistId : undefined,
+    customCsv: undefined, partialPolicy: "ALLOW_UNKNOWN",
   };
   try {
+    if (chosen === "CUSTOM_CSV") throw new Error("Use the private CSV research workflow.");
     validateScanRequestScope(definitionInput);
     if (raw.action === "run-draw-scan") {
       if (!Array.isArray(raw.strokePoints) || raw.strokePoints.length > 400)
@@ -53,16 +76,47 @@ function parseInput(raw: Record<string, unknown>): Input {
         ...definitionInput, mode: "ADVANCED", formula: "close > 0",
         outcome: { family: "POSITIVE_RETURN", horizon: 10, threshold: 0, target: 5, stop: 3, costBps: 0 },
       });
+      if (chosen === "INDIVIDUAL" && definition.instrumentIds.length !== 1)
+        throw new Error("Choose a single instrument from Asset Research.");
       matchDrawnPattern(points, [], { windowBars, minPatternFit });
       return { definition, origin: "DRAW", draw: { points, windowBars, minPatternFit } };
     }
     const definition = validateResearch(definitionInput);
+    if (chosen === "INDIVIDUAL" && definition.instrumentIds.length !== 1)
+      throw new Error("Choose a single instrument from Asset Research.");
     compileFormula(definition.formula);
     const origin = definition.mode === "SIMPLE" ? "CLASSIC" : raw.origin === "DISCOVER" ? "DISCOVER" : "BUILD";
     return { definition, origin };
   } catch (err) {
     throw new HttpError(400, (err as Error).message);
   }
+}
+
+async function resolveScope(subject: string, definition: ResearchDefinition) {
+  const preset = definition.universePreset ?? "MARKET";
+  if (preset === "MARKET") {
+    const universe = await niftyUniverse();
+    if (!universe) throw new HttpError(503, "The Nifty 500 constituent snapshot is unavailable. No scan was charged.");
+    return { version: universe.version, members: universe.constituents.map((row) => row.id), defaultMarket: true };
+  }
+  let members: string[];
+  if (preset === "MY_WATCHLIST") {
+    const list = await database().prepare(
+      "SELECT payload FROM x1_records WHERE subject=? AND kind='watchlist' AND archived=0 AND (? IS NULL OR id=?) ORDER BY created_at,id LIMIT 1",
+    ).bind(subject, definition.watchlistId ?? null, definition.watchlistId ?? null).first<{ payload: string }>();
+    if (!list && definition.watchlistId) throw new HttpError(404, "Watchlist not found.");
+    const items = list ? JSON.parse(list.payload).items : [];
+    members = Array.isArray(items) ? items.filter((id: unknown): id is string =>
+      typeof id === "string" && /^[A-Z0-9]+:[A-Z0-9._&^-]{1,60}$/.test(id)) : [];
+  } else if (preset === "INDIVIDUAL") {
+    members = definition.instrumentIds;
+  } else {
+    members = await scanScopeInstruments(subject, preset, definition.interval);
+  }
+  members = [...new Set(members)].sort();
+  if (!members.length) throw new HttpError(422, "No eligible instruments are mapped to this scope. No scan was charged.");
+  if (members.length > 1000) throw new HttpError(422, "This scope exceeds the supported 1,000-instrument budget.");
+  return { version: EXPLICIT_SCOPE_VERSION, members, defaultMarket: false };
 }
 
 export async function submitMarketScan(subject: string, raw: Record<string, unknown>) {
@@ -80,9 +134,11 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
   };
   const existing = await prior();
   if (existing) return confirm(existing);
-  const universe = await niftyUniverse();
-  if (!universe) throw new HttpError(503, "The market constituent snapshot is unavailable. No scan was charged.");
-  if (!await canScanExchange(subject, input.definition.interval))
+  const scope = await resolveScope(subject, input.definition);
+  const refInterval = input.definition.interval !== "30m" && input.definition.interval !== "1h";
+  const allowsReference = refInterval && scope.members.some((id) => id.startsWith("ECB:"));
+  const hasExchange = scope.members.some((id) => !id.startsWith("ECB:"));
+  if (!allowsReference && !(hasExchange && await canScanExchange(subject, input.definition.interval, scope.members)))
     throw new HttpError(503, "Market history is unavailable for this account and timeframe. No scan was charged.");
   const cutoff = new Date().toISOString();
   const deadline = new Date(Date.parse(cutoff) + JOB_MS).toISOString();
@@ -97,18 +153,19 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
       const [queued] = await db.batch([
         db.prepare(
           `INSERT INTO x78_market_scan_jobs
-           (id,subject,request_key,request_digest,reservation_id,universe_version,input,cutoff,deadline,state)
-           SELECT ?,?,?,?,?,?,?,?,?,'QUEUED' WHERE EXISTS
+           (id,subject,request_key,request_digest,reservation_id,universe_version,input,cutoff,deadline,scope_members,selected_count,state)
+           SELECT ?,?,?,?,?,?,?,?,?,?,?,'QUEUED' WHERE EXISTS
              (SELECT 1 FROM x51_scan_reservations WHERE id=? AND state='RESERVED' AND lease_expires_at>=?)`,
-        ).bind(id, subject, requestKey, signature, reservation.id, universe.version,
-          JSON.stringify(input), cutoff, deadline, reservation.id, new Date().toISOString()),
+        ).bind(id, subject, requestKey, signature, reservation.id, scope.version,
+          JSON.stringify(input), cutoff, deadline, scope.defaultMarket ? null : JSON.stringify(scope.members),
+          scope.members.length, reservation.id, new Date().toISOString()),
         db.prepare(
           `UPDATE x51_scan_reservations SET lease_expires_at=?
            WHERE id=? AND EXISTS (SELECT 1 FROM x78_market_scan_jobs WHERE id=?)`,
         ).bind(holdUntil, reservation.id, id),
       ]);
       if (!queued.meta.changes) throw new HttpError(409, "The scan reservation expired. Retry the request.");
-      return { jobId: id, state: "QUEUED" as const, progress: 0 };
+      return { jobId: id, state: "QUEUED" as const, progress: 0, coverage: startingCoverage(scope.members.length) };
     } catch (err) {
       // A network failure can occur after D1 commits. Confirm ownership before releasing the reservation.
       const committed = await prior();
@@ -155,11 +212,10 @@ export async function cancelMarketScan(subject: string, id: unknown) {
     ).bind(job.id, subject),
     db.prepare(
       `UPDATE x51_scan_reservations
-       SET state=CASE WHEN (SELECT evaluated FROM x78_market_scan_jobs WHERE id=?)>0 THEN 'COMPLETED' ELSE 'CANCELLED' END,
-           completed_at=?
+       SET state='CANCELLED', completed_at=NULL
        WHERE id=? AND subject=? AND state IN ('RESERVED','RUNNING')
          AND EXISTS (SELECT 1 FROM x78_market_scan_jobs WHERE id=? AND state='CANCELLED')`,
-    ).bind(job.id, new Date().toISOString(), job.reservation_id, subject, job.id),
+    ).bind(job.reservation_id, subject, job.id),
     db.prepare(
       "DELETE FROM x78_market_scan_batches WHERE job_id=? AND EXISTS (SELECT 1 FROM x78_market_scan_jobs WHERE id=? AND state='CANCELLED')",
     ).bind(job.id, job.id),
@@ -172,7 +228,7 @@ export function evaluateMarketBatch(ids: string[], input: Input, data: ResearchU
   const datasets = data.datasets.filter((d) => members.has(d.instrumentId)).map((d) => ({
     ...d, observations: d.observations.filter((bar) => Date.parse(bar.eventAt) <= Date.parse(cutoff)),
   }));
-  const bySource = new Map(data.excluded.map((item) => [item.id, item.reason]));
+  const bySource = new Map(data.excluded.map((item) => [item.id, item]));
   const rows = new Map<string, Outcome>();
   let drawReport: DrawScanReport | undefined;
   if (input.draw) {
@@ -197,7 +253,8 @@ export function evaluateMarketBatch(ids: string[], input: Input, data: ResearchU
   }
   return {
     rows: ids.map((id) => rows.get(id) ?? {
-      instrumentId: id, status: "UNKNOWN", reasons: [bySource.get(id) ?? "Completed market history was unavailable."],
+      instrumentId: id, status: "UNKNOWN", reasons: [bySource.get(id)?.reason ?? "Completed market history was unavailable."],
+      classification: bySource.get(id)?.kind === "denied" || bySource.get(id)?.kind === "error" ? "deniedOrFailed" : "insufficient",
       latestEventAt: null, source: data.source,
     }),
     lineage: data.lineage.filter((row) => members.has(row.instrumentId)).map((row) => ({
@@ -228,8 +285,9 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
     : definition.formula;
   const results = summarize(ids.map((id) => outcomes.get(id) ?? {
     instrumentId: id, status: "UNKNOWN", reasons: ["The scan could not reach this instrument before its processing deadline."],
-    latestEventAt: null, source: "Unavailable",
+    latestEventAt: null, source: "Unavailable", classification: "deferred",
   }), formula, job.cutoff);
+  const coverage = recordCoverage(startingCoverage(ids.length), results.results);
   const state: State = results.eligible === 0 ? "FAILED" : results.unknown ? "PARTIAL" : "COMPLETE";
   const id = state === "FAILED" ? null : job.id;
   const reports = batches.flatMap((batch) => batch.drawReport ? [batch.drawReport] : []);
@@ -242,7 +300,7 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
   const payload = {
     scanTier: input.origin === "CLASSIC" ? "CLASSIC" : "ADVANCED", origin: input.origin,
     research: definition, rule: { version: results.version, formula }, description: definition.description,
-    universeVersion: job.universe_version, runState: state, completedAt: now, results,
+    universeVersion: job.universe_version, runState: state, completedAt: now, results: { ...results, results: archivalScanRows(results.results) }, coverage,
     sourceSnapshot: job.cutoff, source: "Market history",
     sourceLineage: batches.flatMap((batch) => batch.lineage),
     knownAtPolicy: "Completed candles observed by retrieval, with market events bounded by the acceptance cutoff.",
@@ -262,9 +320,9 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
        WHERE id=? AND EXISTS (SELECT 1 FROM x78_market_scan_jobs WHERE id=? AND lease=? AND state='RUNNING')`,
     ).bind(id ? "COMPLETED" : "FAILED", id ? now : null, id, job.reservation_id, job.id, job.lease),
     db.prepare(
-      `UPDATE x78_market_scan_jobs SET state=?,scan_id=?,cursor=?,evaluated=?,lease=NULL,lease_until=NULL,input='{}'
+      `UPDATE x78_market_scan_jobs SET state=?,scan_id=?,cursor=?,evaluated=?,coverage=?,lease=NULL,lease_until=NULL,input='{}'
        WHERE id=? AND lease=? AND state='RUNNING'`,
-    ).bind(state, id, ids.length, results.eligible, job.id, job.lease),
+    ).bind(state, id, ids.length, results.eligible, JSON.stringify(coverage), job.id, job.lease),
     db.prepare(
       `DELETE FROM x78_market_scan_batches WHERE job_id=? AND EXISTS
          (SELECT 1 FROM x78_market_scan_jobs WHERE id=? AND state IN ('COMPLETE','PARTIAL','FAILED'))`,
@@ -276,56 +334,70 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
 }
 
 /** Take one global worker lease so market provider traffic is bounded across accounts. */
-export async function processMarketScanBatch(loadHistory = researchUniverse) {
+export async function processMarketScanBatch(loadHistory = researchUniverse, batchSize = BATCH_SIZE) {
   const db = database();
   const now = new Date().toISOString();
   const lease = crypto.randomUUID();
   const job = await db.prepare(
     `UPDATE x78_market_scan_jobs SET state='RUNNING',lease=?,lease_until=?
        WHERE id=(SELECT id FROM x78_market_scan_jobs WHERE state IN ('QUEUED','RUNNING')
-         AND (lease_until IS NULL OR lease_until<=?) ORDER BY cutoff LIMIT 1)
+         AND (lease_until IS NULL OR lease_until<=?) ORDER BY COALESCE(last_batch_at,cutoff), cutoff LIMIT 1)
        AND NOT EXISTS (SELECT 1 FROM x78_market_scan_jobs WHERE state='RUNNING' AND lease_until>?)
        RETURNING *`,
   ).bind(lease, new Date(Date.now() + WORKER_LEASE_MS).toISOString(), now, now).first<Job>();
   if (!job) return false;
   const input = JSON.parse(job.input) as Input;
   try {
-    const universe = await niftyUniverse(job.universe_version);
-    if (!universe) throw new Error("Pinned universe unavailable");
-    const ids = universe.constituents.map((row) => row.id);
+    const ids: string[] | undefined = job.scope_members ? JSON.parse(job.scope_members)
+      : (await niftyUniverse(job.universe_version))?.constituents.map((row) => row.id);
+    if (!ids || ids.length !== job.selected_count) throw new Error("Pinned universe unavailable");
     if (job.cursor >= ids.length || job.deadline <= now) {
       await finalize(job, input, ids, now);
       return true;
     }
-    const batchIds = ids.slice(job.cursor, job.cursor + BATCH_SIZE);
+    const budget = isDataOwner(job.subject) ? BATCH_SIZE : Math.max(BATCH_SIZE, Math.min(15, batchSize));
+    const batchIds = ids.slice(job.cursor, job.cursor + budget);
     const minimumBars = input.draw?.windowBars ?? requiredScanBars(compileFormula(input.definition.formula).ast);
     let batch: Batch;
     try {
-      const data = await loadHistory(job.subject, {
-        provider: "CONNECTED_MARKETS", universePreset: "INDIAN_EQUITIES", instrumentIds: batchIds,
-        limit: batchIds.length, interval: input.definition.interval, minimumBars, traceId: job.id, eventCutoff: job.cutoff,
-      });
+      const options = { limit: batchIds.length, interval: input.definition.interval, minimumBars, traceId: job.id, eventCutoff: job.cutoff };
+      const reference = batchIds.filter((id) => id.startsWith("ECB:"));
+      const exchange = batchIds.filter((id) => !id.startsWith("ECB:"));
+      const sources = await Promise.all([
+        ...(exchange.length ? [loadHistory(job.subject, { ...options, provider: "CONNECTED_MARKETS",
+          universePreset: input.definition.universePreset === "MARKET" ? "INDIAN_EQUITIES" : input.definition.universePreset,
+          instrumentIds: exchange })] : []),
+        ...(reference.length ? [loadHistory(job.subject, { ...options, provider: "ECB", instrumentIds: reference })] : []),
+      ]);
+      const data: ResearchUniverse = {
+        ...sources[0],
+        datasets: sources.flatMap((source) => source.datasets),
+        excluded: sources.flatMap((source) => source.excluded),
+        lineage: sources.flatMap((source) => source.lineage),
+      };
       if (!data.datasets.length && data.diagnostics?.failureCategory === "UPSTREAM_UNAVAILABLE" &&
           job.attempts < MAX_ATTEMPTS - 1) throw new Error("Market upstream unavailable");
-      batch = evaluateMarketBatch(batchIds, input, data, job.cutoff);
+      const evaluated = evaluateMarketBatch(batchIds, input, data, job.cutoff);
+      batch = { ...evaluated, rows: archivalScanRows(evaluated.rows) };
     } catch (err) {
       if (job.attempts < MAX_ATTEMPTS - 1) throw err;
       batch = { rows: batchIds.map((id) => ({
         instrumentId: id, status: "UNKNOWN", reasons: ["The market provider failed after retries."],
-        latestEventAt: null, source: "Unavailable",
+        latestEventAt: null, source: "Unavailable", classification: "deniedOrFailed",
       })), lineage: [] };
     }
     const next = job.cursor + batchIds.length;
-    const evaluated = job.evaluated + batch.rows.filter((row) => row.status !== "UNKNOWN").length;
+    const coverage = recordCoverage(job.coverage ? JSON.parse(job.coverage) as Coverage
+      : startingCoverage(job.selected_count), batch.rows);
     const [stored] = await db.batch([
       db.prepare(
         `INSERT INTO x78_market_scan_batches (job_id,cursor,payload) SELECT ?,?,?
          WHERE EXISTS (SELECT 1 FROM x78_market_scan_jobs WHERE id=? AND lease=? AND state='RUNNING' AND lease_until>?)`,
       ).bind(job.id, job.cursor, JSON.stringify(batch), job.id, lease, new Date().toISOString()),
       db.prepare(
-        `UPDATE x78_market_scan_jobs SET cursor=?,evaluated=?,attempts=0,lease=NULL,lease_until=NULL
+        `UPDATE x78_market_scan_jobs SET cursor=?,evaluated=?,coverage=?,attempts=0,lease=NULL,lease_until=NULL,last_batch_at=?
          WHERE id=? AND lease=? AND EXISTS (SELECT 1 FROM x78_market_scan_batches WHERE job_id=? AND cursor=?)`,
-      ).bind(next, evaluated, job.id, lease, job.id, job.cursor),
+      ).bind(next, coverage.evaluated, JSON.stringify(coverage), new Date().toISOString(), job.id, lease, job.id, job.cursor),
     ]);
     return stored.meta.changes > 0;
   } catch (err) {

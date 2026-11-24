@@ -56,13 +56,11 @@ async function handle(request: Request): Promise<Response> {
       return Response.json(await cancelMarketScan(user.userId, input.jobId), { headers });
     if (action === "run-scan" || action === "run-draw-scan")
       return Response.json(await submitMarketScan(user.userId, input), { status: 202, headers });
-    if (action === "run-watchlist-scan" || action === "run-watchlist-draw") {
-      const result = await mutateWorkspace(user.userId, {
+    if (action === "run-watchlist-scan" || action === "run-watchlist-draw")
+      return Response.json(await submitMarketScan(user.userId, {
         ...input, action: action === "run-watchlist-scan" ? "run-scan" : "run-draw-scan",
-        universe: "CONNECTED_MARKETS", universePreset: "MY_WATCHLIST", instrumentIds: [], customCsv: undefined,
-      }, traceId);
-      return Response.json({ ok: true, ...result }, { headers });
-    }
+        scopeIntent: "EXPLICIT", universePreset: "MY_WATCHLIST",
+      }), { status: 202, headers });
     const result = await mutateWorkspace(user.userId, input, traceId);
     console.info({ event: "soul_scan_request", traceId, action: input.action, status: 200, durationMs: Date.now() - started });
     return Response.json(

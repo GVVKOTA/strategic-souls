@@ -102,14 +102,13 @@ export function assertMarketDataAccess(input: {
     );
   }
 
-  // Hard compliance gate: public visitors / non-owner members cannot access personal broker quotes
-  // unless documented redistribution rights exist (ENABLE_PUBLIC_EXCHANGE_QUOTES=true + mode=public_licensed).
-  if (!input.isOwner && !input.config.flags.enablePublicExchangeQuotes) {
+  // These credentials and their adapter are reserved for the workspace owner.
+  if (!input.isOwner) {
     throw new MarketGatewayError(
       403,
       "PUBLIC_LICENSE_REQUIRED",
-      "NSE, BSE, and MCX broker quotes are restricted to the private workspace owner until exchange redistribution licences are in place.",
-      "Continue using official ECB daily FX, US Treasury yields, 3D Earth, Soul Scan, Formula Lab, and Community.",
+      "Exchange data is unavailable for this request.",
+      "Use the available market data in your workspace.",
     );
   }
 
@@ -321,13 +320,13 @@ export async function gatewayHealth(options: {
   const config = resolveGatewayConfig(options.runtimeEnv, options.requestUrl);
 
   // Public / non-owner visitors receive strictly sanitized public status — never private broker details!
-  if (!options.isOwner && !config.flags.enablePublicExchangeQuotes) {
+  if (!options.isOwner) {
     return {
       ok: true,
       provider: "Official public references (ECB / US Treasury)",
       mode: config.flags.mode,
       flags: {
-        privateBrokerEnabled: config.flags.enablePrivateBrokerData,
+        privateBrokerEnabled: false,
         publicExchangeQuotesEnabled: false,
         demoMode: false,
       },

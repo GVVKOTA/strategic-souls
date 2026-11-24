@@ -85,12 +85,10 @@ const emptyLayout: ChartLayout = {
 };
 
 function sanitizeProviderLabel(raw: string | null | undefined): string {
-  if (!raw) return "Market data";
-  if (/angel\s*one|smartapi|private\s*owner|configured exchange feed/i.test(raw)) {
-    return "Exchange data";
-  }
-  if (/ecb/i.test(raw)) return "ECB Reference";
-  return raw;
+  if (!raw || raw === "Not connected") return "Market data";
+  if (raw === "ECB") return "ECB Reference";
+  if (raw === "US Treasury") return raw;
+  return "Exchange data";
 }
 
 function isIndexInstrument(id: string, asset: AssetResearch | null): boolean {
@@ -847,7 +845,7 @@ export default function AssetTerminal({
               rel="noopener noreferrer"
               className="ss-v31-source-anchor"
             >
-              Official source documentation
+              {asset.attribution?.label ?? "Official source documentation"}
             </a>
           )}
           <p className="x1-caption" style={{ margin: "6px 0 0" }}>

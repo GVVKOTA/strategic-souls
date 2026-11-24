@@ -1,4 +1,4 @@
-import { resolveGatewayConfig } from "../../../backend/services/market-data/angelone/gateway";
+import { hasReadySharedHistory, sharedHistoryGrants } from "../../../backend/services/market-data/shared-history";
 import { APP_RELEASE } from "../../../backend/services/release-meta";
 import {
   SCAN_DAILY_LIMIT,
@@ -6,8 +6,12 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export function GET(request: Request) {
-  const gw = resolveGatewayConfig(undefined, request.url);
+export async function GET() {
+  const configured = await sharedHistoryGrants().catch(() => []);
+  const [daily, halfHour, hourly] = await Promise.all((["1d", "30m", "1h"] as const).map((resolution) =>
+    hasReadySharedHistory(configured, resolution).catch(() => false)));
+  const intervals = [["30m", halfHour], ["1h", hourly]].flatMap(([resolution, available]) => available ? [resolution] : []);
+
   return Response.json(
     {
       product: APP_RELEASE.productName,
@@ -35,9 +39,8 @@ export function GET(request: Request) {
       auth: "Session authentication (email/password)",
       capabilities: {
         publicOfficialReferences: true,
-        sharedCommercialMarketData:
-          gw.flags.mode === "public_licensed" &&
-          gw.flags.enablePublicExchangeQuotes,
+        sharedCommercialMarketData: daily || halfHour || hourly,
+        sharedIntradayIntervalsAvailable: intervals,
         intradayIntervalsSupported: ["30m", "1h"],
         tradingExecutionEnabled: false,
       },

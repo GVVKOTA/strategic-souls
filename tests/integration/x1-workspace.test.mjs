@@ -1,3 +1,4 @@
+import { OFFICIAL_FX_PAIRS } from "../../backend/services/market-data/market-data.ts";
 /** Real X1 workspace route/repository + SQLite migrations, isolated test identities/data.
  * No production identity, network feed, browser session, or remote database is used.
  */
@@ -222,8 +223,9 @@ async function load(path) {
   }
   if (normalized.endsWith("/backend/services/market-data/market-data.ts")) {
     const m = new vm.SyntheticModule(
-      ["loadMarketData"],
+      ["OFFICIAL_FX_PAIRS", "loadMarketData"],
       function () {
+        this.setExport("OFFICIAL_FX_PAIRS", OFFICIAL_FX_PAIRS);
         this.setExport("loadMarketData", async () => {
           marketCalls++;
           return structuredClone(marketFixture);

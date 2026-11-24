@@ -4,7 +4,9 @@ import { account, rate } from "../../../../database/queries/repository";
 import { gatewayQuotes, MarketGatewayError } from "../../../../backend/services/market-data/angelone/gateway";
 import type { NormalizedMarketQuote } from "../../../../backend/services/market-data/angelone/types";
 import { completedResearchPrices } from "../../../../backend/services/market-data/history-prices";
+import { readSharedDailyQuotes, sharedHistoryGrants } from "../../../../backend/services/market-data/shared-history";
 import { isDataOwner } from "../../../../backend/services/market-data/data-service";
+import { approvedIndustryGroups } from "../../../../backend/services/market-data/industry-heatmap";
 import { NSE_SECTOR_INDICES } from "../../../../backend/services/market-data/sectors-and-ecosystem";
 
 export const dynamic = "force-dynamic";
@@ -43,14 +45,18 @@ export async function GET(request: Request) {
       }
       return Response.json({ quotes, status: quotes.length ? null : "Historical coverage unavailable for this sector and period." }, { headers });
     }
-    const ids = [...new Set(NSE_SECTOR_INDICES.flatMap((sector) => [
+    const groups = await approvedIndustryGroups();
+    const standardIds = [...new Set(NSE_SECTOR_INDICES.flatMap((sector) => [
       sector.id, ...sector.constituents.map((stock) => stock.id),
     ]))];
+    const ids = [...new Set([...standardIds, ...groups.flatMap((group) => group.constituents.map((stock) => stock.id))])];
+    const grants = await sharedHistoryGrants();
+    const shared = await readSharedDailyQuotes(ids, grants);
     const result: NormalizedMarketQuote[] = [];
-    for (let offset = 0; offset < ids.length; offset += 20) {
+    for (let offset = 0; isDataOwner(user.userId) && offset < standardIds.length; offset += 20) {
       try {
         const batch = await gatewayQuotes({
-          authenticated: true, isOwner: isDataOwner(user.userId), ids: ids.slice(offset, offset + 20),
+          authenticated: true, isOwner: isDataOwner(user.userId), ids: standardIds.slice(offset, offset + 20),
           requestUrl: request.url,
         });
         if (batch.sourceMode === "DEMO_SYNTHETIC") break;
@@ -61,13 +67,27 @@ export async function GET(request: Request) {
         if (!result.length) break;
       }
     }
+    const privateQuotes = new Map(result.filter((quote) => quote.ltp !== null).map((quote) => [quote.id, {
+      id: quote.id, value: quote.ltp, pctChange: quote.changePct, unit: quote.unit,
+      provider: "Private exchange data", timestamp: quote.exchangeTimestampUTC, quality: quote.qualityLabel,
+      volume: quote.volume, change: quote.change,
+    }]));
+    const quotes = ids.flatMap((id) => {
+      const privateQuote = privateQuotes.get(id);
+      if (privateQuote) return [privateQuote];
+      const sharedQuote = shared.get(id);
+      if (!sharedQuote) return [];
+      const { instrument: internal, ...details } = sharedQuote;
+      void internal;
+      return [{ ...details, pctChange: sharedQuote.quality === "STALE" ? null : sharedQuote.pctChange }];
+    });
+    const industryQuotes = [...shared.values()].map(({ instrument: internal, ...quote }) => {
+      void internal;
+      return { ...quote, pctChange: quote.quality === "STALE" ? null : quote.pctChange };
+    });
     return Response.json({
-      quotes: result.map((quote) => ({
-        id: quote.id, value: quote.ltp, pctChange: quote.changePct, unit: quote.unit,
-        provider: quote.provider, timestamp: quote.exchangeTimestampUTC, quality: quote.qualityLabel,
-        volume: quote.volume, change: quote.change,
-      })),
-      status: result.some((quote) => quote.changePct !== null) ? null : "Sector quotes unavailable for this workspace.",
+      quotes, groups, industryQuotes,
+      status: quotes.some((quote) => quote.pctChange !== null) ? null : "Sector quotes unavailable for this workspace.",
     }, { headers });
   } catch (error) {
     return Response.json({ error: error instanceof HttpError ? error.message : "Sector quotes unavailable." },

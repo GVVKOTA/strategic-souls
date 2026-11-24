@@ -571,8 +571,8 @@ test("V3.1 R17/R18: Pattern Scan rejects flat/invalid shapes, ignores future bar
 // ── 6. R01, R05, R07, R08, R10, R17, R23: V3.1 UI & Security Contracts ──────
 
 test("V3.1 UI & Release Contracts: zero 'Last available', clean chart-first Asset Research, editable Classic 20/day, simplified Pattern Scan, teal tokens, clean release meta", () => {
-  assert.equal(APP_RELEASE.releaseTrack, "X7.8");
-  assert.equal(APP_RELEASE.revisionMarker, "x7.8-market-research-2026-11-24");
+  assert.equal(APP_RELEASE.releaseTrack, "X8");
+  assert.equal(APP_RELEASE.revisionMarker, "x8-shared-market-history-2026-11-24");
 
   const gridSrc = readFileSync("frontend/features/global/market-grid.tsx", "utf8");
   assert.doesNotMatch(gridSrc, /Last available/i, "Repetitive 'Last available' badge must be removed");

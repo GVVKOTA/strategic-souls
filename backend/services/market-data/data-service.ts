@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
-import { loadMarketData, type DataPoint } from "./market-data";
+import { OFFICIAL_FX_PAIRS, loadMarketData, type DataPoint } from "./market-data";
 import type { ScanDataset } from "../../engines/scan";
 import { matchesScanMarketPreset, type ScanSourceExclusion, type ScanUniversePreset } from "../research/research";
 import type {
@@ -48,6 +48,9 @@ import type {
   InstrumentMasterEntry,
   NormalizedCandleSeries,
 } from "./angelone/types";
+
+import { activeContract, eligibleSharedPeriods, hasReadySharedHistory, hasSharedRights, nativeInterval, readSharedHistory, readSharedHistoryBatch, sharedDailyEventAt, SHARED_HISTORY_LABEL,
+  sharedHistoryGrants, sharedIngestionHealth } from "./shared-history";
 
 export const PRIVATE_EXCHANGE_FEED_LABEL = "Configured Exchange Feed (Private)";
 export const SHARED_EXCHANGE_FEED_LABEL = "Licensed Exchange Feed";
@@ -259,7 +262,7 @@ export async function instrumentRegistry(subject?: string) {
     : [];
   return [
     ...configs
-      .filter((c) => rightsActive(c, "display"))
+      .filter((c) => subject && (isDataOwner(subject) ? rightsActive(c, "display") : hasSharedRights(c) && !!secretFrom(c.provider, environment())))
       .flatMap((c) =>
         c.instruments.map((i) => ({
           id: i.id,
@@ -300,6 +303,7 @@ export async function providerSettings(subject: string) {
         health: row ? JSON.parse(row.health) : EMPTY_HEALTH,
       };
     }),
+    sharedIngestion: await sharedIngestionHealth().catch(() => []),
     secretSetup:
       "Configure server-only secrets in Cloudflare Workers runtime settings (wrangler secret put). This page never receives or installs keys.",
     priceBudget: {
@@ -398,6 +402,15 @@ export async function configureProvider(
         next.lastWrite,
       ),
   ]);
+  // Shared rows are ephemeral and bound to the grant version. Erase superseded retained data.
+  if (row && JSON.parse(row.payload).sharedHistory) {
+    await db.batch([
+      db.prepare("DELETE FROM x8_shared_history_snapshot WHERE provider=? AND config_version<>? AND EXISTS(SELECT 1 FROM x2_providers WHERE provider=? AND version=?)")
+        .bind(next.provider, next.version, next.provider, next.version),
+      db.prepare("DELETE FROM x8_shared_history_task WHERE provider=? AND config_version<>? AND EXISTS(SELECT 1 FROM x2_providers WHERE provider=? AND version=?)")
+        .bind(next.provider, next.version, next.provider, next.version),
+    ]);
+  }
   const saved = await db
     .prepare("SELECT last_write,payload FROM x2_providers WHERE provider=?")
     .bind(next.provider)
@@ -521,6 +534,10 @@ export async function testProvider(
     )
     .bind(JSON.stringify(health), new Date().toISOString(), id, c.version)
     .run();
+  if (c.sharedHistory && health.accepted.length) {
+    await database().prepare("UPDATE x8_shared_history_plan SET paused_until=0,failures=0,last_error=NULL WHERE provider=? AND config_version=?")
+      .bind(id, c.version).run();
+  }
   cache.clear();
   return providerSettings(subject);
 }
@@ -571,6 +588,10 @@ async function sourceResearch(
   includeDetails = true,
   purpose: "display" | "analysis" = "display",
   pinnedProvider?: ProviderId,
+  shared?: {
+    cutoff?: number; grants?: Awaited<ReturnType<typeof sharedHistoryGrants>>;
+    stored?: Awaited<ReturnType<typeof readSharedHistoryBatch>>;
+  },
 ): Promise<AssetResearch> {
   if (
     !["30m", "1h", "1d", "1wk", "1mo"].includes(interval) ||
@@ -578,7 +599,6 @@ async function sourceResearch(
     id.length > 80
   )
     throw new HttpError(400, "Invalid instrument or interval.");
-  void subject;
   const result = emptyAsset(id, interval);
   if (
     id.startsWith("ECB:") ||
@@ -631,12 +651,44 @@ async function sourceResearch(
       ],
     };
   }
+  const owner = isDataOwner(subject);
+  const stored = shared?.stored ? shared.stored.get(id)
+    : subject ? await readSharedHistory(id, interval, shared?.grants ?? await sharedHistoryGrants(), {
+      cutoff: shared?.cutoff, provider: pinnedProvider,
+    }) : null;
+  if (stored) {
+    const now = shared?.cutoff ?? Date.now();
+    const retained = eligibleSharedPeriods(stored.candles, stored.instrument, interval, now);
+    const grouped = interval === "1wk" || interval === "1mo";
+    const references = grouped ? aggregateReferences(retained, interval) : retained;
+    const candles = grouped ? aggregateCandles(retained, interval).map((bar, index) => ({ ...bar, date: references[index].date })) : retained;
+    const receivedAt = new Date(stored.row.received_at).toISOString();
+    const attribution = { label: stored.config.sharedHistory.attribution, url: stored.config.sharedHistory.attributionUrl };
+    const { providerSymbol: internalMapping, ...publicMapping } = stored.instrument;
+    void internalMapping;
+    return {
+      ...result, name: stored.instrument.name,
+      instrument: { ...publicMapping, providerSymbol: stored.instrument.symbol },
+      provider: SHARED_HISTORY_LABEL, sourceUrl: attribution.url, attribution,
+      currency: stored.instrument.currency, unit: stored.instrument.unit,
+      state: stored.state, asOf: receivedAt, retrievedAt: receivedAt, candles,
+      references: candles.map(({ date, close, knownAt }) => ({ date, close, knownAt })),
+      coverage: { firstDate: stored.row.first_event, lastDate: stored.row.last_event, bars: stored.row.bar_count },
+      capabilities: {
+        ...result.capabilities, chart: candles.length > 0, candles: candles.length > 0,
+        volume: candles.some((bar) => bar.volume !== null), analysis: true, derivedDisplay: true, storage: true,
+      },
+      limitations: ["Completed exchange observations. Source timestamps are retained."],
+    };
+  }
+  if (!owner) return result;
+
   const configs = (await providerConfigs()).filter(
     (c) =>
       (purpose === "display"
         ? rightsActive(c, "display")
         : rightsActive(c, "analysis") && rightsActive(c, "storage")) &&
-      (!pinnedProvider || c.provider === pinnedProvider) &&
+      !c.sharedHistory && (!pinnedProvider || c.provider === pinnedProvider) &&
       c.instruments.some((i) => i.id === id),
   );
   for (const c of configs) {
@@ -817,12 +869,8 @@ async function sourceResearch(
   // Private owner-only read-only exchange feed (never accessible to non-owner/public readers unless explicitly licensed).
   const gwConfig = resolveGatewayConfig(environment());
   const gatewayFeedAllowed =
-    (isDataOwner(subject) && gwConfig.flags.enablePrivateBrokerData) ||
-    (gwConfig.flags.mode === "public_licensed" && gwConfig.flags.enablePublicExchangeQuotes);
-  const feedLabel =
-    gwConfig.flags.mode === "public_licensed" && gwConfig.flags.enablePublicExchangeQuotes && !isDataOwner(subject)
-      ? SHARED_EXCHANGE_FEED_LABEL
-      : PRIVATE_EXCHANGE_FEED_LABEL;
+    isDataOwner(subject) && gwConfig.flags.enablePrivateBrokerData;
+  const feedLabel = PRIVATE_EXCHANGE_FEED_LABEL;
   if (
     !pinnedProvider &&
     gatewayFeedAllowed &&
@@ -934,6 +982,7 @@ export async function currentDisplayRights(
   instrumentId: string,
   provider: string,
   configuration?: Map<string, Promise<ProviderConfig[]>>,
+  version?: number,
 ) {
   if (provider === "ECB" && instrumentId.startsWith("ECB:"))
     return {
@@ -947,9 +996,7 @@ export async function currentDisplayRights(
     provider === "Angel One SmartAPI (Private Owner)"
   ) {
     const cfg = resolveGatewayConfig(environment());
-    const active =
-      cfg.flags.enablePrivateBrokerData ||
-      (cfg.flags.mode === "public_licensed" && cfg.flags.enablePublicExchangeQuotes);
+    const active = cfg.flags.enablePrivateBrokerData;
     return {
       displayAllowed: active,
       derivedDisplayAllowed: active,
@@ -966,13 +1013,14 @@ export async function currentDisplayRights(
   }
   const c = (await configured).find(
     (c) =>
-      c.provider === provider &&
+      c.provider === provider && (version === undefined || c.version === version) &&
       c.instruments.some((i) => i.id === instrumentId),
   );
+  const eligible = !!c && (c.sharedHistory ? hasSharedRights(c) && !!secretFrom(c.provider, environment()) : true);
   return {
-    displayAllowed: !!c && rightsActive(c, "display"),
+    displayAllowed: eligible && rightsActive(c, "display"),
     derivedDisplayAllowed:
-      !!c && rightsActive(c, "analysis") && c.rights.derivedDisplay === true,
+      eligible && rightsActive(c, "analysis") && c.rights.derivedDisplay === true,
     rightsExpiresAt: c?.rights.expiresAt ?? null,
   };
 }
@@ -1012,6 +1060,7 @@ export type ResearchUniverse = {
     derivedDisplayAllowed: boolean;
     rightsExpiresAt: string | null;
     configVersion?: number;
+    attribution?: {label: string; url: string};
     interval?: Interval;
     periodPolicy?: string;
   }[];
@@ -1037,17 +1086,22 @@ function dateInZone(zone: string, now = new Date()) {
   }).format(now);
 }
 
-export async function canScanExchange(subject: string, interval: Interval) {
+export async function canScanExchange(subject: string, interval: Interval, instrumentIds?: readonly string[]) {
   const gateway = resolveGatewayConfig(environment());
-  if ((isDataOwner(subject) && gateway.flags.enablePrivateBrokerData) ||
-      (gateway.flags.mode === "public_licensed" && gateway.flags.enablePublicExchangeQuotes))
-    return true;
-  return (await providerConfigs()).some((config) =>
-    rightsActive(config, "analysis") && rightsActive(config, "storage") &&
-    !!secretFrom(config.provider, environment()) && config.datasets.includes("candles") &&
-    (interval !== "30m" || config.provider === "TRUEDATA") &&
-    config.instruments.some((i) => i.market === "NSE" && i.type === "EQUITY"),
-  );
+  if (isDataOwner(subject) && gateway.flags.enablePrivateBrokerData) return true;
+  return hasReadySharedHistory(await sharedHistoryGrants(), interval, instrumentIds);
+}
+
+export async function scanScopeInstruments(subject: string, preset: ScanUniversePreset, interval: Interval) {
+  if (preset === "ECB_DAILY") return OFFICIAL_FX_PAIRS.map(({ id }) => id).sort();
+  const now = Date.now();
+  const shared = (await sharedHistoryGrants()).filter((grant) => grant.sharedHistory.intervals.includes(nativeInterval(interval)))
+    .flatMap((grant) => grant.instruments).filter((instrument) => activeContract(instrument, now) &&
+      matchesScanMarketPreset(preset, instrument.market, instrument.type, instrument.expiry));
+  const owner = isDataOwner(subject) && resolveGatewayConfig(environment()).flags.enablePrivateBrokerData;
+  const privateIds = owner ? VERIFIED_SEED_INSTRUMENTS.filter((instrument) =>
+    matchesScanMarketPreset(preset, instrument.exchange, instrument.segment, instrument.expiry, now)).map(({ id }) => id) : [];
+  return [...new Set([...shared.map(({ id }) => id), ...privateIds])].sort();
 }
 
 export async function researchUniverse(
@@ -1160,16 +1214,17 @@ export async function researchUniverse(
     return out;
   }
   const preset = options.universePreset;
-  const configs = (await providerConfigs()).filter(
-    (c) =>
-      rightsActive(c, "analysis") &&
-      rightsActive(c, "storage") &&
-      (options.provider === "CONNECTED_MARKETS" ||
-        options.provider === c.provider),
-  );
+  const grants = await sharedHistoryGrants();
+  const owner = isDataOwner(subject);
+  const configs = [
+    ...grants.filter((grant) => grant.sharedHistory.intervals.includes(nativeInterval(interval))),
+    ...(owner ? (await providerConfigs()).filter((config) => !config.sharedHistory &&
+      rightsActive(config, "analysis") && rightsActive(config, "storage")) : []),
+  ].filter((config) => options.provider === "CONNECTED_MARKETS" || options.provider === config.provider);
   const allCommercialIds = [
     ...new Set(configs.flatMap((c) => c.instruments
-      .filter((i) => matchesScanMarketPreset(preset, i.market, i.type, i.expiry))
+      .filter((i) => activeContract(i, options.eventCutoff ? Date.parse(options.eventCutoff) : Date.now()) &&
+        matchesScanMarketPreset(preset, i.market, i.type, i.expiry))
       .map((i) => i.id))),
   ].filter(
     (id) =>
@@ -1184,8 +1239,12 @@ export async function researchUniverse(
     });
   }
   const loadedIds = new Set<string>();
+  const stored = await readSharedHistoryBatch(ids, interval, grants, {
+    cutoff: options.eventCutoff ? Date.parse(options.eventCutoff) : undefined,
+    provider: options.provider === "TRUEDATA" || options.provider === "EODHD" ? options.provider : undefined,
+  });
   for (const id of ids) {
-    const selected = configs.find((c) =>
+    const selected = stored.get(id)?.config ?? configs.find((c) =>
       c.instruments.some((i) => i.id === id &&
         matchesScanMarketPreset(preset, i.market, i.type, i.expiry)),
     )!;
@@ -1197,6 +1256,7 @@ export async function researchUniverse(
       false,
       "analysis",
       selected.provider,
+      { cutoff: options.eventCutoff ? Date.parse(options.eventCutoff) : undefined, grants, stored },
     );
     if (isIntraday) {
       const observations = completedCommercialIntradayObservations(
@@ -1231,7 +1291,7 @@ export async function researchUniverse(
       });
       out.lineage.push({
         instrumentId: id,
-        provider: a.provider,
+        provider: selected.provider,
         eventAt: latest.eventAt,
         retrievedAt: a.retrievedAt ?? out.asOf,
         adjustment: "RAW",
@@ -1241,6 +1301,7 @@ export async function researchUniverse(
           selected.rights.derivedDisplay === true,
         rightsExpiresAt: selected.rights.expiresAt,
         configVersion: selected.version,
+        ...(a.attribution && { attribution: a.attribution }),
         interval,
         periodPolicy:
           interval === "30m"
@@ -1256,10 +1317,12 @@ export async function researchUniverse(
       ? getIndianExchangeSession(exchange, cutoff.getTime()) : null;
     const includeToday = session?.state === "CLOSED" && !session.specialSessionNote &&
       session.localTimeIST >= (exchange === "MCX" ? "23:55:00" : "15:30:00");
-    const closed = options.eventCutoff
+    const sharedInstrument = stored.get(id)?.instrument;
+    const closed = options.eventCutoff && !sharedInstrument
       ? a.candles.filter((bar) => bar.date < currentDate || (bar.date === currentDate && includeToday))
       : a.candles;
-    const rows = completedPublishedPeriods(closed, interval, currentDate);
+    const rows = sharedInstrument ? eligibleSharedPeriods(closed, sharedInstrument, interval, cutoff.getTime())
+      : completedPublishedPeriods(closed, interval, currentDate);
     const closes = aggregateReferences(rows, interval);
     const candles = aggregateCandles(rows, interval);
     if (
@@ -1284,7 +1347,7 @@ export async function researchUniverse(
       frequency: "PUBLISHED_EOD",
       maxAgeMs: brokerScanFreshnessMs(interval),
       observations: candles.map((c, index) => ({
-        eventAt: closes[index].date + "T00:00:00.000Z",
+        eventAt: sharedInstrument ? sharedDailyEventAt(sharedInstrument, closes[index].date) : closes[index].date + "T00:00:00.000Z",
         knownAt: c.knownAt,
         open: c.open,
         high: c.high,
@@ -1296,8 +1359,8 @@ export async function researchUniverse(
     });
     out.lineage.push({
       instrumentId: id,
-      provider: a.provider,
-      eventAt: closes.at(-1)?.date ?? null,
+      provider: selected.provider,
+      eventAt: sharedInstrument ? sharedDailyEventAt(sharedInstrument, closes.at(-1)!.date) : closes.at(-1)?.date ?? null,
       retrievedAt: a.retrievedAt!,
       adjustment: "RAW",
       displayAllowed: rightsActive(selected, "display"),
@@ -1306,6 +1369,7 @@ export async function researchUniverse(
         selected.rights.derivedDisplay === true,
       rightsExpiresAt: selected.rights.expiresAt,
       configVersion: selected.version,
+      ...(a.attribution && { attribution: a.attribution }),
       interval: options.interval ?? "1d",
       periodPolicy:
         options.interval && options.interval !== "1d"
@@ -1317,10 +1381,8 @@ export async function researchUniverse(
   // series strictly when either owner-private OR explicitly licensed public redistribution is enabled.
   const gw = resolveGatewayConfig(environment());
   const ownerFeedAllowed = isDataOwner(subject) && gw.flags.enablePrivateBrokerData;
-  const sharedLicensedGatewayAllowed =
-    gw.flags.mode === "public_licensed" && gw.flags.enablePublicExchangeQuotes;
   if (
-    (ownerFeedAllowed || sharedLicensedGatewayAllowed) &&
+    ownerFeedAllowed &&
     (options.provider === "ANGELONE" || options.provider === "CONNECTED_MARKETS")
   ) {
     let mcxFound: InstrumentMasterEntry[] = [];
@@ -1372,10 +1434,7 @@ export async function researchUniverse(
     // always populate and back-to-back Classic/Advanced formulas share the same owner cache key.
     const days = interval === "1d" ? Math.max(120, rawDays) : rawDays;
     const reqInterval: CandleInterval = isIntraday ? interval : "1d";
-    const source =
-      sharedLicensedGatewayAllowed && !ownerFeedAllowed
-        ? SHARED_EXCHANGE_FEED_LABEL
-        : PRIVATE_EXCHANGE_FEED_LABEL;
+    const source = PRIVATE_EXCHANGE_FEED_LABEL;
     const isLocalAdapter = isLocalAdapterUrl(gw);
     const minSpacingMs = isLocalAdapter ? 15 : 360;
     const retryBackoffMs = isLocalAdapter ? 35 : 950;
@@ -1508,10 +1567,9 @@ export async function researchUniverse(
         // (never shifts eventAt, and never moves knownAt forward) so the last fetched symbol is never dropped.
         const observations = rawObservations.map((obs) => {
           const kMs = Date.parse(obs.knownAt);
-          return Number.isFinite(kMs) && kMs > workerReceivedMs
-            ? { ...obs, knownAt: workerReceivedIso }
-            : obs;
-        });
+          if (!Number.isFinite(kMs) || kMs > workerReceivedMs + 5_000) return null;
+          return kMs > workerReceivedMs ? { ...obs, knownAt: workerReceivedIso } : obs;
+        }).filter((row) => row !== null);
         const latest = observations.at(-1);
         if (!latest) {
           out.excluded.push({
@@ -1520,7 +1578,7 @@ export async function researchUniverse(
           });
           continue;
         }
-        if (Date.now() - Date.parse(latest.eventAt) > maxAgeMs) {
+        if ((options.eventCutoff ? Date.parse(options.eventCutoff) : Date.now()) - Date.parse(latest.eventAt) > maxAgeMs) {
           out.excluded.push({
             id,
             reason: "Completed historical candles are stale for the selected timeframe.",
@@ -1611,7 +1669,7 @@ export async function researchUniverse(
   const failureCategory: ResearchUniverseDiagnostics["failureCategory"] =
     out.datasets.length > 0
       ? "OK"
-      : configs.length === 0 && !ownerFeedAllowed && !sharedLicensedGatewayAllowed
+      : configs.length === 0 && !ownerFeedAllowed
         ? "SHARED_MARKET_DATA_UNCONFIGURED"
         : out.excluded.some((e) => e.kind === "error")
           ? "UPSTREAM_UNAVAILABLE"
@@ -1715,7 +1773,7 @@ export async function loadExtendedMarketData(subject: string, ids?: string[]) {
         currency: a.currency,
         provider: a.provider,
         sourceUrl: a.sourceUrl,
-        rightsUrl: PROVIDERS[a.provider as ProviderId].rightsUrl,
+        rightsUrl: PROVIDERS[a.provider as ProviderId]?.rightsUrl ?? a.sourceUrl,
         eventAt: last.date,
         sourceDate: last.date,
         eventTimePrecision: "DATE",

@@ -1,4 +1,5 @@
 /** Versioned data contracts. Missing observations never become zero or synthetic candles. */
+export const SHARED_HISTORY_LABEL = "Licensed exchange history";
 export type Interval = "30m" | "1h" | "1d" | "1wk" | "1mo";
 export type ProviderId = "EODHD" | "TRUEDATA";
 export type Market = "NSE" | "BSE" | "MCX" | "GLOBAL";
@@ -77,6 +78,16 @@ export type Rights = {
   contractReference: string;
   expiresAt: string;
 };
+export type SharedHistoryGrant = {
+  intervals: ("1d" | "30m" | "1h")[];
+  lagMinutes: number;
+  retentionHours: number;
+  dailyLookbackDays: number;
+  dailyRefreshMinutes: number;
+  intradayRefreshMinutes: number;
+  attribution: string;
+  attributionUrl: string;
+};
 export type ProviderConfig = {
   provider: ProviderId;
   enabled: boolean;
@@ -87,6 +98,7 @@ export type ProviderConfig = {
   datasets: ("candles" | "fundamentals" | "news")[];
   dailyCallLimit: number;
   lastWrite: string;
+  sharedHistory?: SharedHistoryGrant;
 };
 export type ProviderHealth = {
   state:
@@ -139,6 +151,8 @@ export type AssetResearch = {
     storage: boolean;
   };
   limitations: string[];
+  attribution?: { label: string; url: string };
+  coverage?: { firstDate: string; lastDate: string; bars: number };
 };
 export type Drawing = {
   id: string;

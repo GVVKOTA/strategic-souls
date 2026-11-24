@@ -1,12 +1,17 @@
 import handler from "vinext/server/fetch-handler";
+import { refreshSharedHistory } from "../services/market-data/shared-history";
 import { processMarketScanBatch } from "../services/research/market-scan-jobs";
 
 const worker = {
-  async scheduled() {
-    // One lease across events, at most 20 instruments per scheduler tick.
+  async scheduled(controller: ScheduledController) {
+    if (controller.cron === "*/2 * * * *") {
+      await refreshSharedHistory();
+      return;
+    }
+    // One lease across events, up to two batches of 15 shared or five private instruments.
     const deadline = Date.now() + 35_000;
-    for (let batch = 0; batch < 4 && Date.now() < deadline; batch++)
-      if (!await processMarketScanBatch()) break;
+    for (let batch = 0; batch < 2 && Date.now() < deadline; batch++)
+      if (!await processMarketScanBatch(undefined, 15)) break;
   },
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext) {
     const startedAt = Date.now();

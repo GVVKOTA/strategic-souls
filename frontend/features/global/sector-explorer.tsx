@@ -9,6 +9,7 @@ import {
   NSE_SECTOR_INDICES,
   buildSectorHeatmaps,
   type SectorHeatmapSummary,
+  type NseSectorIndex,
 } from "../../../backend/services/market-data/sectors-and-ecosystem";
 import type {
   AssetComparisonResult,
@@ -27,7 +28,8 @@ type CompareApiResponse = {
 type SectorQuote = {
   id: string; value: number | null; pctChange: number | null; unit: string;
   provider: string; timestamp: string | null; quality: string; volume: number | null; change: number | null;
-  latestDate?: string; referenceDate?: string;
+  latestDate?: string; referenceDate?: string | null;
+  attribution?: { label: string; url: string };
 };
 
 type Props = {
@@ -98,6 +100,10 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
   const [compareMode, setCompareMode] = useState<"Assets" | "Sectors">("Assets");
   const [period, setPeriod] = useState("3M");
   const [sectorQuotes, setSectorQuotes] = useState<SectorQuote[]>([]);
+  const [industryQuotes, setIndustryQuotes] = useState<SectorQuote[]>([]);
+  const [industryGroups, setIndustryGroups] = useState<NseSectorIndex[]>([]);
+  const [showIndustries, setShowIndustries] = useState(true);
+  const groups = showIndustries && industryGroups.length ? industryGroups : NSE_SECTOR_INDICES;
   const [quoteStatus, setQuoteStatus] = useState("Loading sector quotes…");
   const [revision, refreshQuotes] = useState(0);
   const [query, setQuery] = useState("");
@@ -111,14 +117,17 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
     const controller = new AbortController();
     const refresh = () => {
       if (document.visibilityState !== "visible") return;
-      void api<{ quotes: SectorQuote[]; status: string | null }>("/api/market/sector-quotes", undefined,
+      void api<{ quotes: SectorQuote[]; status: string | null; groups?: NseSectorIndex[]; industryQuotes?: SectorQuote[] }>("/api/market/sector-quotes", undefined,
         { signal: controller.signal, timeoutMs: 40_000 }).then((value) => {
           if (controller.signal.aborted) return;
           setSectorQuotes(value.quotes);
+          setIndustryQuotes(value.industryQuotes ?? []);
+          setIndustryGroups(value.groups ?? []);
           setQuoteStatus(value.status ?? "");
         }).catch(() => {
           if (controller.signal.aborted) return;
           setSectorQuotes([]);
+          setIndustryQuotes([]);
           setQuoteStatus("Sector quotes are temporarily unavailable.");
         });
     };
@@ -150,7 +159,7 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
   const quoteMap = useMemo(() => {
     const map = new Map<
       string,
-      { value: number | null; pctChange: number | null; unit: string; provider: string }
+      { value: number | null; pctChange: number | null; unit: string; provider: string; latestDate?: string; referenceDate?: string | null }
     >();
     for (const q of [...(data?.quotes ?? []), ...(data?.yields ?? [])]) {
       map.set(q.id.toUpperCase(), {
@@ -160,19 +169,19 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
         provider: q.provider,
       });
     }
-    for (const quote of sectorQuotes) map.set(quote.id, quote);
+    for (const quote of showIndustries && industryGroups.length ? industryQuotes : sectorQuotes) map.set(quote.id, quote);
     return map;
-  }, [data, sectorQuotes]);
+  }, [data, industryGroups.length, industryQuotes, sectorQuotes, showIndustries]);
 
-  const heatmaps = useMemo(() => buildSectorHeatmaps(quoteMap), [quoteMap]);
+  const heatmaps = useMemo(() => buildSectorHeatmaps(quoteMap, groups), [quoteMap, groups]);
   const expandedSector = useMemo(
-    () => NSE_SECTOR_INDICES.find((s) => s.id === expandedSectorId) ?? null,
-    [expandedSectorId],
+    () => groups.find((s) => s.id === expandedSectorId) ?? null,
+    [expandedSectorId, groups],
   );
   const expandedHm = useMemo(
-    () => (heatPeriod === "1D" ? heatmaps : buildSectorHeatmaps(new Map(historicQuotes.map((quote) => [quote.id, quote]))))
+    () => (heatPeriod === "1D" ? heatmaps : buildSectorHeatmaps(new Map(historicQuotes.map((quote) => [quote.id, quote])), groups))
       .find((h) => h.sectorId === expandedSectorId) ?? null,
-    [heatmaps, expandedSectorId, heatPeriod, historicQuotes],
+    [heatmaps, expandedSectorId, heatPeriod, historicQuotes, groups],
   );
 
   const runCompare = useCallback(
@@ -227,12 +236,15 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
       <div className="x52-section-center">
         <h2 id="x52-sectors-heading">NSE Sector Explorer &amp; Heatmaps</h2>
         <p>
-          Curated sector representatives · Equal-area tiles · Session change
+          {groups === industryGroups ? "Nifty 500 constituents by industry · Equal-weighted completed-session returns" : "Curated sector representatives · Equal-area tiles · Session change"}
         </p>
         <p role="status">{quoteStatus || (latestQuote
           ? "Latest quote · " + new Date(latestQuote).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) + " IST"
           : "Quote timestamp unavailable")}</p>
         <div className="x52-section-center-actions">
+          {!!industryGroups.length && <button type="button" className="x1-secondary" onClick={() => {
+            setExpandedSectorId(null); changeHeatPeriod("1D"); setShowIndustries((current) => !current);
+          }}>{showIndustries ? "Show index groups" : "Show Nifty 500 industries"}</button>}
           <input type="search" aria-label="Search sectors or stocks" placeholder="Search sectors or stocks"
             value={query} onChange={(event) => setQuery(event.target.value)} />
           <button type="button" className="x1-secondary" onClick={() => refreshQuotes((value) => value + 1)}>Refresh</button>
@@ -249,7 +261,7 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
       </div>
 
       <div className="x52-sector-grid" role="list" aria-label="NSE sectoral benchmarks">
-        {NSE_SECTOR_INDICES.filter((sector) => {
+        {groups.filter((sector) => {
           const term = query.trim().toLowerCase();
           return !term || [sector.name, sector.shortName,
             ...sector.constituents.flatMap((stock) => [stock.symbol, stock.name])].some((value) => value.toLowerCase().includes(term));
@@ -268,7 +280,8 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
                 <div style={{ minWidth: 0 }}>
                   <strong style={{ fontSize: "0.94rem" }}>{sec.name}</strong>
                   <div className="x1-caption">
-                    {quoteMap.get(sec.id)?.pctChange == null
+                    {sec.groupType === "industry" ? (hm.averagePctChange === null ? "—" : number(hm.averagePctChange, 2) + "% equal-weighted")
+                    : quoteMap.get(sec.id)?.pctChange == null
                       ? <span aria-label="Official index return unavailable">—</span>
                       : <span>{number(quoteMap.get(sec.id)!.pctChange!, 2)}% index</span>}
                   </div>
@@ -381,17 +394,17 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
                 ? `${expandedHm.connectedCount}/${expandedHm.totalCount} with ${heatPeriod} change`
                 : "Quotes unavailable"}
             </span>
-            <label>Period
+            {expandedSector.groupType !== "industry" && <label>Period
               <select value={heatPeriod} onChange={(event) => changeHeatPeriod(event.target.value)}>
                 {["1D", "1W", "1M", "YTD"].map((period) => <option key={period}>{period}</option>)}
               </select>
-            </label>
+            </label>}
             <label>Sort
               <select value={sort} onChange={(event) => setSort(event.target.value)}>
                 <option value="performance">Performance</option><option value="symbol">Symbol</option>
               </select>
             </label>
-            <button type="button" className="x1-secondary" onClick={() => openSectorComparison(expandedSector.id)}>Compare sector</button>
+            {expandedSector.groupType !== "industry" && <button type="button" className="x1-secondary" onClick={() => openSectorComparison(expandedSector.id)}>Compare sector</button>}
             <button
               type="button"
               className="x51-chip"
@@ -456,7 +469,7 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
                     {t.name}
                   </span>
                   {t.price !== null && <span>{number(t.price, 2)} {t.unit}</span>}
-                  {(heatPeriod === "1D" ? sectorQuotes : historicQuotes).filter((quote) => quote.id === t.id).map((quote) =>
+                  {(heatPeriod === "1D" ? expandedSector.groupType === "industry" ? industryQuotes : sectorQuotes : historicQuotes).filter((quote) => quote.id === t.id).map((quote) =>
                     <small key={quote.id}>{quote.quality}{quote.referenceDate ? " · " + quote.referenceDate + " to " + quote.latestDate : ""}</small>
                   )}
                   <span style={{ fontVariantNumeric: "tabular-nums", fontSize: "0.9rem" }}>

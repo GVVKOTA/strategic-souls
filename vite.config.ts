@@ -32,7 +32,7 @@ const cloudflareWorkerConfig = {
   compatibility_date: "2026-05-15",
   compatibility_flags: ["nodejs_compat"],
   observability: { enabled: true },
-  triggers: { crons: ["* * * * *"] },
+  triggers: { crons: ["* * * * *", "*/2 * * * *"] },
   vars: { ENABLE_PRIVATE_BROKER_DATA: "true" },
   vpc_services: [
     {

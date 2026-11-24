@@ -7,7 +7,7 @@ type DisplayRights = {
   derivedDisplayAllowed: boolean;
   rightsExpiresAt: string | null;
 };
-type Lineage = DisplayRights & { instrumentId: string; provider: string };
+type Lineage = DisplayRights & { instrumentId: string; provider: string; configVersion?: number; attribution?: { label: string; url: string } };
 type ResultRow = {
   instrumentId: string;
   status: string;
@@ -74,11 +74,11 @@ export async function snapshotDisplayRights(
   const configs = new Map<string, Promise<ProviderConfig[]>>();
   await Promise.all(
     [...entries].map(async ([id, creation]) => {
-      const key = creation.provider + "|" + id;
+      const key = creation.provider + "|" + (creation.configVersion ?? "") + "|" + id;
       if (!cache.has(key))
         cache.set(
           key,
-          currentDisplayRights(id, creation.provider, configs).catch(() => ({
+          currentDisplayRights(id, creation.provider, configs, creation.configVersion).catch(() => ({
             displayAllowed: false,
             derivedDisplayAllowed: false,
             rightsExpiresAt: null,
@@ -104,6 +104,13 @@ export async function snapshotDisplayRights(
   return rights;
 }
 /** The only snapshot serializer used by history, detail, export and mutation responses. */
+function publicHistoryLabel(source: string) {
+  return /Angel\s*One|SmartAPI|Configured Exchange Feed \(Private\)/i.test(source) ? "Private exchange history"
+    : source === "TRUEDATA" || source === "EODHD" ? "Licensed exchange history" : source;
+}
+function redactLineage(lineage: Lineage[]) {
+  return lineage.map((row) => ({ ...row, provider: publicHistoryLabel(row.provider) }));
+}
 export async function projectResearchSnapshot(
   payload: Snapshot,
   includeDatasets: boolean,
@@ -126,6 +133,9 @@ export async function projectResearchSnapshot(
   const restricted = rawHidden.length > 0 || derivedHidden.length > 0;
   if (!restricted) {
     const projected = { ...payload };
+    const sourceRedacted = payload.sourceLineage?.some((row) => publicHistoryLabel(row.provider) !== row.provider) ?? false;
+    if (sourceRedacted && payload.sourceLineage) projected.sourceLineage = redactLineage(payload.sourceLineage);
+
     if (!includeDatasets) delete projected.datasets;
     return {
       payload: projected,
@@ -135,7 +145,7 @@ export async function projectResearchSnapshot(
         derivedInstrumentIds: [] as string[],
         reason: null as string | null,
       },
-      digestVerifiableFromResponse: includeDatasets,
+      digestVerifiableFromResponse: includeDatasets && !sourceRedacted,
     };
   }
   // Fail closed on unrecognized payload fields: do not spread future raw-price objects into a restricted response.
@@ -157,11 +167,17 @@ export async function projectResearchSnapshot(
     "billing",
   ])
     if (key in payload) projected[key] = payload[key];
+  if (payload.coverage && typeof payload.coverage === "object") {
+    const { matched, unmatched, ...safeCoverage } = payload.coverage as Record<string, unknown>;
+    void matched; void unmatched;
+    projected.coverage = safeCoverage;
+  }
   projected.sourceLineage = (payload.sourceLineage ?? []).map((row) => {
     const metadata = row as Lineage & Record<string, unknown>;
     return {
       instrumentId: row.instrumentId,
-      provider: row.provider,
+      provider: publicHistoryLabel(row.provider),
+      ...(row.attribution && { attribution: row.attribution }),
       eventAt: metadata.eventAt,
       retrievedAt: metadata.retrievedAt,
       adjustment: metadata.adjustment,

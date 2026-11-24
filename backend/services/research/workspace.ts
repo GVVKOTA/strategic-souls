@@ -1,3 +1,4 @@
+import { archivalScanRows, isSharedExchangeDataset } from "./scan-retention";
 import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import { digest } from "../../../database/queries/notebook-repository";
@@ -1152,7 +1153,7 @@ export async function mutateWorkspace(
           `No instrument had at least ${windowBars} eligible closed bars. Reduce window length or provide a longer CSV history. No quota consumed.`,
         );
       }
-      const soulGenome = runSoulGenomeEvidence(data.datasets, {
+      const soulGenome = runSoulGenomeEvidence(data.datasets.filter((dataset) => !isSharedExchangeDataset(dataset)), {
         windowBars,
         horizonBars,
         asOf,
@@ -1200,8 +1201,8 @@ export async function mutateWorkspace(
         soulGenome,
         requestDigest: signature,
         rule: { version: "x1-rule-1", formula: results.formula },
-        results,
-        datasets: data.datasets,
+        results: { ...results, results: archivalScanRows(results.results) },
+        datasets: data.datasets.filter((dataset) => !isSharedExchangeDataset(dataset)),
         sourceSnapshot: data.asOf,
         ...(traceId ? { traceId } : {}),
         sourceLineage: data.lineage ?? [],
@@ -1311,7 +1312,7 @@ export async function mutateWorkspace(
             };
       const soulGenome =
         scanTier === "ADVANCED"
-          ? runSoulGenomeEvidence(datasets, {
+          ? runSoulGenomeEvidence(datasets.filter((dataset) => !isSharedExchangeDataset(dataset)), {
               windowBars: 15,
               horizonBars: definition.outcome.horizon,
               asOf,
@@ -1350,8 +1351,8 @@ export async function mutateWorkspace(
               },
         requestDigest: signature,
         rule,
-        results,
-        datasets,
+        results: { ...results, results: archivalScanRows(results.results) },
+        datasets: datasets.filter((dataset) => !isSharedExchangeDataset(dataset)),
         sourceSnapshot: data.asOf,
         ...(traceId ? { traceId } : {}),
         sourceLineage: data.lineage ?? [],

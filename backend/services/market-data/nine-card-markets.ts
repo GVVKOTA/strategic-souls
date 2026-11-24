@@ -4,11 +4,12 @@
  *   NIFTY 50, SENSEX, BANK NIFTY, NIFTY MIDCAP, GOLD, SILVER MCX, CL, USD/INR.
  * Reconciles legacy 9-card stored layouts without destroying user watchlists/holdings/history.
  */
-import { database, rate } from "../../../database/queries/repository";
+import { account, database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import { registryInstrument } from "./instrument-registry";
 import { marketSnapshot, type MarketSnapshot } from "./market-data";
 import { isDataOwner } from "./data-service";
+import { readSharedDailyQuotes, sharedHistoryGrants } from "./shared-history";
 import {
   getIndianExchangeSession,
   getNymexGlobexSession,
@@ -475,13 +476,12 @@ export async function getMarketOverviewPayload(
   const ownerQuotesPromise = layoutPromise.then(async ({ ids }) => {
     const gw = resolveGatewayConfig();
     const ownerAllowed = !!subject && isDataOwner(subject) && gw.flags.enablePrivateBrokerData;
-    const publicAllowed = gw.flags.mode === "public_licensed" && gw.flags.enablePublicExchangeQuotes;
     const empty = {
       quotes: [] as NormalizedMarketQuote[],
       mcxAliasMap: new Map<string, string>(),
       sparklines: new Map<string, number[]>(),
     };
-    if (!ownerAllowed && !publicAllowed) {
+    if (!ownerAllowed) {
       return empty;
     }
     const nowMs = Date.now();
@@ -577,6 +577,25 @@ export async function getMarketOverviewPayload(
     overrideSnapshot ? Promise.resolve(overrideSnapshot) : marketSnapshot(),
     ownerQuotesPromise,
   ]);
+  const identity = subject ? await account(subject) : null;
+  const shared = subject && identity?.adult_confirmed === 1 && identity.consent_version === "2026-11-14-v4"
+    ? await readSharedDailyQuotes(layout.ids, await sharedHistoryGrants())
+    : null;
+  const cards = buildMarketOverviewCards(layout.ids, snapshot, ownerData.quotes, ownerData.mcxAliasMap, ownerData.sparklines)
+    .map((card): MarketOverviewCard => {
+      const quote = shared?.get(card.canonicalId);
+      if (!quote || card.value !== null) return card;
+      return {
+        ...card, value: quote.value, name: quote.instrument.name, venue: quote.instrument.market,
+        currency: quote.instrument.currency, quoteUnit: quote.instrument.unit,
+        absoluteChange: quote.change, percentChange: quote.pctChange, previousClose: quote.priorClose,
+        sourceObservedAtUTC: quote.latestDate, sourceObservedPrecision: "DATE_ONLY",
+        ingestedAtUTC: quote.receivedAt, quality: quote.quality, isLive: false,
+        provider: quote.attribution.label, sourceUrl: quote.attribution.url, redistributable: true,
+        contractLabel: formatContractMonth(quote.instrument.expiry),
+        reasonCode: "Completed daily exchange close.",
+      };
+    });
   const allowedCatalog = DEFAULT_EIGHT_CARD_IDS.map((id) => registryInstrument(id))
     .filter((i): i is NonNullable<typeof i> => !!i)
     .map((i) => ({
@@ -591,13 +610,7 @@ export async function getMarketOverviewPayload(
   return {
     asOf: snapshot.asOf,
     layout,
-    cards: buildMarketOverviewCards(
-      layout.ids,
-      snapshot,
-      ownerData.quotes,
-      ownerData.mcxAliasMap,
-      ownerData.sparklines,
-    ),
+    cards,
     catalog: allowedCatalog,
     disclosure:
       "Market session status and quote availability are shown independently. Unavailable instruments render em-dashes honestly — never simulated prices or sparklines.",

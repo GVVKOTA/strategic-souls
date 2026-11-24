@@ -82,6 +82,7 @@ export default function DataControl({
     [error, setError] = useState(""),
     [busy, setBusy] = useState("Loading"),
     [mapping, setMapping] = useState(mappingTemplate),
+    [sharedGrant, setSharedGrant] = useState(""),
     [contract, setContract] = useState(""),
     [expiry, setExpiry] = useState(""),
     [priority, setPriority] = useState(1),
@@ -187,6 +188,7 @@ export default function DataControl({
     const c = current?.config;
     queueMicrotask(() => {
       setMapping(c ? JSON.stringify(c.instruments, null, 2) : mappingTemplate);
+      setSharedGrant(c?.sharedHistory ? JSON.stringify(c.sharedHistory, null, 2) : "");
       setContract(c?.rights.contractReference ?? "");
       setExpiry(c?.rights.expiresAt.slice(0, 10) ?? "");
       setPriority(c?.priority ?? 1);
@@ -242,6 +244,7 @@ export default function DataControl({
             dailyCallLimit: quota,
             instruments,
             datasets,
+            sharedHistory: sharedGrant.trim() ? JSON.parse(sharedGrant) : null,
             rights: {
               ...rights,
               cacheSeconds: cache,
@@ -363,6 +366,15 @@ export default function DataControl({
               {universeStatus && <p role="status">{universeStatus}</p>}
             </form>
           </details>}
+          <details className="x2-inline-help">
+            <summary>Shared history authorization</summary>
+            <label>Verified shared-history grant JSON
+              <textarea rows={7} spellCheck={false} value={sharedGrant} onChange={(event) => {
+                edit(); setSharedGrant(event.target.value);
+              }} />
+            </label>
+            <p className="x1-caption">Leave blank for a private or legacy mapping. Record only verified contract terms.</p>
+          </details>
           <label>
             Implemented provider
             <select

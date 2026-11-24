@@ -312,8 +312,8 @@ test("guest gets 401 on private APIs; release reports X7 provenance without leak
   const relRes = await releaseRoute.GET(req("/api/release"));
   assert.equal(relRes.status, 200);
   const rel = await relRes.json();
-  assert.equal(rel.release, "X7.8");
-  assert.equal(rel.revisionMarker, "x7.8-market-research-2026-11-24");
+  assert.equal(rel.release, "X8");
+  assert.equal(rel.revisionMarker, "x8-shared-market-history-2026-11-24");
   assert.equal(rel.buildCommit, null);
   assert.equal(rel.scanDailyLimit, 20);
   assert.equal(rel.providerReadiness, undefined);

@@ -1,6 +1,11 @@
 import { api } from "../../components/workspace/shared";
 
+export type MarketScanCoverage = {
+  selected: number; evaluated: number; matched: number; unmatched: number;
+  insufficient: number; deniedOrFailed: number; deferred: number;
+};
 export type MarketScanProgress = {
+  coverage?: MarketScanCoverage;
   jobId?: string;
   id?: string;
   state?: "QUEUED" | "RUNNING" | "COMPLETE" | "PARTIAL" | "FAILED" | "CANCELLED";

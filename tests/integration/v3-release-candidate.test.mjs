@@ -1,3 +1,4 @@
+import { OFFICIAL_FX_PAIRS } from "../../backend/services/market-data/market-data.ts";
 /**
  * Strategic Souls V3.0 Release Candidate — End-to-End Regression Suite
  * Verifies V3 Section 21 (S01–S09) and V2 Retained Requirements (P01–P20):
@@ -38,8 +39,9 @@ function makeStatement(query, params = []) {
     bind(...next) {
       return makeStatement(query, next);
     },
-    async first() {
-      return sql.prepare(query).get(...params) ?? null;
+    async first(column) {
+      const row = sql.prepare(query).get(...params);
+      return column ? row?.[column] ?? null : row ?? null;
     },
     async all() {
       return { results: sql.prepare(query).all(...params) };
@@ -60,8 +62,7 @@ const DB = {
   async batch(stmts) {
     sql.exec("BEGIN");
     try {
-      const out = [];
-      for (const s of stmts) out.push(await s.run());
+      const out = stmts.map(({ _query, _params }) => ({ meta: { changes: Number(sql.prepare(_query).run(..._params).changes) } }));
       sql.exec("COMMIT");
       return out;
     } catch (err) {
@@ -138,7 +139,16 @@ async function mockFetch(url, init) {
   return new Response(JSON.stringify({ error: "unexpected fetch " + href }), { status: 404 });
 }
 
+let historyClock = null;
+class FixtureDate extends Date {
+  constructor(...args) {
+    super(...(args.length ? args : [historyClock ?? Date.now()]));
+  }
+  static now() { return historyClock ?? Date.now(); }
+}
+
 const context = vm.createContext({
+  Date: FixtureDate,
   console,
   Response,
   Request,
@@ -156,7 +166,6 @@ const context = vm.createContext({
   URL,
   URLSearchParams,
   Intl,
-  Date,
   Uint8Array,
   Float64Array,
   Int32Array,
@@ -194,7 +203,7 @@ async function loadModule(relOrAbsPath) {
     const normalized = file.replaceAll("\\", "/");
     if (normalized.endsWith("/backend/services/market-data/market-data.ts")) {
       return new vm.SyntheticModule(
-        ["loadMarketData", "marketSnapshot"],
+        ["OFFICIAL_FX_PAIRS", "loadMarketData", "marketSnapshot"],
         function () {
           const snap = async () => ({
             asOf: "2026-11-24T08:00:00.000Z",
@@ -220,6 +229,7 @@ async function loadModule(relOrAbsPath) {
             yields: [],
             fxHistory: [],
           });
+          this.setExport("OFFICIAL_FX_PAIRS", OFFICIAL_FX_PAIRS);
           this.setExport("loadMarketData", snap);
           this.setExport("marketSnapshot", snap);
         },
@@ -416,6 +426,9 @@ test("V3 S02/S03/S04/S06: Licensed shared commercial NSE+BSE+MCX provider serves
   const alice = await registerUser("alice_shared@example.test", "StrongPass123!fixture", "Alice Shared");
   const bob = await registerUser("bob_shared@example.test", "StrongPass456!fixture", "Bob Shared");
 
+  historyClock = Date.parse("2026-11-23T10:35:00.000Z"); // 16:05 IST, cash closed and MCX open.
+  const historyStore = await imp("backend/services/market-data/shared-history.ts");
+  const researchData = await imp("backend/services/market-data/data-service.ts");
   // Provision a licensed shared commercial TrueData provider config in x2_providers (NSE + BSE + active MCX future)
   const now = new Date().toISOString();
   const sharedProviderPayload = {
@@ -473,6 +486,11 @@ test("V3 S02/S03/S04/S06: Licensed shared commercial NSE+BSE+MCX provider serves
         expiry: "2027-02-05",
       },
     ],
+    sharedHistory: {
+      intervals: ["1d", "1h"], lagMinutes: 0, retentionHours: 48, dailyLookbackDays: 730,
+      dailyRefreshMinutes: 720, intradayRefreshMinutes: 120,
+      attribution: "Isolated licensed fixture", attributionUrl: "https://example.invalid/fixture",
+    },
     datasets: ["candles"],
     dailyCallLimit: 5000,
     lastWrite: "v3_shared_commercial_seed_1",
@@ -487,6 +505,18 @@ test("V3 S02/S03/S04/S06: Licensed shared commercial NSE+BSE+MCX provider serves
       JSON.stringify({ state: "CONNECTED", checkedAt: now, lastEventAt: now, message: "OK", accepted: ["NSE:RELIANCE", "BSE:SENSEX", "MCX:GOLD27FEB"], rejected: [], callsToday: 0, quotaRemaining: 5000, latencyMs: 12 }),
       now,
     );
+
+  const prewarmBefore = fetchCalls.length;
+  await Promise.all([historyStore.refreshSharedHistory(), historyStore.refreshSharedHistory()]);
+  await historyStore.refreshSharedHistory();
+  const ingressCalls = fetchCalls.length - prewarmBefore;
+  assert.equal(ingressCalls, 6, "Exactly one provider fetch for each native instrument/interval, across overlapping schedulers");
+  assert.equal(sql.prepare("SELECT count(*) AS n FROM x8_shared_history_snapshot").get().n, 6);
+  const grants = await historyStore.sharedHistoryGrants();
+  const rateLimit = await imp("backend/services/market-data/providers.ts");
+  await assert.rejects(rateLimit.fetchProviderJson(new URL("https://history.truedata.in/getbars"), {},
+    async () => new Response(null, { status: 429, headers: { "Retry-After": "90" } })),
+  (error) => error.code === "RATE_LIMITED" && error.retryAfterMs === 90_000);
 
   // Ordinary User A runs unified MARKET scan on 1 Hour (1h) — covers NSE + BSE + active MCX futures
   const hourlyScanA = await workspaceMod.mutateWorkspace(alice.userId, {
@@ -545,10 +575,59 @@ test("V3 S02/S03/S04/S06: Licensed shared commercial NSE+BSE+MCX provider serves
     });
     assert.equal(scanB.results.eligible, 1, `Watchlist scan on ${tf} must evaluate 1 instrument`);
     assert.equal(scanB.results.results[0].instrumentId, "NSE:RELIANCE");
+    const asset = await researchData.assetResearch("NSE:RELIANCE", bob.userId, tf, false);
+    assert.equal(scanB.results.results[0].latestEventAt?.slice(0, 10), asset.candles.at(-1)?.date,
+      "Scan and chart must use the same closing date for the completed candle");
+    assert.ok(scanB.results.results[0].latestEventAt?.endsWith("T10:00:00.000Z"), "Use the actual NSE session close");
   }
 
-  // Clean up shared commercial fixture so subsequent tests start cleanly
+  assert.equal(fetchCalls.length - prewarmBefore, ingressCalls, "Scan requests never perform upstream exchange calls");
+  const benchmark = [];
+  for (const concurrency of [1, 10, 50, 100, 250]) {
+    const callStart = fetchCalls.length;
+    const timings = await Promise.all(Array.from({ length: concurrency }, async (_, index) => {
+      const started = performance.now();
+      const asset = await researchData.assetResearch("NSE:RELIANCE", index % 2 ? alice.userId : bob.userId, "1d", false);
+      assert.ok(asset.candles.length > 200);
+      assert.equal(asset.instrument.providerSymbol, "RELIANCE");
+      assert.equal(asset.provider, "Licensed exchange history");
+      return performance.now() - started;
+    }));
+    timings.sort((a, b) => a - b);
+    const p = (fraction) => Math.round(timings[Math.ceil(concurrency * fraction) - 1] * 10) / 10;
+    benchmark.push({ concurrency, p50Ms: p(0.5), p95Ms: p(0.95), failures: 0,
+      upstreamCalls: fetchCalls.length - callStart, cacheHits: concurrency });
+    assert.equal(fetchCalls.length, callStart);
+  }
+  console.info("X8 shared D1 fixture benchmark", JSON.stringify(benchmark));
+
+  assert.ok(await historyStore.readSharedHistory("NSE:RELIANCE", "1d", grants));
+  const futureCutoff = historyClock - 1;
+  assert.equal(await historyStore.readSharedHistory("NSE:RELIANCE", "1d", grants, { cutoff: futureCutoff }),
+    null, "A snapshot received after a job cutoff cannot change that run");
+  const [viewA, viewB] = await Promise.all([alice, bob].map(({ userId }) =>
+    researchData.assetResearch("NSE:RELIANCE", userId, "1d", false)));
+  assert.equal(viewA.retrievedAt, viewB.retrievedAt);
+  assert.equal(viewA.candles.at(-1).date, viewB.candles.at(-1).date);
+  sql.prepare("UPDATE x8_shared_history_task SET next_attempt=? WHERE provider='TRUEDATA'").run(historyClock);
+  let authFailures = 0;
+  const rejectAuthentication = async () => {
+    authFailures++;
+    throw new rateLimit.ProviderFailure("AUTH_FAILED", "Fixture authorization rejected");
+  };
+  await historyStore.refreshSharedHistory(rejectAuthentication);
+  await historyStore.refreshSharedHistory(rejectAuthentication);
+  assert.equal(authFailures, 1, "Authorization failure pauses the entire provider across scheduler invocations");
+  assert.equal((await historyStore.sharedIngestionHealth())[0].last_error, "AUTH_FAILED");
+  sql.prepare("UPDATE x2_providers SET version=2,payload=? WHERE provider='TRUEDATA'").run(
+    JSON.stringify({ ...sharedProviderPayload, version: 2, enabled: false }),
+  );
+  assert.equal(await historyStore.readSharedHistory("NSE:RELIANCE", "1d", grants), null);
+  const denied = await researchData.assetResearch("NSE:RELIANCE", bob.userId, "1d", false);
+  assert.equal(denied.candles.length, 0);
+  assert.equal(await researchData.canScanExchange(bob.userId, "1d", ["NSE:RELIANCE"]), false);
   sql.prepare("DELETE FROM x2_providers WHERE provider = 'TRUEDATA'").run();
+  historyClock = null;
 });
 
 test("V3 S04/S08: Genuine 1h completed-session boundaries (NSE 15:15–15:30 terminal bar, MCX DST, developing bar exclusion, no daily->1h synthesis) & Classic/Advanced equivalence", () => {

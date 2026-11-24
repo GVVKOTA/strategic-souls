@@ -167,6 +167,7 @@ function sourceBadgeLabel(rawPreset?: string, rawSource?: string): string {
 }
 
 type ScanSortKey =
+  | "pattern_desc"
   | "move_desc"
   | "move_asc"
   | "vol_desc"
@@ -227,6 +228,8 @@ function sortScanRows(rows: readonly ScanRowItem[], sortBy: ScanSortKey): ScanRo
     const ma = a.metrics;
     const mb = b.metrics;
     switch (sortBy) {
+      case "pattern_desc":
+        return numOr(b.patternFit, -1) - numOr(a.patternFit, -1) || a.instrumentId.localeCompare(b.instrumentId);
       case "move_desc":
         return numOr(mb?.changePct, -9999) - numOr(ma?.changePct, -9999);
       case "move_asc":
@@ -482,8 +485,8 @@ export default function Strategy({
     initialInstrument?.trim() ?? "",
   );
   const [scanSource, setScanSource] = useState<ScanUniversePreset>(
-    initialInstrument?.trim().startsWith("ECB:")
-      ? "ECB_DAILY"
+    initialInstrument?.trim()
+      ? "INDIVIDUAL"
       : initialUniversePreset ?? "MARKET",
   );
   const [watchlistId, setWatchlistId] = useState<string>(initialWatchlistId ?? "");
@@ -586,10 +589,10 @@ export default function Strategy({
       setSection("scan");
       setScopedInstrument(clean);
       if (clean.startsWith("ECB:")) {
-        setScanSource("ECB_DAILY");
+        setScanSource("INDIVIDUAL");
         setInterval((cur) => (cur === "30m" || cur === "1h" ? "1d" : cur));
       } else {
-        setScanSource("MARKET");
+        setScanSource("INDIVIDUAL");
       }
     });
     return () => {
@@ -749,6 +752,7 @@ export default function Strategy({
   function handleScopeChange(nextScope: ScanUniversePreset) {
     invalidatePendingRun();
     setScanSource(nextScope);
+    if (nextScope !== "INDIVIDUAL") setScopedInstrument("");
     setScanError("");
     if (
       (nextScope === "ECB_DAILY" || nextScope === "CUSTOM_CSV") &&
@@ -790,7 +794,7 @@ export default function Strategy({
           interval,
           partialPolicy: "ALLOW_UNKNOWN",
           outcome: DEFAULT_OUTCOME,
-          instrumentIds: scopedInstrument ? [scopedInstrument] : [],
+          instrumentIds: scanSource === "INDIVIDUAL" && scopedInstrument ? [scopedInstrument] : [],
         },
       });
       await reload();
@@ -943,7 +947,7 @@ export default function Strategy({
       interval,
       partialPolicy: "ALLOW_UNKNOWN",
       outcome: DEFAULT_OUTCOME,
-      instrumentIds: scopedInstrument ? [scopedInstrument] : [],
+      instrumentIds: scanSource === "INDIVIDUAL" && scopedInstrument ? [scopedInstrument] : [],
     };
 
     try {
@@ -970,9 +974,10 @@ export default function Strategy({
 
     try {
       const initial = await api<MarketScanProgress & { results?: { matches?: number } }>(
-        scopedInstrument || (scanSource !== "MARKET" && scanSource !== "MY_WATCHLIST") ? "/api/x1/workspace" : "/api/strategy/scan",
+        scanSource === "CUSTOM_CSV" ? "/api/x1/workspace" : "/api/strategy/scan",
         {
-          action: scanSource === "MY_WATCHLIST" ? "run-watchlist-scan" : "run-scan",
+          action: "run-scan",
+          ...(scanSource !== "MARKET" && { scopeIntent: "EXPLICIT" }),
           scanRequestVersion: SCAN_REQUEST_VERSION,
           scanTier,
           origin: scanTier === "CLASSIC" ? "CLASSIC" : advancedEntry,
@@ -1021,7 +1026,8 @@ export default function Strategy({
     setName(title);
     setNameEditedManually(true);
     setInterval(definition.interval);
-    setScanSource(definition.universePreset ?? (definition.universe === "ECB_DAILY" ? "ECB_DAILY" : "MARKET"));
+    setScanSource(definition.instrumentIds.length === 1 && definition.universePreset !== "MY_WATCHLIST" && definition.universePreset !== "CUSTOM_CSV" ? "INDIVIDUAL" :
+      definition.universePreset ?? (definition.universe === "ECB_DAILY" ? "ECB_DAILY" : "MARKET"));
     setWatchlistId(definition.watchlistId ?? "");
     setScopedInstrument(definition.instrumentIds.length === 1 ? definition.instrumentIds[0] : "");
     setScanTier(definition.mode === "SIMPLE" ? "CLASSIC" : "ADVANCED");
@@ -1048,11 +1054,12 @@ export default function Strategy({
         throw new Error("This older scan did not retain an editable recipe.");
       const title = action === "duplicate" ? (scan.name.slice(0, 95) + " copy") : scan.name;
       if (action === "rerun") {
-        const customScope = !!recipe.instrumentIds.length || recipe.universePreset !== "MARKET";
+        const preset = recipe.instrumentIds.length === 1 && recipe.universePreset !== "MY_WATCHLIST" ? "INDIVIDUAL" :
+          recipe.universePreset ?? (recipe.universe === "ECB_DAILY" ? "ECB_DAILY" : "MARKET");
         if (recipe.universePreset === "CUSTOM_CSV")
           throw new Error("Edit this scan and upload its source CSV again to rerun it.");
-        const initial = await api<MarketScanProgress>(customScope ? "/api/x1/workspace" : "/api/strategy/scan", {
-          ...recipe, name: title, origin: record.payload.origin,
+        const initial = await api<MarketScanProgress>("/api/strategy/scan", {
+          ...recipe, universePreset: preset, scopeIntent: "EXPLICIT", name: title, origin: record.payload.origin,
           action: shape ? "run-draw-scan" : "run-scan", scanRequestVersion: SCAN_REQUEST_VERSION,
           requestId: crypto.randomUUID(),
           ...(shape && { strokePoints: shape.points, windowBars: shape.windowBars, minPatternFit: shape.minPatternFit }),
@@ -1204,7 +1211,14 @@ export default function Strategy({
 
   const scopeAndTimeframeControls = (
     <>
-      {(scopedInstrument || scanSource !== "MARKET") && <div className="x54-field-group">
+      <div className="x54-field-group">
+        <label className="x54-field-label" htmlFor="x8-scan-scope">Scan scope</label>
+        <select id="x8-scan-scope" className="x54-name-input" value={scanSource}
+          onChange={(event) => handleScopeChange(event.target.value as ScanUniversePreset)}>
+          {(["MARKET", "MY_WATCHLIST", "INDIAN_EQUITIES", "INDICES", "MCX_FUTURES", "ECB_DAILY", "CUSTOM_CSV",
+            ...(scopedInstrument ? ["INDIVIDUAL"] : []),
+          ] as ScanUniversePreset[]).map((scope) => <option key={scope} value={scope}>{SCAN_UNIVERSE_LABEL[scope]}</option>)}
+        </select>
         {scopedInstrument && (
           <div className="ss-v31-scope-chip" role="status">
             <span>Scoped to <strong>{scopedInstrument}</strong></span>
@@ -1214,7 +1228,7 @@ export default function Strategy({
               style={{ padding: "2px 6px", fontSize: "0.78rem" }}
               onClick={() => {
                 setScopedInstrument("");
-                if (scanSource === "ECB_DAILY") setScanSource("MARKET");
+                setScanSource("MARKET");
               }}
             >
               Scan all
@@ -1286,7 +1300,7 @@ export default function Strategy({
             />
           </div>
         )}
-      </div>}
+      </div>
 
       {/* Timeframe: 30m, 1 Hour, Daily, Weekly, Monthly */}
       <div className="x54-field-group">
@@ -1742,7 +1756,7 @@ export default function Strategy({
                         }
                         interval={interval}
                         customCsv={scanSource === "CUSTOM_CSV" ? customCsv : undefined}
-                        instrumentIds={scopedInstrument ? [scopedInstrument] : undefined}
+                        instrumentIds={scanSource === "INDIVIDUAL" && scopedInstrument ? [scopedInstrument] : undefined}
                         savedPatterns={workspace?.savedPatterns ?? []}
                         onPatternSaved={reload}
                         busy={busy}
@@ -1813,7 +1827,12 @@ export default function Strategy({
 
             {/* 5 & 6. Scope & Timeframe (placed here for Classic, Build & Discover) */}
             {!isDrawMode && scopeAndTimeframeControls}
-            {busy && job?.jobId && <progress aria-label="Scan progress" value={job.progress ?? 0} max={100} />}
+            {busy && job?.jobId && <div aria-live="polite">
+              <progress aria-label="Scan progress" value={job.progress ?? 0} max={100} />
+              {job.coverage && <p className="x1-caption">
+                {job.coverage.evaluated} of {job.coverage.selected} evaluated · {job.coverage.deferred} pending
+              </p>}
+            </div>}
             {!busy && activeJobs.map((item) => <div className="x1-actions" key={item.jobId}>
               <span>{item.name}</span>
               <progress aria-label="Scan progress" value={item.progress ?? 0} max={100} />
@@ -1933,12 +1952,15 @@ export default function Strategy({
                 const evaluatedRows = allRows.filter(
                   (r) => r.status === "PASS" || r.status === "FAIL",
                 );
-                const sortedMatched = sortScanRows(matchedRaw, resultSort);
-                const sortedEvaluated = sortScanRows(evaluatedRows, resultSort);
+                const patternRun = activeScan.payload.origin === "DRAW";
+                const ranking = patternRun ? "pattern_desc" : resultSort;
+                const sortedMatched = sortScanRows(matchedRaw, ranking);
+                const sortedEvaluated = sortScanRows(evaluatedRows, ranking);
                 const nonMatchCount = res?.failed ?? 0;
                 const unknownCount = res?.unknown ?? 0;
                 const marketRun = (activeScan.payload as { runState?: string }).runState;
                 const partialMarket = marketRun === "PARTIAL";
+                const coverage = activeScan.payload.coverage;
                 const accounting = (
                   activeScan.payload as {
                     preflight?: {
@@ -1997,6 +2019,9 @@ export default function Strategy({
                 return (
                   <>
                     {partialMarket && <p className="x1-callout" role="status">Some market data was unavailable. Results are partial.</p>}
+                    {coverage && <p className="x1-caption">
+                      {coverage.evaluated} of {coverage.selected} evaluated · {coverage.insufficient} insufficient · {coverage.deniedOrFailed} failed or denied
+                    </p>}
                     <div className="ss-v32-results-headline">
                       <div className="ss-v3-results-count">
                         {sortedMatched.length === 0
@@ -2005,7 +2030,7 @@ export default function Strategy({
                       </div>
                       {allRows.length > 0 && (
                         <div className="ss-v32-results-controls">
-                          <label className="ss-v32-sort-wrap" htmlFor="ss-v32-result-sort">
+                          {patternRun ? <span className="x1-caption">Ranked by pattern fit</span> : <label className="ss-v32-sort-wrap" htmlFor="ss-v32-result-sort">
                             <span className="x2-sr-only">Sort scan results</span>
                             <select
                               id="ss-v32-result-sort"
@@ -2022,7 +2047,7 @@ export default function Strategy({
                               <option value="range_asc">Sort: Near 20-Bar Low</option>
                               <option value="symbol_asc">Sort: Symbol A–Z</option>
                             </select>
-                          </label>
+                          </label>}
                           <button
                             type="button"
                             className="ss-v31-tool-btn"

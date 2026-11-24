@@ -551,7 +551,8 @@ export default function PatternDrawCanvas({
     }
     if (submitting || busy) return;
     const input = {
-      action: universePreset === "MY_WATCHLIST" ? "run-watchlist-draw" : "run-draw-scan",
+      action: "run-draw-scan",
+      ...(universePreset && universePreset !== "MARKET" && { scopeIntent: "EXPLICIT" }),
       scanRequestVersion: SCAN_REQUEST_VERSION,
       name: trimmedName,
       description: `Pattern similarity search (${windowBars}-bar lookback, min fit ${minPatternFit}%).`,
@@ -578,7 +579,7 @@ export default function PatternDrawCanvas({
         drawReport?: DrawScanReport;
         soulGenome?: SoulGenomeReport;
       }>(
-        instrumentIds?.length || (universePreset !== undefined && universePreset !== "MARKET" && universePreset !== "MY_WATCHLIST") ? "/api/x1/workspace" : "/api/strategy/scan",
+        universePreset === "CUSTOM_CSV" ? "/api/x1/workspace" : "/api/strategy/scan",
         {
           ...input,
           requestId: request.current.id,

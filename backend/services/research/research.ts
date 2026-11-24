@@ -16,6 +16,8 @@ export const SCAN_UNIVERSE_PRESETS = [
   "MARKET",
   "MY_WATCHLIST",
   "INDIAN_EQUITIES",
+  "INDICES",
+  "INDIVIDUAL",
   "MCX_FUTURES",
   "ECB_DAILY",
   "CUSTOM_CSV",
@@ -24,9 +26,11 @@ export type ScanUniversePreset = (typeof SCAN_UNIVERSE_PRESETS)[number];
 export const SCAN_REQUEST_VERSION = 2;
 export const DEFAULT_SCAN_UNIVERSE_PRESET: ScanUniversePreset = "MARKET";
 export const SCAN_UNIVERSE_LABEL: Record<ScanUniversePreset, string> = {
-  MARKET: "Market",
+  MARKET: "Nifty 500 equities",
   MY_WATCHLIST: "Watchlist",
-  INDIAN_EQUITIES: "NSE / BSE Equities",
+  INDIAN_EQUITIES: "Mapped NSE / BSE equities",
+  INDICES: "Mapped exchange indices",
+  INDIVIDUAL: "Single instrument",
   MCX_FUTURES: "MCX Futures",
   ECB_DAILY: "ECB Reference FX",
   CUSTOM_CSV: "Private Daily CSV",
@@ -65,6 +69,7 @@ export function matchesScanMarketPreset(
   expiry?: string | null,
   now = Date.now(),
 ) {
+  if (preset === "INDICES") return assetClass === "INDEX";
   if (preset === "MARKET") {
     if ((exchange === "NSE" || exchange === "BSE") && (assetClass === "EQUITY" || assetClass === "INDEX")) {
       return true;

@@ -6,6 +6,7 @@ import type {
   ProviderHealth,
   ProviderId,
   Rights,
+  SharedHistoryGrant,
   Statement,
   ResearchEvent,
 } from "./data-types";
@@ -61,7 +62,7 @@ export function validateInstrument(
     throw new Error("Instrument mapping required.");
   const id = string(v.id, 3, 80),
     symbol = string(v.providerSymbol, 1, 60);
-  if (!/^[A-Z0-9^._:-]+$/.test(id) || !/^[A-Z0-9^._-]+$/.test(symbol))
+  if (!/^[A-Z0-9^._:&-]+$/.test(id) || !/^[A-Z0-9^._&-]+$/.test(symbol))
     throw new Error("Use exact source identifiers, not a URL or expression.");
   if (!(PROVIDERS[provider].markets as readonly string[]).includes(v.market))
     throw new Error("This adapter does not support the selected market.");
@@ -81,6 +82,7 @@ export function validateInstrument(
     v.type === "FUTURE" &&
     (!v.expiry ||
       !/^\d{4}-\d{2}-\d{2}$/.test(v.expiry) ||
+      !Number.isFinite(Date.parse(v.expiry)) || new Date(v.expiry).toISOString().slice(0, 10) !== v.expiry ||
       !finite(v.lotSize) ||
       v.lotSize! <= 0 ||
       !finite(v.tickSize) ||
@@ -104,6 +106,28 @@ export function validateInstrument(
       ? { expiry: v.expiry, lotSize: v.lotSize, tickSize: v.tickSize }
       : {}),
   };
+}
+function validateSharedHistory(value: unknown, provider: ProviderId): SharedHistoryGrant | undefined {
+  if (value === undefined || value === null) return undefined;
+  const v = value as SharedHistoryGrant;
+  if (!Array.isArray(v?.intervals) || !v.intervals.length ||
+      v.intervals.some((interval) => !["1d", "1h", "30m"].includes(interval)) ||
+      (provider === "EODHD" && v.intervals.includes("30m")))
+    throw new Error("Approve only supported native candle intervals.");
+  const bounded = (value: number, min: number, max: number) =>
+    Number.isInteger(value) && value >= min && value <= max;
+  if (!bounded(v.lagMinutes, 0, 1440) || !bounded(v.retentionHours, 1, 72) ||
+      !bounded(v.dailyLookbackDays, 370, 2190) || !bounded(v.dailyRefreshMinutes, 480, 1440) ||
+      !bounded(v.intradayRefreshMinutes, 60, 1440))
+    throw new Error("Shared history needs explicit licensed lag, retention, lookback and refresh intervals.");
+  const attribution = string(v.attribution, 3, 160);
+  const url = new URL(string(v.attributionUrl, 12, 300));
+  if (url.protocol !== "https:" || url.username || url.password || url.port)
+    throw new Error("Supply a credential-free HTTPS attribution link.");
+  return { intervals: [...new Set(v.intervals)], lagMinutes: v.lagMinutes,
+    retentionHours: v.retentionHours, dailyLookbackDays: v.dailyLookbackDays,
+    dailyRefreshMinutes: v.dailyRefreshMinutes, intradayRefreshMinutes: v.intradayRefreshMinutes,
+    attribution, attributionUrl: url.href };
 }
 export function validateConfig(value: unknown): ProviderConfig {
   const v = value as ProviderConfig;
@@ -155,6 +179,10 @@ export function validateConfig(value: unknown): ProviderConfig {
     typeof v.enabled !== "boolean"
   )
     throw new Error("Use a 1–1000 daily call cap and priority 1–10.");
+  const sharedHistory = validateSharedHistory(v.sharedHistory, p);
+  if (sharedHistory && (!r.display || !r.analysis || !r.storage || !r.redistribution || !r.derivedDisplay ||
+      !r.verified || !v.datasets.includes("candles")))
+    throw new Error("Shared history needs verified display, analysis, derived display, storage and redistribution rights.");
   return {
     provider: p,
     enabled: v.enabled,
@@ -175,6 +203,7 @@ export function validateConfig(value: unknown): ProviderConfig {
     datasets: [...new Set(v.datasets)],
     dailyCallLimit: v.dailyCallLimit,
     lastWrite: string(v.lastWrite, 16, 80),
+    ...(sharedHistory && { sharedHistory }),
   };
 }
 export function rightsActive(
@@ -205,6 +234,7 @@ export class ProviderFailure extends Error {
     public code:
       "AUTH_FAILED" | "RATE_LIMITED" | "PROVIDER_DOWN" | "INVALID_DATA",
     message: string,
+    public retryAfterMs?: number,
   ) {
     super(message);
   }
@@ -238,11 +268,12 @@ export async function fetchProviderJson(
         "AUTH_FAILED",
         "Provider rejected authentication or the dataset entitlement.",
       );
-    if (response.status === 429)
-      throw new ProviderFailure(
-        "RATE_LIMITED",
-        "Provider request quota reached.",
-      );
+    if (response.status === 429) {
+      const retry = response.headers.get("Retry-After");
+      const retryAt = retry && /^\d+$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry ?? "") - Date.now();
+      throw new ProviderFailure("RATE_LIMITED", "Provider request quota reached.",
+        Number.isFinite(retryAt) ? Math.max(0, retryAt) : undefined);
+    }
     if (
       !response.ok ||
       response.redirected ||
@@ -387,6 +418,7 @@ export async function providerCandles(
   secret: string,
   fetcher: typeof fetch = fetch,
   now = Date.now(),
+  days = 370,
 ) {
   if (instrument.expiry && Date.parse(instrument.expiry + "T23:59:59Z") < now)
     throw new ProviderFailure(
@@ -394,7 +426,7 @@ export async function providerCandles(
       "Expired contract; select a verified current contract.",
     );
   const to = new Date(now).toISOString().slice(0, 10),
-    from = new Date(now - 370 * 86400000).toISOString().slice(0, 10);
+    from = new Date(now - Math.max(30, Math.min(2190, Math.round(days))) * 86400000).toISOString().slice(0, 10);
   let url: URL,
     headers: Record<string, string> = {};
   if (config.provider === "EODHD") {
