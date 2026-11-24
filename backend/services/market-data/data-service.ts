@@ -1367,7 +1367,10 @@ export async function researchUniverse(
       });
     }
     const maxAgeMs = brokerScanFreshnessMs(interval);
-    const days = brokerScanLookbackDays(interval, options.minimumBars);
+    const rawDays = brokerScanLookbackDays(interval, options.minimumBars);
+    // Use a unified 120-day (~80 trading bars) floor for daily broker scans so SMA(50) metrics
+    // always populate and back-to-back Classic/Advanced formulas share the same owner cache key.
+    const days = interval === "1d" ? Math.max(120, rawDays) : rawDays;
     const reqInterval: CandleInterval = isIntraday ? interval : "1d";
     const source =
       sharedLicensedGatewayAllowed && !ownerFeedAllowed
@@ -1376,7 +1379,7 @@ export async function researchUniverse(
     const isLocalAdapter = isLocalAdapterUrl(gw);
     const minSpacingMs = isLocalAdapter ? 15 : 360;
     const retryBackoffMs = isLocalAdapter ? 35 : 950;
-    const cacheTtlMs = isIntraday ? 45_000 : 120_000;
+    const cacheTtlMs = isIntraday ? 45_000 : 300_000;
     const cacheScope = brokerAdapterCacheScope(gw);
     const ownerFlag = isDataOwner(subject);
     let lastNetworkCallAt = 0;
@@ -1493,12 +1496,22 @@ export async function researchUniverse(
           });
           continue;
         }
-        const observations =
+        const workerReceivedMs = Date.now();
+        const workerReceivedIso = new Date(workerReceivedMs).toISOString();
+        const rawObservations =
           series.sourceMode === "PRIVATE_OWNER_FEED"
             ? completedBrokerObservations(options.eventCutoff
                 ? { ...series, retrievalTimestampUTC: options.eventCutoff } : series, interval)
               .slice(-targetBars).map((bar) => ({ ...bar, knownAt: series.retrievalTimestampUTC }))
             : [];
+        // Clamp minor adapter-vs-Worker clock-ahead skew on knownAt to Worker receipt time
+        // (never shifts eventAt, and never moves knownAt forward) so the last fetched symbol is never dropped.
+        const observations = rawObservations.map((obs) => {
+          const kMs = Date.parse(obs.knownAt);
+          return Number.isFinite(kMs) && kMs > workerReceivedMs
+            ? { ...obs, knownAt: workerReceivedIso }
+            : obs;
+        });
         const latest = observations.at(-1);
         if (!latest) {
           out.excluded.push({

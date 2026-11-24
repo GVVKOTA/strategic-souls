@@ -819,6 +819,12 @@ function roundMetric(value: number, digits = 2): number {
   return Math.round(value * factor) / factor;
 }
 
+function formatProofNumber(value: number): string {
+  const abs = Math.abs(value);
+  const digits = abs > 0 && abs < 10 ? 4 : 2;
+  return String(roundMetric(value, digits));
+}
+
 /**
  * Computes deterministic, strictly non-fabricated technical snapshot metrics
  * from verified closed observations. Any metric whose warm-up or required
@@ -1234,7 +1240,7 @@ export function evaluateScan(
           if (typeof out === "boolean") {
             if (comparisons.length < 32)
               comparisons.push(
-                `${renderFormula(a.left)} = ${l}; ${a.op} ${renderFormula(a.right)} = ${r}: ${out ? "PASS" : "FAIL"}.`,
+                `${renderFormula(a.left)} = ${formatProofNumber(l)}; ${a.op} ${renderFormula(a.right)} = ${formatProofNumber(r)}: ${out ? "PASS" : "FAIL"}.`,
               );
             return out;
           }
