@@ -24,18 +24,26 @@ This runbook documents the **exact verified production infrastructure** for **St
 
 ## 2. How Production Deployment Works in This Repo
 
-1. **Primary Pipeline (Single Authoritative Path): Cloudflare Workers Builds on `main`**
-   - Pushing to a **feature branch** runs `.github/workflows/verify.yml` CI only (does **not** deploy production).
-   - Merging a reviewed PR into **`main`** triggers Cloudflare Workers Builds trigger `0727e904-48ad-4e75-9b26-1d2123ec5063`:
-     - **Build command:** `pnpm run build` *(cleaned up from historical duplicate `npm run build\npnpm run build`)*
-     - **Deploy command:** `npx wrangler deploy` (uses Vite/Cloudflare plugin generated `dist/server/wrangler.json`)
-2. **Manual Fallback (Only if Workers Builds is unavailable and operator is authenticated with `wrangler login`):**
-   - Never run bare `wrangler deploy` without first building (`npm.cmd run build`) and inspecting `dist/server/wrangler.json` to confirm:
-     - `"name": "strategic-souls"`
-     - `d1_databases[0].binding === "DB"`
-     - `d1_databases[0].database_name === "ss"`
-     - `d1_databases[0].database_id === "1cda2b05-6b99-4d04-896f-b3542ad2ce7f"`
-   - Deploy strictly against that generated config: `npx wrangler deploy --config dist/server/wrangler.json`.
+1. Merge the reviewed, green PR into `main`. Feature branches run GitHub verification and do not change production traffic.
+2. On the existing Cloudflare Workers Builds trigger, run `pnpm run build` followed by `node operations/scripts/check-production-release.mjs stage`. The stage command checks the clean build SHA, D1, VPC service, assets, version metadata and persistent variables. It uploads a `main-<sha>` version and emits its UUID, binding inventory and Cloudflare build UUID. An upload leaves production traffic unchanged.
+3. Check out that exact `main` commit. Record the current deployment and the single version receiving 100% of traffic. Make the candidate available at 0%, verify the public host through the Cloudflare version override, and run authenticated smoke tests. Use version UUIDs from the deployment list and the stage record.
+
+   ```powershell
+   npx wrangler deployments list --config dist/server/wrangler.json --json
+   npx wrangler versions deploy "$previous@100%" "$candidate@0%" --config dist/server/wrangler.json --yes
+   node operations/scripts/check-production-release.mjs candidate $candidate
+   ```
+
+4. Confirm the same `main` SHA, verification checks, and expected version allocation immediately before promotion. Promote the verified candidate, then verify the public host without a version override.
+
+   ```powershell
+   npx wrangler versions deploy "$candidate@100%" --config dist/server/wrangler.json --yes
+   node operations/scripts/check-production-release.mjs live $candidate
+   ```
+
+   The live check records the commit, deployment, version, UTC time, traffic and public smoke results. Run owner, ordinary-user and mobile browser checks before closing the release. If Checks fail, restore `$previous@100%` and verify its identity. Keep the prior version available. A diagnostic version's tag cannot pass the candidate gate.
+
+5. If Workers Builds is unavailable, build from the clean current remote `main` and run the same `stage`, `candidate`, and `live` checks with an authenticated Wrangler session. Keep the existing Worker and D1 bindings.
 
 ---
 
@@ -59,8 +67,9 @@ Before merging any branch into `main`:
 3. **Production Worker Build & Generated Binding Check:**
    ```powershell
    node operations/scripts/run-framework.mjs build
+   node operations/scripts/check-production-release.mjs artifact
    ```
-   Verify `dist/server/wrangler.json` matches Worker `strategic-souls`, binding `DB`, DB `ss`, and UUID `1cda2b05-6b99-4d04-896f-b3542ad2ce7f`.
+   The artifact check verifies Worker `strategic-souls`, D1 `ss`, the existing VPC service, version provenance, generated assets and the India API host.
 4. **Local Isolated Compiled-Worker Preview QA:**
    Launch `node operations/scripts/local-preview.mjs launch`, open `http://127.0.0.1:5173`, verify 0 console errors, natural-color 3D Earth, unchanged UI text colors, mobile responsiveness (`320px`–`1440px`), standalone auth, watchlists, portfolios, 3-level Soul Scan, and Community. Stop server (`Ctrl + C`) when done.
 5. **CI & Review:** Push branch (`git push -u origin <branch>`), verify `.github/workflows/verify.yml` passes on GitHub, and respect branch protections/reviews before merging to `main`.
@@ -89,12 +98,16 @@ Production secrets are stored **only** in Cloudflare Worker Secrets (`Workers & 
 | Secret Name | Purpose | Required Today? |
 | --- | --- | --- |
 | `X2_OWNER_SUBJECT` | Verified owner account ID authorizing owner-only Data Connections | Optional (fail-closed if unset) |
+| `MARKET_ADAPTER_AUTH_TOKEN` | Owner-only VPC adapter credential | Required in production |
+| `BHARATSTOCK_API_KEY` | Encrypted BharatStock credential | Preserved by the release gate |
+| `INDIA_API_KEY` | Encrypted Indian API credential | Preserved by the release gate |
 | `X2_EODHD_API_TOKEN` | Licensed EODHD market-data API token | Optional (keyless fallback active) |
 | `X2_TRUEDATA_BEARER_TOKEN` | Licensed TrueData historical bearer token | Optional (keyless fallback active) |
 | `GOOGLE_CLIENT_ID` | Optional Google OAuth 2.0 client ID | Optional (email/password active) |
 | `GOOGLE_CLIENT_SECRET` | Optional Google OAuth 2.0 client secret | Optional (email/password active) |
 
 - Never commit secret values, never store them in D1 tables, and never paste them in chat or PRs.
+- `INDIA_API_HOST=stock.indianapi.in` is a server variable tracked in `vite.config.ts`.
 - Cloudflare Worker observability `redact_query_string` should remain enabled (`true`) so URL query parameters are not logged in plaintext.
 
 ---

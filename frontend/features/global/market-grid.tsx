@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -33,6 +33,17 @@ type Props = {
 };
 
 const GUEST_STORAGE_KEY = "ss-v3-guest-market-grid-v2";
+const OVERVIEW_TIMEOUT_MS = 10_000;
+
+function guestMarketIds(): string[] {
+  try {
+    const saved = window.localStorage.getItem(GUEST_STORAGE_KEY) ??
+      window.localStorage.getItem("ss-x51-guest-market-grid-v1");
+    return reconcileGlobalMarketIds(saved ? JSON.parse(saved) : null);
+  } catch {
+    return [...DEFAULT_EIGHT_CARD_IDS];
+  }
+}
 
 function cardIsGenuinelyLive(card: MarketOverviewCard): boolean {
   return (
@@ -259,6 +270,7 @@ export default function MarketOverviewGrid({
   notify,
 }: Props) {
   const [cards, setCards] = useState<MarketOverviewCard[]>([]);
+  const [loadedForAuthenticated, setLoadedForAuthenticated] = useState<boolean | null>(null);
   const [layout, setLayout] = useState<MarketLayoutRecord>({
     ids: [...DEFAULT_EIGHT_CARD_IDS],
     version: 0,
@@ -290,46 +302,31 @@ export default function MarketOverviewGrid({
     const request = ++overviewRequest.current;
     setLoading(true);
     setError("");
+    const guestIds = authenticated ? null : guestMarketIds();
     try {
       const res = await api<OverviewResponse>("/api/markets/overview", undefined, {
         signal: ctrl.signal,
+        timeoutMs: OVERVIEW_TIMEOUT_MS,
       });
       if (request !== overviewRequest.current) return;
+      const orderedIds = guestIds ?? reconcileGlobalMarketIds(res.layout.ids);
+      const cardMap = new Map(res.cards.map((card) => [card.canonicalId, card]));
+      const orderedCards = orderedIds.map((id) => cardMap.get(id));
+      if (orderedCards.some((card) => !card)) throw new Error("Incomplete market overview.");
       setAsOfUTC(res.asOf);
-      setLayout(res.layout);
-      if (!authenticated) {
-        try {
-          const saved =
-            window.localStorage.getItem(GUEST_STORAGE_KEY) ??
-            window.localStorage.getItem("ss-x51-guest-market-grid-v1");
-          if (saved) {
-            const parsed = JSON.parse(saved) as unknown;
-            const reconciled = reconcileGlobalMarketIds(parsed);
-            const cardMap = new Map(res.cards.map((c) => [c.canonicalId, c]));
-            const reordered = reconciled
-              .map((id) => cardMap.get(id))
-              .filter((c): c is MarketOverviewCard => !!c);
-            if (reordered.length === DEFAULT_EIGHT_CARD_IDS.length) {
-              setCards(reordered);
-              setDraftIds(reconciled);
-              setLoading(false);
-              return;
-            }
-          }
-        } catch {
-          /* Ignore invalid local storage */
-        }
-      }
-      setCards(res.cards);
-      setDraftIds(res.layout.ids);
-    } catch (err) {
+      setLayout({ ...res.layout, ids: orderedIds });
+      setCards(orderedCards.filter((card): card is MarketOverviewCard => !!card));
+      setLoadedForAuthenticated(authenticated);
+      setDraftIds(orderedIds);
+    } catch {
       if (request === overviewRequest.current && !ctrl.signal.aborted) {
-        // Preserve any previously valid cached cards rather than wiping them on refresh error
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Could not refresh market overview. Showing last loaded state.",
-        );
+        if (guestIds) {
+          setLayout({ ids: guestIds, version: 0, updatedAt: null, isDefault: false });
+          setLoadedForAuthenticated(false);
+        }
+        setCards([]);
+        setAsOfUTC(null);
+        setError("Market data unavailable. Try again in a moment.");
       }
     } finally {
       if (request === overviewRequest.current) setLoading(false);
@@ -348,17 +345,12 @@ export default function MarketOverviewGrid({
     };
   }, [loadOverview]);
 
-  const hasAnyLiveFeed = useMemo(
-    () => cards.some((c) => cardIsGenuinelyLive(c)),
-    [cards],
-  );
+  const showQuotes = !error && loadedForAuthenticated === authenticated;
+  const hasAnyLiveFeed = showQuotes && cards.some(cardIsGenuinelyLive);
+  const layoutIds = loadedForAuthenticated === authenticated ? layout.ids : DEFAULT_EIGHT_CARD_IDS;
 
   function openCustomize() {
-    setDraftIds(
-      cards.length === DEFAULT_EIGHT_CARD_IDS.length
-        ? cards.map((c) => c.canonicalId)
-        : [...DEFAULT_EIGHT_CARD_IDS],
-    );
+    setDraftIds([...layoutIds]);
     setActiveSlot(0);
     setEditOpen(true);
   }
@@ -410,6 +402,7 @@ export default function MarketOverviewGrid({
       });
       setLayout(res.layout);
       setCards(res.cards);
+      setLoadedForAuthenticated(authenticated);
       setDraftIds(res.layout.ids);
       setSaveBadge(isReset ? "Reset to defaults" : "Order saved");
       setEditOpen(false);
@@ -493,21 +486,19 @@ export default function MarketOverviewGrid({
         role="list"
         aria-label="Eight market overview tiles"
       >
-        {(cards.length === DEFAULT_EIGHT_CARD_IDS.length
-          ? cards
-          : Array.from({ length: DEFAULT_EIGHT_CARD_IDS.length }, () => null)
-        ).map((card, idx) => {
+        {layoutIds.map((id, idx) => {
+          const card = showQuotes ? cards[idx] : undefined;
           if (!card) {
             return (
               <div
-                key={`skeleton-${idx}`}
+                key={id}
                 className="x51-mcard ss-v3-mcard"
                 role="listitem"
-                aria-busy="true"
+                aria-busy={loading && !error}
               >
-                <span className="x51-mcard-name">Loading…</span>
+                <span className="x51-mcard-name">{registryInstrument(id)?.label ?? id}</span>
                 <span className="x51-mcard-price">—</span>
-                <span className="ss-v31-mcard-time">Checking…</span>
+                <span className="ss-v31-mcard-time">{loading && !error ? "Checking…" : "Unavailable"}</span>
               </div>
             );
           }

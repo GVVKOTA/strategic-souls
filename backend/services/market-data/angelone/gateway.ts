@@ -465,6 +465,7 @@ export async function gatewaySearchInstruments(options: {
   exchange?: ExchangeCode | "ALL";
   segment?: SegmentType | "ALL";
   limit?: number;
+  timeoutMs?: number;
   runtimeEnv?: Record<string, unknown>;
   requestUrl?: string;
   fetcher?: typeof fetch;
@@ -483,7 +484,7 @@ export async function gatewaySearchInstruments(options: {
       const res = await callPrivateAdapter<{ instruments: InstrumentMasterEntry[] }>(
         config,
         `/internal/instruments?${qs.toString()}`,
-        { fetcher: options.fetcher, timeoutMs: 8000 },
+        { fetcher: options.fetcher, timeoutMs: options.timeoutMs ?? 8000 },
       );
       if (Array.isArray(res.instruments)) {
         return { source: "LIVE_MASTER", instruments: res.instruments.slice(0, limit) };
@@ -508,6 +509,7 @@ export async function gatewayQuotes(options: {
   authenticated: boolean;
   isOwner: boolean;
   ids?: readonly string[];
+  timeoutMs?: number;
   runtimeEnv?: Record<string, unknown>;
   requestUrl?: string;
   fetcher?: typeof fetch;
@@ -532,7 +534,7 @@ export async function gatewayQuotes(options: {
   const qs = cleanIds.length > 0 ? `?ids=${encodeURIComponent(cleanIds.join(","))}` : "";
   return callPrivateAdapter<MarketQuoteResponse>(config, `/internal/quote${qs}`, {
     fetcher: options.fetcher,
-    timeoutMs: 12_000,
+    timeoutMs: options.timeoutMs ?? 12_000,
   });
 }
 
@@ -542,6 +544,7 @@ export async function gatewayCandles(options: {
   id: string;
   interval?: CandleInterval;
   days?: number;
+  timeoutMs?: number;
   traceId?: string;
   runtimeEnv?: Record<string, unknown>;
   requestUrl?: string;
@@ -576,7 +579,7 @@ export async function gatewayCandles(options: {
   return callPrivateAdapter<NormalizedCandleSeries>(
     config,
     `/internal/candles?${qs.toString()}`,
-    { fetcher: options.fetcher, timeoutMs: 14_000, traceId: options.traceId },
+    { fetcher: options.fetcher, timeoutMs: options.timeoutMs ?? 14_000, traceId: options.traceId },
   );
 }
 

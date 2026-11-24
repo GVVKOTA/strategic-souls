@@ -127,7 +127,7 @@ function createMockAngelOneFetcher() {
   };
 }
 
-function buildWorkerHarness(env, getUser) {
+function buildWorkerHarness(env, getUser, fetchOfficial = fetch) {
   const sql = new DatabaseSync(":memory:");
   sql.exec("PRAGMA foreign_keys=ON");
   for (const file of readdirSync("drizzle").filter((f) => f.endsWith(".sql")).sort()) {
@@ -175,7 +175,7 @@ function buildWorkerHarness(env, getUser) {
     setTimeout,
     clearTimeout,
     crypto: webcrypto,
-    fetch,
+    fetch: fetchOfficial,
   });
   const modules = new Map();
   function synthetic(id, values) {
@@ -225,6 +225,71 @@ function buildWorkerHarness(env, getUser) {
   }
   return { load };
 }
+
+test("eight-card overview survives an absent adapter and unavailable official feeds", async () => {
+  let user = null;
+  const env = {
+    X2_OWNER_SUBJECT: "owner", MARKET_DATA_MODE: "private", ENABLE_PRIVATE_BROKER_DATA: "true",
+    MARKET_ADAPTER_AUTH_TOKEN: FAKE_SERVICE_TOKEN,
+  };
+  const harness = buildWorkerHarness(env, () => user, async () => new Response(null, { status: 503 }));
+  const overview = await harness.load("app/api/markets/overview/route.ts");
+  const request = new Request("https://ss.test/api/markets/overview");
+  for (const actor of [null, { userId: "alice" }, { userId: "owner" }]) {
+    user = actor;
+    const response = await overview.GET(request);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("Cache-Control"), /private, no-store/);
+    const data = await response.json();
+    assert.equal(data.cards.length, 8);
+    assert.equal(new Set(data.cards.map(({ canonicalId }) => canonicalId)).size, 8);
+    assert.ok(data.cards.every((card) => card.value === null && !card.isLive && !card.redistributable));
+  }
+});
+
+test("a timed-out sparkline leaves the genuine owner quote and never reaches members", async () => {
+  let user = { userId: "alice" };
+  let adapterCalls = 0;
+  let timedOut = false;
+  const at = new Date().toISOString();
+  const harness = buildWorkerHarness({
+    X2_OWNER_SUBJECT: "owner", MARKET_DATA_MODE: "private", ENABLE_PRIVATE_BROKER_DATA: "true",
+    MARKET_ADAPTER_AUTH_TOKEN: FAKE_SERVICE_TOKEN,
+    MARKET_DATA_ADAPTER: {
+      async fetch(url, { signal }) {
+        adapterCalls++;
+        const { pathname } = new URL(url);
+        if (pathname === "/internal/instruments") return Response.json({ instruments: [] });
+        if (pathname === "/internal/quote") return Response.json({ quotes: [{
+          id: "NSE:NIFTY", exchange: "NSE", segment: "INDEX", currency: "INR", unit: "pts",
+          ltp: 123, change: null, changePct: null, prevClose: null, expiry: null, quality: "MARKET_CLOSED_LAST",
+          sourceMode: "PRIVATE_OWNER_FEED", marketState: "CLOSED", isLive: false,
+          exchangeTimestampUTC: at, retrievalTimestampUTC: at, freshnessReason: "Fixture close",
+        }] });
+        assert.equal(pathname, "/internal/candles");
+        return new Promise((_, reject) => signal.addEventListener("abort", () => {
+          timedOut = true;
+          reject(new DOMException("Timed out", "AbortError"));
+        }, { once: true }));
+      },
+    },
+  }, () => user, async () => new Response(null, { status: 503 }));
+  const route = await harness.load("app/api/markets/overview/route.ts");
+  const request = new Request("https://ss.test/api/markets/overview");
+  const memberResponse = await route.GET(request);
+  assert.equal(memberResponse.status, 200);
+  assert.equal(adapterCalls, 0);
+  assert.ok((await memberResponse.json()).cards.every((card) => card.value === null));
+  user = { userId: "owner" };
+  const response = await route.GET(request);
+  assert.equal(response.status, 200);
+  const cards = (await response.json()).cards;
+  assert.equal(cards.length, 8);
+  const nifty = cards.find((card) => card.canonicalId === "NSE:NIFTY");
+  assert.deepEqual([nifty.value, nifty.quality, nifty.sparkline, nifty.redistributable], [123, "LAST_AVAILABLE", null, false]);
+  assert.equal(timedOut, true);
+  assert.equal(cards.filter((card) => card.value !== null).length, 1);
+});
 
 test("owner Classic coverage uses longer candle history and saves a daily scan only with eligible bars", async () => {
   const master = new InstrumentMaster();

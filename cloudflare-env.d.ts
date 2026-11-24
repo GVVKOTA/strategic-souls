@@ -1,6 +1,7 @@
 declare namespace Cloudflare {
   interface Env {
     DB?: D1Database;
+    CF_VERSION_METADATA?: WorkerVersionMetadata;
     BUCKET?: R2Bucket;
     X2_OWNER_SUBJECT?: string;
     X2_EODHD_API_TOKEN?: string;
