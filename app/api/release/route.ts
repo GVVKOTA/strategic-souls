@@ -18,6 +18,7 @@ export function GET(request: Request) {
       organization: APP_RELEASE.organization,
       release: APP_RELEASE.releaseTrack,
       releaseName: APP_RELEASE.versionLabel,
+      workspaceExperience: APP_RELEASE.workspaceExperience,
       supportEmail: APP_RELEASE.supportEmail,
       targetLaunchDate: APP_RELEASE.targetLaunchDate,
       revisionMarker: APP_RELEASE.revisionMarker,

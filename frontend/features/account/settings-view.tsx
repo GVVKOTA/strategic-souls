@@ -62,6 +62,8 @@ type Props = {
   onBack: () => void;
   onProfileSynced: (profile: UserProfileSnapshot) => void;
   onSignOut: () => void;
+  onOpenNotification?: (id: string) => void;
+  onOpenPriceAlerts?: () => void;
 };
 
 type EmailStatus = {
@@ -123,7 +125,7 @@ const SECTIONS: {
   {
     id: "sessions",
     label: "Active Sessions",
-    desc: "Review signed-in devices & revoke access",
+    desc: "Review and delete active sessions",
     icon: MonitorSmartphone,
   },
   {
@@ -158,6 +160,8 @@ export default function SettingsView({
   onBack,
   onProfileSynced,
   onSignOut,
+  onOpenNotification,
+  onOpenPriceAlerts,
 }: Props) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [mobileListOpen, setMobileListOpen] = useState(false);
@@ -517,7 +521,7 @@ export default function SettingsView({
   }
 
   async function revokeSingleSession(sessionId: string) {
-    if (busy) return;
+    if (busy || !window.confirm("Delete this session and sign out the remote device?")) return;
     setBusy(true);
     try {
       const res = await api<{ revokedCurrent?: boolean }>(
@@ -528,11 +532,11 @@ export default function SettingsView({
         onSignOut();
         return;
       }
-      notify("Session revoked.");
+      notify("Session deleted.");
       await loadSessionsAndSecurity();
     } catch (err) {
       notify(
-        err instanceof Error ? err.message : "Could not revoke session.",
+        err instanceof Error ? err.message : "Could not delete session.",
         true,
       );
     } finally {
@@ -541,7 +545,7 @@ export default function SettingsView({
   }
 
   async function revokeAllOtherSessions() {
-    if (busy) return;
+    if (busy || !window.confirm("Delete all other sessions and sign out those devices?")) return;
     setBusy(true);
     try {
       const res = await api<{ revokedCount?: number }>(
@@ -770,6 +774,10 @@ export default function SettingsView({
             </div>
           ) : profile ? (
             <>
+              {(section === "privacy" || section === "security") && <div className="x6-setting-row">
+                <span>{section === "security" ? "Security and recovery support" : "Privacy contact"}</span>
+                <a href={`mailto:${APP_RELEASE.supportEmail}`}>{APP_RELEASE.supportEmail}</a>
+              </div>}
               {/* 1. EDIT PROFILE */}
               {section === "profile" && (
                 <div className="x1-panel x54-settings-panel">
@@ -1392,7 +1400,7 @@ export default function SettingsView({
                             <input
                               type="password"
                               autoComplete="new-password"
-                              minLength={10}
+                              minLength={15}
                               maxLength={128}
                               required
                               value={newPassword}
@@ -1406,7 +1414,7 @@ export default function SettingsView({
                             <input
                               type="password"
                               autoComplete="new-password"
-                              minLength={10}
+                              minLength={15}
                               maxLength={128}
                               required
                               value={confirmNewPassword}
@@ -1739,6 +1747,9 @@ export default function SettingsView({
                     </p>
                   )}
 
+                  {onOpenPriceAlerts && <button type="button" className="x1-secondary" onClick={onOpenPriceAlerts}>
+                    <Bell size={16} /> Manage Price Alerts
+                  </button>}
                   <div className="x6-notif-list">
                     {profile.notifications.length ? (
                       profile.notifications.map((n) => (
@@ -1759,6 +1770,8 @@ export default function SettingsView({
                             {moment(n.createdAt)} ·{" "}
                             {n.readAt ? "Read" : "Unread"}
                           </span>
+                          {onOpenNotification && <button type="button" className="x1-text-button"
+                            onClick={() => onOpenNotification(n.id)}>Open</button>}
                         </div>
                       ))
                     ) : (
@@ -1791,7 +1804,7 @@ export default function SettingsView({
                         disabled={busy}
                         onClick={() => void revokeAllOtherSessions()}
                       >
-                        Sign out all other devices
+                        Delete All Other Sessions
                       </button>
                     )}
                   </div>
@@ -1834,6 +1847,9 @@ export default function SettingsView({
                               {moment(s.lastSeenAt)}
                             </p>
                           </div>
+                          {s.isCurrent && <button type="button" className="x1-secondary" disabled={busy} onClick={onSignOut}>
+                            Log out from this device
+                          </button>}
                           {!s.isCurrent && (
                             <button
                               type="button"
@@ -1841,7 +1857,7 @@ export default function SettingsView({
                               disabled={busy}
                               onClick={() => void revokeSingleSession(s.id)}
                             >
-                              Revoke
+                              Delete Session
                             </button>
                           )}
                         </div>

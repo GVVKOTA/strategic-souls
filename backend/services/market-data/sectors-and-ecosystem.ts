@@ -14,6 +14,7 @@ export type NseSectorConstituent = {
 };
 
 export type NseSectorIndex = {
+  groupType?: "industry";
   id: string;
   indexSymbol: string;
   name: string;
@@ -210,13 +211,19 @@ export function classifyHeatmapTone(pctChange: number | null): HeatmapTile["tone
 export function buildSectorHeatmaps(
   quoteMap: ReadonlyMap<
     string,
-    { value: number | null; pctChange: number | null; unit: string; provider: string }
+    { value: number | null; pctChange: number | null; unit: string; provider: string; latestDate?: string; referenceDate?: string | null }
   >,
+  groups: readonly NseSectorIndex[] = NSE_SECTOR_INDICES,
 ): SectorHeatmapSummary[] {
-  return NSE_SECTOR_INDICES.map((sector) => {
+  return groups.map((sector) => {
+    const comparisonWindow = sector.groupType === "industry" ? sector.constituents.map(({ id }) => quoteMap.get(id))
+      .filter((q) => q?.latestDate && q.referenceDate && q.pctChange !== null)
+      .map((q) => q!.latestDate + "|" + q!.referenceDate).sort().at(-1) : undefined;
     const tiles: HeatmapTile[] = sector.constituents.map((c) => {
       const q = quoteMap.get(c.id.toUpperCase());
-      const pct = q && q.pctChange !== null && Number.isFinite(q.pctChange) ? q.pctChange : null;
+      const aligned = sector.groupType !== "industry" || (comparisonWindow &&
+        comparisonWindow === q?.latestDate + "|" + q?.referenceDate);
+      const pct = aligned && q && q.pctChange !== null && Number.isFinite(q.pctChange) ? q.pctChange : null;
       return {
         id: c.id,
         symbol: c.symbol,

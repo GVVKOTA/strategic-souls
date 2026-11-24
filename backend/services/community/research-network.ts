@@ -748,6 +748,7 @@ export async function listWebSouls(
     search?: string;
     sort?: "newest" | "following" | "evidence";
     authorHandle?: string;
+    postId?: string;
     savedOnly?: boolean;
   } = {},
 ): Promise<{ posts: PublishedSoulCard[] }> {
@@ -761,6 +762,7 @@ export async function listWebSouls(
   const authorQ = (options.authorHandle ?? "").trim().replace(/^@/, "").toLowerCase();
 
   const whereAuthor = authorQ ? " AND lower(p.author_handle) = ?" : "";
+  const wherePost = options.postId ? " AND p.id = ?" : "";
   const whereSaved = options.savedOnly
     ? " AND EXISTS(SELECT 1 FROM x51_web_soul_saves sv WHERE sv.post_id = p.id AND sv.subject = ?)"
     : "";
@@ -776,6 +778,7 @@ export async function listWebSouls(
   ];
   if (authorQ) bindParams.push(authorQ);
   if (options.savedOnly) bindParams.push(viewer);
+  if (options.postId) bindParams.push(options.postId);
 
   // Server-enforced visibility query:
   // PUBLIC visible to all non-blocked viewers;
@@ -808,7 +811,7 @@ export async function listWebSouls(
            SELECT 1 FROM x2_blocks z
            WHERE (z.subject = ? AND z.target = p.author_subject)
               OR (z.subject = p.author_subject AND z.target = ?)
-         )${whereAuthor}${whereSaved}
+         )${whereAuthor}${whereSaved}${wherePost}
        ORDER BY p.created_at DESC, p.id DESC
        LIMIT 80`,
     )
@@ -1645,9 +1648,9 @@ export async function mutateResearchNetwork(
     const postId = id(input.postId, "Post");
     const res = await db
       .prepare(
-        "UPDATE x51_web_souls SET deleted_at=?, pinned=0 WHERE id=? AND author_subject=? AND deleted_at IS NULL",
+        "DELETE FROM x51_web_souls WHERE id=? AND author_subject=? AND deleted_at IS NULL",
       )
-      .bind(now, postId, subject)
+      .bind(postId, subject)
       .run();
     if (!res.meta.changes) {
       throw new HttpError(404, "Published Soul not found or not owned by you.");

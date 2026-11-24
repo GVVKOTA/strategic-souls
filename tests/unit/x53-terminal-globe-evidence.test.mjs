@@ -1,7 +1,7 @@
 /**
  * Strategic Souls X5.3 — Unit Tests for:
- * - Exact 4-item Global 3-dot menu contract
- * - Exact 4-block Strategic Dashboard & complete 2D map removal
+ * - Grouped Global menu and deep links
+ * - Four-block Strategic Dashboard and regional projection handoff
  * - 3D Perspective Globe camera zoom (1.0x-5.0x), circularity, occlusion, poles/dateline & ray unproject
  * - Evidence & Probability statistical helpers (Coverage%, Match%, EmpiricalP, Wilson 95% CI, Brier, N/A guards)
  * - Date-only timestamp precision & Marketaux entity-to-canonical-asset mapping
@@ -72,23 +72,12 @@ async function loadTs(filePath) {
 const newsMod = (await loadTs("backend/services/intelligence/news-and-disasters.ts"))
   .namespace;
 
-// ── 1. Exact 4-Item Global Menu Contract ──────────────────────────────────────
-test("X5.3 Global three-dot menu has EXACTLY 4 items in locked order with exact labels", () => {
-  assert.equal(GLOBAL_MENU_ITEMS.length, 4);
-  assert.deepEqual(
-    GLOBAL_MENU_ITEMS.map((i) => i.label),
-    [
-      "Strategic Dashboard",
-      "Market Intelligence / Economic Calendar",
-      "Heatmap",
-      "Strategic Globe",
-    ],
-  );
-  assert.deepEqual(
-    GLOBAL_MENU_ITEMS.map((i) => i.id),
-    ["DASHBOARD", "INTELLIGENCE", "HEATMAP", "GLOBE_FOCUS"],
-  );
-
+test("X1 Global menu groups twelve destinations and preserves existing deep links", () => {
+  assert.deepEqual(GLOBAL_MENU_ITEMS.map(({ label }) => label), ["Market Overview", "Global Intelligence", "Personal Workspace"]);
+  assert.deepEqual(GLOBAL_MENU_ITEMS.flatMap(({ items }) => items.map(({ label }) => label)), [
+    "Strategic Dashboard", "Market Explorer", "Sector Heatmap", "Asset Comparison", "Market Movers & Breadth",
+    "Strategic Globe", "Market Intelligence", "Economic Calendar", "Market Vox", "My Portfolio", "Watchlist", "Price Alerts",
+  ]);
   // Deep-link parsing resolves all views & subviews cleanly
   assert.equal(parseGlobalViewParam(null), "DASHBOARD");
   assert.equal(parseGlobalViewParam("intelligence"), "INTELLIGENCE");
@@ -101,17 +90,17 @@ test("X5.3 Global three-dot menu has EXACTLY 4 items in locked order with exact 
   assert.equal(parseIntelligenceSubViewParam("unknown"), "HEADLINES");
 });
 
-// ── 2. Exact 4-Block Main Overview & Complete 2D Map Removal ──────────────────
-test("X5.3 Global Overview renders ONLY 4 blocks and completely removes 2D map & List switch", () => {
+// ── 2. Four-block main overview and regional map handoff ──────────────────
+test("X1 overview retains four blocks and lazy-loads the regional map at the zoom threshold", () => {
   const dashSrc = readFileSync("frontend/features/global/dashboard.tsx", "utf8");
   const globeSrc = readFileSync("frontend/features/global/strategic-globe.tsx", "utf8");
   const layoutSrc = readFileSync("app/layout.tsx", "utf8");
   const wsSrc = readFileSync("frontend/components/workspace/workspace.tsx", "utf8");
 
-  // Complete 2D Map removal from Global runtime path
   assert.doesNotMatch(dashSrc, /world-conflict-map|WorldConflictMap|maplibre/i);
-  assert.doesNotMatch(globeSrc, /world-conflict-map|WorldConflictMap|maplibre/i);
-  assert.doesNotMatch(globeSrc, /Investigate on 2D|Zoom for 2D|2D compatibility view/i);
+  assert.match(globeSrc, /lazy\(\(\) => import\("\.\/regional-map"\)/);
+  assert.match(globeSrc, /MAP_ENTER_GLOBE_ZOOM/);
+  assert.match(globeSrc, /onExit=\{returnToEarth\}/);
   assert.doesNotMatch(layoutSrc, /earth-map\.css/);
 
   // No remount key churn on Global & uses GLOBAL_MENU_ITEMS

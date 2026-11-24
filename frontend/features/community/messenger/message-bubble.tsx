@@ -52,6 +52,7 @@ function ResearchAttachment({
 
 type Props = {
   message: ChatMessage;
+  highlighted?: boolean;
   groupedWithPrev: boolean;
   menuOpen: boolean;
   onOpenMenu: (id: string | null) => void;
@@ -64,6 +65,7 @@ type Props = {
 
 export default function MessageBubble({
   message,
+  highlighted = false,
   groupedWithPrev,
   menuOpen,
   onOpenMenu,
@@ -79,6 +81,9 @@ export default function MessageBubble({
   const menuRef = useRef<HTMLDivElement>(null);
 
   const showConfirmRetract = menuOpen && confirmRetract;
+  useEffect(() => () => {
+    if (pressTimer.current !== null) window.clearTimeout(pressTimer.current);
+  }, []);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -136,6 +141,7 @@ export default function MessageBubble({
   if (message.retractedAt) {
     return (
       <div
+        id={"ss-message-" + message.id}
         className={
           "x54-msg-row" +
           (message.isMine ? " is-mine" : " is-peer") +
@@ -153,10 +159,11 @@ export default function MessageBubble({
 
   return (
     <div
+      id={"ss-message-" + message.id}
       className={
         "x54-msg-row" +
         (message.isMine ? " is-mine" : " is-peer") +
-        (groupedWithPrev ? " is-grouped" : "") +
+        (groupedWithPrev ? " is-grouped" : "") + (highlighted ? " x1-alert-selected" : "") +
         (menuOpen ? " is-menu-open" : "")
       }
       data-message-id={message.id}

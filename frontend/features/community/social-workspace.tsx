@@ -136,9 +136,11 @@ export function SocialWorkspace({
   notify,
   query = "",
   initialThreadId = "",
+  initialMessageId = "",
   onClearInitialThread,
   onOpenProfile,
   onOpenGroup,
+  onOpenNotification,
   shareSoul,
   onClearShare,
   onMobileChatActive,
@@ -148,9 +150,11 @@ export function SocialWorkspace({
   notify: Notice;
   query?: string;
   initialThreadId?: string;
+  initialMessageId?: string;
   onClearInitialThread?: () => void;
   onOpenProfile?: (handle: string) => void;
   onOpenGroup: (id: string) => void;
+  onOpenNotification?: (id: string) => void;
   shareSoul?: { id: string; revision: number; title: string } | null;
   onClearShare?: () => void;
   onMobileChatActive?: (active: boolean) => void;
@@ -760,6 +764,7 @@ export function SocialWorkspace({
 
               <ConversationView
                 thread={thread}
+                initialMessageId={threadId === initialThreadId ? initialMessageId : ""}
                 hasActiveThread={!!threadId}
                 older={older}
                 olderError={olderError}
@@ -1173,7 +1178,8 @@ export function SocialWorkspace({
                 >
                   <strong>{n.kind.replaceAll("_", " ")}</strong>
                   <small>{moment(n.createdAt)}</small>
-                  {n.kind === "MESSAGE" || n.kind === "MESSAGE_REQUEST" ? (
+                  {onOpenNotification ? <button type="button" onClick={() => onOpenNotification(n.id)}>Open</button> :
+                  n.kind === "MESSAGE" || n.kind === "MESSAGE_REQUEST" ? (
                     <button
                       type="button"
                       onClick={() => {
@@ -1355,10 +1361,12 @@ type GroupNetwork = {
 
 export function GroupNetworkPanel({
   groupId,
+  initialDiscussionId,
   notify,
   onOpenProfile,
 }: {
   groupId: string;
+  initialDiscussionId?: string;
   notify: Notice;
   onOpenProfile?: (handle: string) => void;
 }) {
@@ -1384,6 +1392,11 @@ export function GroupNetworkPanel({
       });
     return () => controller.abort();
   }, [groupId]);
+
+  useEffect(() => {
+    if (initialDiscussionId && data?.group.id === groupId)
+      document.getElementById("ss-discussion-" + initialDiscussionId)?.scrollIntoView({ block: "nearest" });
+  }, [initialDiscussionId, data, groupId]);
 
   async function mutate(input: Record<string, unknown>, success: string) {
     if (lock.current) return false;
@@ -1521,7 +1534,8 @@ export function GroupNetworkPanel({
         )}
         <div className="x2-social-discussions">
           {data?.discussions.map((d) => (
-            <article key={d.id} className={d.parentId ? "is-reply" : ""}>
+            <article key={d.id} id={"ss-discussion-" + d.id}
+              className={(d.parentId ? "is-reply " : "") + (initialDiscussionId === d.id ? "x1-alert-selected" : "")}>
               <small
                 style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
               >

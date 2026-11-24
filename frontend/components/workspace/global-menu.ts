@@ -1,81 +1,55 @@
-/**
- * Strategic Souls X5.3 — Canonical Global Workspace Navigation Contract.
- * Single source of truth for the exact 4-item three-dot Global menu and focused views.
- */
-
-export type GlobalPrimaryMenuId =
-  | "DASHBOARD"
-  | "INTELLIGENCE"
-  | "HEATMAP"
-  | "GLOBE_FOCUS";
-
-export type GlobalView =
-  | GlobalPrimaryMenuId
-  | "PORTFOLIO"
-  | "WATCHLISTS"
-  | "MARKET_EXPLORER";
-
+export type GlobalView = "DASHBOARD" | "INTELLIGENCE" | "HEATMAP" | "GLOBE_FOCUS" |
+  "PORTFOLIO" | "WATCHLISTS" | "MARKET_EXPLORER" | "COMPARE" | "MOVERS" | "PRICE_ALERTS";
 export type IntelligenceSubView = "HEADLINES" | "CALENDAR" | "MARKET_VOX";
 
-export type GlobalMenuItem = {
-  readonly id: GlobalPrimaryMenuId;
-  readonly label: string;
-  readonly description: string;
-};
+type MenuItem = { id: GlobalView; label: string; sub?: IntelligenceSubView };
 
-/**
- * Exact 4-entry Global three-dot menu contract (X5.3 Section 03).
- * Order and user-facing labels are strictly locked.
- */
-export const GLOBAL_MENU_ITEMS: readonly GlobalMenuItem[] = Object.freeze([
-  {
-    id: "DASHBOARD",
-    label: "Strategic Dashboard",
-    description: "9 markets, portfolio, 3D globe & calendar",
-  },
-  {
-    id: "INTELLIGENCE",
-    label: "Market Intelligence / Economic Calendar",
-    description: "Headlines, official calendar & Market Vox",
-  },
-  {
-    id: "HEATMAP",
-    label: "Heatmap",
-    description: "NSE sector explorer, heatmaps & comparison",
-  },
-  {
-    id: "GLOBE_FOCUS",
-    label: "Strategic Globe",
-    description: "Interactive 3D Earth, events & venues",
-  },
-]);
+export const GLOBAL_MENU_ITEMS: readonly { label: string; items: readonly MenuItem[] }[] = [
+  { label: "Market Overview", items: [
+    { id: "DASHBOARD", label: "Strategic Dashboard" },
+    { id: "MARKET_EXPLORER", label: "Market Explorer" },
+    { id: "HEATMAP", label: "Sector Heatmap" },
+    { id: "COMPARE", label: "Asset Comparison" },
+    { id: "MOVERS", label: "Market Movers & Breadth" },
+  ] },
+  { label: "Global Intelligence", items: [
+    { id: "GLOBE_FOCUS", label: "Strategic Globe" },
+    { id: "INTELLIGENCE", sub: "HEADLINES", label: "Market Intelligence" },
+    { id: "INTELLIGENCE", sub: "CALENDAR", label: "Economic Calendar" },
+    { id: "INTELLIGENCE", sub: "MARKET_VOX", label: "Market Vox" },
+  ] },
+  { label: "Personal Workspace", items: [
+    { id: "PORTFOLIO", label: "My Portfolio" },
+    { id: "WATCHLISTS", label: "Watchlist" },
+    { id: "PRICE_ALERTS", label: "Price Alerts" },
+  ] },
+];
 
 export function parseGlobalViewParam(raw: string | null | undefined): GlobalView {
-  if (!raw) return "DASHBOARD";
-  const norm = raw.trim().toLowerCase();
-  if (norm === "intelligence" || norm === "news" || norm === "calendar" || norm === "market-vox") {
-    return "INTELLIGENCE";
+  switch (raw?.trim().toLowerCase().replaceAll("_", "-")) {
+    case "intelligence": case "news": case "calendar": case "market-vox": return "INTELLIGENCE";
+    case "heatmap": case "sectors": return "HEATMAP";
+    case "globe": case "globe-focus": case "strategic-globe": return "GLOBE_FOCUS";
+    case "watchlist": case "watchlists": return "WATCHLISTS";
+    case "portfolio": return "PORTFOLIO";
+    case "market-explorer": case "market explorer": case "coverage": return "MARKET_EXPLORER";
+    case "compare": case "asset-comparison": return "COMPARE";
+    case "movers": case "breadth": return "MOVERS";
+    case "price-alerts": return "PRICE_ALERTS";
+    default: return "DASHBOARD";
   }
-  if (norm === "heatmap" || norm === "sectors") return "HEATMAP";
-  if (norm === "globe" || norm === "globe_focus" || norm === "strategic-globe") {
-    return "GLOBE_FOCUS";
-  }
-  if (norm === "portfolio") return "PORTFOLIO";
-  if (norm === "watchlists" || norm === "watchlist") return "WATCHLISTS";
-  if (norm === "market-explorer" || norm === "market explorer" || norm === "coverage") {
-    return "MARKET_EXPLORER";
-  }
-  return "DASHBOARD";
 }
 
-export function parseIntelligenceSubViewParam(
-  raw: string | null | undefined,
-): IntelligenceSubView {
-  if (!raw) return "HEADLINES";
-  const norm = raw.trim().toLowerCase();
-  if (norm === "calendar") return "CALENDAR";
-  if (norm === "market-vox" || norm === "market_vox" || norm === "vox" || norm === "polls") {
-    return "MARKET_VOX";
-  }
+export function parseIntelligenceSubViewParam(raw: string | null | undefined): IntelligenceSubView {
+  const tab = raw?.trim().toLowerCase().replaceAll("_", "-");
+  if (tab === "calendar") return "CALENDAR";
+  if (tab === "market-vox" || tab === "vox" || tab === "polls") return "MARKET_VOX";
   return "HEADLINES";
+}
+
+export function globalViewUrl(view: GlobalView, sub?: IntelligenceSubView) {
+  const search = new URLSearchParams({ view: "global" });
+  if (view !== "DASHBOARD") search.set("section", view.toLowerCase().replaceAll("_", "-"));
+  if (view === "INTELLIGENCE" && sub) search.set("tab", sub.toLowerCase().replaceAll("_", "-"));
+  return "/?" + search;
 }

@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { AssetPicker, useAssetCatalog } from "../../components/workspace/asset-picker";
 import { ArrowRight, FlaskConical } from "lucide-react";
 import {
   bsm,
@@ -24,15 +25,10 @@ import {
 } from "../../components/workspace/shared";
 
 type CompareApiPayload = {
-  asOfUTC: string;
-  availableSeries: {
-    id: string;
-    label: string;
-    currency: string;
-    source: string;
-    observations: number;
-  }[];
   correlation: QuantitativeEnvelope<CorrelationLabResult>;
+  requestedStart: string;
+  frequency: string;
+  instruments: { id: string; label: string; basis: string; source: string; dataState: string; latestDate: string | null }[];
 };
 
 const FORMULA_LAB_TOOLS = [
@@ -66,36 +62,75 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
     [corrData, setCorrData] = useState<CompareApiPayload | null>(null),
     [corrBusy, setCorrBusy] = useState(false);
 
-  const runCorrelation = useCallback(
-    async (a: string, b: string, method: ReturnMethod, win: 20 | 60 | 120) => {
-      setCorrBusy(true);
-      try {
-        const res = await api<CompareApiPayload>(
-          `/api/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}&method=${method}&window=${win}`,
-        );
-        setCorrData(res);
-      } catch (err) {
-        notify(
-          err instanceof Error ? err.message : "Could not run Correlation Lab.",
-          true,
-        );
-      } finally {
-        setCorrBusy(false);
-      }
-    },
-    [notify],
-  );
+  const [period, setPeriod] = useState("3M");
+  const [frequency, setFrequency] = useState("1d");
+  const [corrError, setCorrError] = useState("");
+  const request = useRef<AbortController | null>(null);
+  const { instruments, error: catalogError } = useAssetCatalog(calculator === "Correlation Lab" || calculator === "Historical investment");
+  const [historicalAsset, setHistoricalAsset] = useState("");
+  const [historicalFrom, setHistoricalFrom] = useState("");
+  const [historicalTo, setHistoricalTo] = useState("");
+  const [historicalStatus, setHistoricalStatus] = useState("");
+  const [historicalResult, setHistoricalResult] = useState<{
+    label: string; basis: string; source: string; currency: string;
+    from: string; to: string; returnPct: number;
+  } | null>(null);
+  const historyRequest = useRef<AbortController | null>(null);
 
-  useEffect(() => {
-    if (calculator !== "Correlation Lab") return;
-    let alive = true;
-    queueMicrotask(() => {
-      if (alive) void runCorrelation(corrA, corrB, corrMethod, corrWindow);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [calculator, corrA, corrB, corrMethod, corrWindow, runCorrelation]);
+  useEffect(() => () => { request.current?.abort(); historyRequest.current?.abort(); }, []);
+
+  function clearHistorical() {
+    historyRequest.current?.abort();
+    setHistoricalStatus("");
+    setHistoricalResult(null);
+  }
+
+  async function loadHistorical() {
+    clearHistorical();
+    if (!historicalAsset || !historicalFrom || historicalFrom >= historicalTo) {
+      setHistoricalStatus("Choose an instrument and enter a start date before the end date.");
+      return;
+    }
+    const controller = new AbortController();
+    historyRequest.current = controller;
+    setHistoricalStatus("Loading completed history…");
+    try {
+      const params = new URLSearchParams({ history: historicalAsset, from: historicalFrom, to: historicalTo });
+      const value = await api<NonNullable<typeof historicalResult>>("/api/compare?" + params, undefined, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      setHistoricalResult(value);
+      setHistoricalStatus("");
+    } catch (error) {
+      if (!controller.signal.aborted) setHistoricalStatus((error as Error).message);
+    }
+  }
+
+  function clearCorrelation() {
+    request.current?.abort();
+    setCorrBusy(false);
+    setCorrData(null);
+    setCorrError("");
+  }
+
+  async function runCorrelation() {
+    if (!corrA || !corrB || corrA === corrB) return;
+    clearCorrelation();
+    const controller = new AbortController();
+    request.current = controller;
+    setCorrBusy(true);
+    try {
+      const params = new URLSearchParams({
+        a: corrA, b: corrB, method: corrMethod, window: String(corrWindow), period, frequency,
+      });
+      const value = await api<CompareApiPayload>("/api/compare?" + params, undefined, { signal: controller.signal });
+      if (!controller.signal.aborted) setCorrData(value);
+    } catch (err) {
+      if (!controller.signal.aborted) setCorrError((err as Error).message);
+    } finally {
+      if (!controller.signal.aborted) setCorrBusy(false);
+    }
+  }
+
   const calculate = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
@@ -173,6 +208,8 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
               className="x52-formula-tab"
               aria-selected={calculator === c}
               onClick={() => {
+                clearCorrelation();
+                clearHistorical();
                 setCalculator(c);
                 setGrowth(null);
                 setResult(null);
@@ -186,47 +223,25 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
         {calculator === "Correlation Lab" ? (
           <div className="x1-form">
             <div className="x1-form-grid">
-              <label>
-                Asset A
-                <select value={corrA} onChange={(e) => setCorrA(e.target.value)}>
-                  {(corrData?.availableSeries ?? [
-                    { id: "ECB:USDINR", label: "USD / INR" },
-                    { id: "ECB:EURUSD", label: "EUR / USD" },
-                    { id: "ECB:GBPUSD", label: "GBP / USD" },
-                    { id: "ECB:USDJPY", label: "USD / JPY" },
-                    { id: "ECB:EURINR", label: "EUR / INR" },
-                  ]).map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.label} ({s.id})
-                    </option>
-                  ))}
-                  <option value="NSE:NIFTY">NIFTY 50 (Pending NSE feed)</option>
-                  <option value="GLOBAL:XAUUSD">Gold XAU/USD (Pending feed)</option>
+              <AssetPicker label="Asset A" value={corrA} instruments={instruments}
+                onChange={(id) => { clearCorrelation(); setCorrA(id); }} />
+              <AssetPicker label="Asset B" value={corrB} instruments={instruments}
+                onChange={(id) => { clearCorrelation(); setCorrB(id); }} />
+              <label>Analysis period
+                <select value={period} onChange={(event) => { clearCorrelation(); setPeriod(event.target.value); }}>
+                  {["1M", "3M", "6M", "YTD", "1Y"].map((range) => <option key={range}>{range}</option>)}
                 </select>
               </label>
-              <label>
-                Asset B
-                <select value={corrB} onChange={(e) => setCorrB(e.target.value)}>
-                  {(corrData?.availableSeries ?? [
-                    { id: "ECB:EURUSD", label: "EUR / USD" },
-                    { id: "ECB:USDINR", label: "USD / INR" },
-                    { id: "ECB:GBPUSD", label: "GBP / USD" },
-                    { id: "ECB:USDJPY", label: "USD / JPY" },
-                    { id: "ECB:EURINR", label: "EUR / INR" },
-                  ]).map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.label} ({s.id})
-                    </option>
-                  ))}
-                  <option value="NSE:NIFTY">NIFTY 50 (Pending NSE feed)</option>
-                  <option value="GLOBAL:XAUUSD">Gold XAU/USD (Pending feed)</option>
+              <label>Observation frequency
+                <select value={frequency} onChange={(event) => { clearCorrelation(); setFrequency(event.target.value); }}>
+                  <option value="1d">Daily</option><option value="1wk">Weekly</option><option value="1mo">Monthly</option>
                 </select>
               </label>
               <label>
                 Return definition
                 <select
                   value={corrMethod}
-                  onChange={(e) => setCorrMethod(e.target.value as ReturnMethod)}
+                  onChange={(e) => { clearCorrelation(); setCorrMethod(e.target.value as ReturnMethod); }}
                 >
                   <option value="simple">Simple returns (Pₜ/Pₜ₋₁ − 1)</option>
                   <option value="log">Log returns ln(Pₜ/Pₜ₋₁)</option>
@@ -236,21 +251,29 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
                 Rolling window
                 <select
                   value={corrWindow}
-                  onChange={(e) =>
-                    setCorrWindow(Number(e.target.value) as 20 | 60 | 120)
-                  }
+                  onChange={(e) => { clearCorrelation(); setCorrWindow(Number(e.target.value) as 20 | 60 | 120); }}
                 >
-                  <option value={20}>20 trading days</option>
-                  <option value={60}>60 trading days</option>
-                  <option value={120}>120 trading days</option>
+                  <option value={20}>20 paired returns</option>
+                  <option value={60}>60 paired returns</option>
+                  <option value={120}>120 paired returns</option>
                 </select>
               </label>
             </div>
+            {catalogError && <p role="alert">{catalogError}</p>}
+            <div className="x1-actions">
+              <button type="button" className="x1-secondary" disabled={!corrA || !corrB} onClick={() => {
+                clearCorrelation(); setCorrA(corrB); setCorrB(corrA);
+              }}>Swap</button>
+              <button type="button" className="x1-secondary" onClick={() => {
+                clearCorrelation(); setCorrA(""); setCorrB("");
+              }}>Clear</button>
+            </div>
+            {corrA && corrA === corrB && <p role="status">Choose two different instruments.</p>}
             <button
               type="button"
               className="x1-primary x1-motion-button"
-              disabled={corrBusy}
-              onClick={() => void runCorrelation(corrA, corrB, corrMethod, corrWindow)}
+              disabled={corrBusy || !corrA || !corrB || corrA === corrB}
+              onClick={() => void runCorrelation()}
             >
               {corrBusy ? "Computing correlation…" : "Compute Correlation"}
               <ArrowRight size={16} />
@@ -342,6 +365,26 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
             </label>
           ) : (
             <>
+              <fieldset className="x1-form">
+                <legend>Historical price performance</legend>
+                <AssetPicker label="Historical instrument" value={historicalAsset} instruments={instruments}
+                  onChange={(id) => { clearHistorical(); setHistoricalAsset(id); }} />
+                <div className="x1-form-grid">
+                  <label>From<input type="date" value={historicalFrom} onChange={(event) => {
+                    clearHistorical(); setHistoricalFrom(event.target.value);
+                  }} /></label>
+                  <label>To<input type="date" value={historicalTo} onChange={(event) => {
+                    clearHistorical(); setHistoricalTo(event.target.value);
+                  }} /></label>
+                </div>
+                <button className="x1-secondary" type="button" onClick={() => void loadHistorical()}>Load historical return</button>
+                {historicalStatus && <p role="status">{historicalStatus}</p>}
+                {historicalResult && <p role="status">
+                  {historicalResult.label} · {number(historicalResult.returnPct, 2)}% · {historicalResult.from} to {historicalResult.to}.
+                  {" "}{historicalResult.basis} in {historicalResult.currency}. Source {historicalResult.source}.
+                  {" "}Price performance excludes fees, taxes, and investor-specific FX conversion.
+                </p>}
+              </fieldset>
               <p className="x1-caption" style={{ marginTop: 0 }}>
                 Enter your own buy/sell prices, dates, and fees. Does NOT infer
                 splits, bonus issues, dividends, or tax. Automatic historical
@@ -424,12 +467,16 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
         {calculator === "Correlation Lab" ? (
           corrBusy ? (
             <p className="x1-caption">Aligning paired returns and computing Pearson ρ…</p>
-          ) : corrData?.correlation.status === "OK" && corrData.correlation.value ? (
+          ) : corrError ? <p role="alert" className="x1-callout">{corrError}</p> : corrData?.correlation.status === "OK" && corrData.correlation.value ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div className="x1-result-summary">
                 <div>
                   <strong>{corrData.correlation.value.pearsonRho.toFixed(4)}</strong>
-                  <span>Pearson ρ (n = {corrData.correlation.value.pairedReturnCount} pairs)</span>
+                  <span>Full-sample Pearson ρ ({corrData.correlation.value.pairedReturnCount} pairs)</span>
+                </div>
+                <div>
+                  <strong>{corrData.correlation.value.rollingSeries.at(-1)?.rho?.toFixed(4) ?? "—"}</strong>
+                  <span>Latest rolling Pearson ρ ({corrWindow} pairs)</span>
                 </div>
                 <div>
                   <strong>{(corrData.correlation.value.rSquared * 100).toFixed(1)}%</strong>
@@ -444,11 +491,11 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
                   </dd>
                 </div>
                 <div>
-                  <dt>{corrData.correlation.value.assetA.label} daily vol</dt>
+                  <dt>{corrData.correlation.value.assetA.label} sample volatility</dt>
                   <dd>{corrData.correlation.value.sampleVolPctA.toFixed(2)}%</dd>
                 </div>
                 <div>
-                  <dt>{corrData.correlation.value.assetB.label} daily vol</dt>
+                  <dt>{corrData.correlation.value.assetB.label} sample volatility</dt>
                   <dd>{corrData.correlation.value.sampleVolPctB.toFixed(2)}%</dd>
                 </div>
               </dl>
@@ -464,8 +511,13 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
                 </p>
               ))}
               <p className="x1-caption" style={{ margin: 0 }}>
-                Source: {corrData.correlation.source}. Correlation measures historical
-                linear co-movement only, never causation or future stability.
+                Common observation dates and local-currency returns. Market closing and FX fixing times can differ.
+              </p>
+              {corrData.instruments.map((asset) => <p key={asset.id} className="x1-caption">
+                {asset.label} · {asset.source} · {asset.basis} · {asset.latestDate ?? "History unavailable"} · {asset.dataState}
+              </p>)}
+              <p className="x1-caption">
+                Requested from {corrData.requestedStart}. Returns span each consecutive pair of shared observation dates.
               </p>
             </div>
           ) : (
@@ -477,7 +529,7 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
               </strong>
               <p className="x1-caption" style={{ margin: "4px 0 0" }}>
                 {corrData?.correlation.warnings[0] ??
-                  "Select two connected ECB reference series with at least 30 shared return observations."}
+                  "Choose two instruments and compute correlation from their shared observations."}
               </p>
             </div>
           )
@@ -703,22 +755,23 @@ function RollingCorrelationChart({
   if (valid.length < 2) return null;
   const w = 400;
   const h = 155;
-  const x = (i: number) => 34 + (i / (valid.length - 1)) * (w - 46);
+  const x = (i: number) => 34 + (i / (points.length - 1)) * (w - 46);
   const y = (rho: number) => 16 + ((1 - rho) / 2) * (h - 38);
-  const d = valid
-    .map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.rho).toFixed(1)}`)
+  const d = points
+    .map((p, i) => p.rho === null ? "" :
+      `${i > 0 && points[i - 1].rho !== null ? "L" : "M"}${x(i).toFixed(1)},${y(p.rho).toFixed(1)}`)
     .join(" ");
 
   return (
     <div>
       <strong style={{ fontSize: "0.86rem" }}>
-        Rolling {windowDays}-day Pearson correlation (ρ ∈ [−1, +1])
+        Rolling {windowDays}-pair Pearson correlation (ρ ∈ [−1, +1])
       </strong>
       <svg
         viewBox={`0 0 ${w} ${h}`}
         style={{ width: "100%", height: "auto", display: "block", marginTop: 6 }}
         role="img"
-        aria-label={`Rolling ${windowDays}-day Pearson correlation chart`}
+        aria-label={`Rolling ${windowDays}-pair Pearson correlation chart`}
       >
         {([1, 0, -1] as const).map((lvl) => (
           <g key={lvl}>
@@ -736,6 +789,10 @@ function RollingCorrelationChart({
           </g>
         ))}
         <path d={d} fill="none" stroke="#76C0FF" strokeWidth="2" />
+        {points.map((point, i) => point.rho === null ? null : <circle key={point.date}
+          cx={x(i)} cy={y(point.rho)} r="3" fill="transparent">
+          <title>{point.date} · {point.rho.toFixed(4)} · {windowDays} pairs</title>
+        </circle>)}
         <text x="34" y={h - 4} fill="#9AA3AE" fontSize="10">
           {valid[0].date}
         </text>

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Plus, MoveUp, MoveDown, Trash2, Info } from "lucide-react";
+import { Copy, Plus, MoveUp, MoveDown, Trash2, Info } from "lucide-react";
 import {
   type RuleTree,
   type ResearchDefinition,
@@ -218,6 +218,18 @@ export function RuleEditor({
                   onClick={() => reorder(i, i + 1)}
                 >
                   <MoveDown size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="x1-icon-button"
+                  disabled={tree.children.length >= 12}
+                  aria-label={`Duplicate rule ${path}.${i + 1}`}
+                  onClick={() => onChange({
+                    ...tree, children: [...tree.children.slice(0, i + 1),
+                      structuredClone(child), ...tree.children.slice(i + 1)],
+                  })}
+                >
+                  <Copy size={14} />
                 </button>
                 <button
                   type="button"

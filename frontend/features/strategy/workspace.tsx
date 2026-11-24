@@ -86,6 +86,8 @@ type Props = {
   initialFormula: string;
   initialInstrument?: string;
   initialUniversePreset?: ScanUniversePreset;
+  initialWatchlistId?: string;
+  initialRunId?: string;
   initialPanel?: string;
 };
 
@@ -437,6 +439,8 @@ export default function Strategy({
   initialFormula,
   initialInstrument,
   initialUniversePreset,
+  initialWatchlistId,
+  initialRunId,
   initialPanel,
 }: Props) {
   const [section, setSection] = useState<StrategyTab>(
@@ -488,7 +492,7 @@ export default function Strategy({
       initialUniversePreset !== "MARKET" &&
       initialUniversePreset !== "MY_WATCHLIST",
   );
-  const [watchlistId, setWatchlistId] = useState<string>("");
+  const [watchlistId, setWatchlistId] = useState<string>(initialWatchlistId ?? "");
   const [customCsv, setCustomCsv] = useState<string>("");
 
   // Timeframe (30m, 1h, Daily, Weekly, Monthly; default Daily)
@@ -517,6 +521,14 @@ export default function Strategy({
   >("ALL");
   const [graveyardQuery, setGraveyardQuery] = useState("");
   const [review, setReview] = useState<ScanRun | null>(null);
+  useEffect(() => {
+    if (!initialRunId || !authenticated) return;
+    const controller = new AbortController();
+    void api<ScanRun>("/api/x1/workspace?scanId=" + encodeURIComponent(initialRunId), undefined, { signal: controller.signal })
+      .then((record) => { if (!controller.signal.aborted) setReview(record); })
+      .catch(() => { if (!controller.signal.aborted) notify("This saved Soul is unavailable.", true); });
+    return () => controller.abort();
+  }, [initialRunId, authenticated, notify]);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
 
@@ -713,6 +725,14 @@ export default function Strategy({
   }
 
   function applyClassicPreset(preset: ClassicPreset) {
+    if (scanTier === "ADVANCED") {
+      setAdvancedFormula(preset.formula);
+      setTree(treeFromFormula(preset.formula) ?? DEFAULT_ADVANCED_TREE);
+      setAdvancedEntry("BUILD");
+      setScanError("");
+      if (!nameEditedManually) setName(defaultSoulNameForPreset(preset));
+      return;
+    }
     setClassicPresetId(preset.id);
     setClassicFormula(preset.formula);
     setScanError("");
@@ -1625,7 +1645,7 @@ export default function Strategy({
                     onClick={() => setAdvancedEntry("DRAW")}
                   >
                     <PenTool size={15} aria-hidden="true" />
-                    <span>Pattern</span>
+                    <span>Draw</span>
                   </button>
                 </div>
 
@@ -1718,6 +1738,14 @@ export default function Strategy({
                   </>
                 ) : (
                   <>
+                    <div className="x1-actions">
+                      <button type="button" className="x1-secondary" onClick={() => setFormulaPickerOpen(true)}>
+                        Browse formulas
+                      </button>
+                      <button type="button" className="x1-secondary" onClick={() => {
+                        setTree(DEFAULT_ADVANCED_TREE); setAdvancedFormula(DEFAULT_ADVANCED_FORMULA); setScanError("");
+                      }}>Reset rules</button>
+                    </div>
                     <RuleEditor
                       tree={tree}
                       onChange={(nextTree) => {

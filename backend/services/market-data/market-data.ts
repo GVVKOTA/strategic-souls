@@ -36,7 +36,7 @@ export type DataPoint = {
   eventTimePrecision: "DATE";
   retrievedAt: string | null;
   state: DataState;
-  frequency: "DAILY_REFERENCE" | "DAILY_YIELD" | "DAILY_OHLC";
+  frequency: "DAILY_REFERENCE" | "DAILY_YIELD" | "DAILY_OHLC" | "DAILY_CLOSE";
   reason: string;
   derivation: string | null;
   change: number | null;
@@ -326,7 +326,7 @@ async function fetchText(
   return task;
 }
 type FxPair = { id: string; base: string; quote: string; derived: boolean };
-const FX_PAIRS: FxPair[] = [
+export const OFFICIAL_FX_PAIRS: readonly FxPair[] = [
   ...["USD", "INR", "GBP", "JPY", "CHF", "CNY", "AUD", "CAD", "SGD", "HKD"].map(
     (quote) => ({ id: "ECB:EUR" + quote, base: "EUR", quote, derived: false }),
   ),
@@ -368,7 +368,7 @@ function ecbPoints(
     previous = days.at(-2),
     quotes: DataPoint[] = [],
     fxHistory: FXHistory[] = [];
-  for (const pair of FX_PAIRS) {
+  for (const pair of OFFICIAL_FX_PAIRS) {
     const value = latest ? fxValue(latest, pair) : null,
       prior = previous ? fxValue(previous, pair) : null;
     const state =
