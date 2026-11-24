@@ -482,7 +482,7 @@ export async function getSocial(
     };
   }
   const notices = await query(
-    "SELECT id,kind,target_id AS targetId,created_at AS createdAt,read_at AS readAt FROM x2_notifications WHERE subject=? ORDER BY created_at DESC,id DESC LIMIT 50",
+    "SELECT id,kind,target_id AS targetId,created_at AS createdAt,read_at AS readAt FROM x1_visible_notices WHERE subject=? ORDER BY created_at DESC,id DESC LIMIT 50",
     subject,
   );
   const blocks = await query(
@@ -904,7 +904,7 @@ export async function mutateSocial(
         .first<{ n: number }>(),
       db
         .prepare(
-          "SELECT count(*) AS n FROM x2_notifications WHERE subject=? AND read_at IS NULL",
+          "SELECT count(*) AS n FROM x1_visible_notices WHERE subject=? AND read_at IS NULL",
         )
         .bind(subject)
         .first<{ n: number }>(),
@@ -917,20 +917,21 @@ export async function mutateSocial(
     };
   }
   if (input.action === "read-notifications") {
-    await db
-      .prepare("UPDATE x2_notifications SET read_at=? WHERE subject=? AND read_at IS NULL")
-      .bind(time, subject)
-      .run();
+    await db.batch([
+      db.prepare("UPDATE x2_notifications SET read_at=? WHERE subject=? AND read_at IS NULL").bind(time, subject),
+      db.prepare("UPDATE x1_account_notices SET read_at=? WHERE subject=? AND read_at IS NULL").bind(time, subject),
+    ]);
     return { saved: true, unreadNotifications: 0 };
   }
   if (input.action === "read-notification") {
-    await db
-      .prepare("UPDATE x2_notifications SET read_at=? WHERE id=? AND subject=?")
-      .bind(time, id(input.notificationId, "Notification"), subject)
-      .run();
+    const notificationId = id(input.notificationId, "Notification");
+    await db.batch([
+      db.prepare("UPDATE x2_notifications SET read_at=? WHERE id=? AND subject=? AND read_at IS NULL").bind(time, notificationId, subject),
+      db.prepare("UPDATE x1_account_notices SET read_at=? WHERE id=? AND subject=? AND read_at IS NULL").bind(time, notificationId, subject),
+    ]);
     const remaining = await db
       .prepare(
-        "SELECT count(*) AS n FROM x2_notifications WHERE subject=? AND read_at IS NULL",
+        "SELECT count(*) AS n FROM x1_visible_notices WHERE subject=? AND read_at IS NULL",
       )
       .bind(subject)
       .first<{ n: number }>();

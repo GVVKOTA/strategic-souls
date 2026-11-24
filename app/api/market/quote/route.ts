@@ -10,10 +10,13 @@ export async function GET(request: Request) {
     await requireMarketAccess(request, "market-quote", 45);
     const raw = new URL(request.url).searchParams.get("ids") ?? "";
     const ids = [...new Set(raw.split(",").map((id) => id.trim().toUpperCase()).filter(Boolean))];
-    if (!ids.length || ids.length > 20 || ids.some((id) => !/^[A-Z0-9]+:[A-Z0-9._&^-]{1,60}$/.test(id)))
-      throw new HttpError(400, "Choose one to 20 canonical instruments.");
+    if (!ids.length || ids.length > 160 || ids.some((id) => !/^[A-Z0-9]+:[A-Z0-9._&^-]{1,60}$/.test(id)))
+      throw new HttpError(400, "Choose one to 160 canonical instruments.");
     const fields = await readSharedDailyQuotes(ids, await sharedHistoryGrants());
-    const quotes = Array.from(fields.values(), ({ instrument, ...quote }) => ({ ...quote, currency: instrument.currency }));
+    const quotes = Array.from(fields.values(), ({ instrument, expiresAt, ...quote }) => {
+      void expiresAt;
+      return { ...quote, name: instrument.name, currency: instrument.currency, assetClass: instrument.type };
+    });
     return Response.json({ quotes, unavailable: ids.filter((id) => !fields.has(id)) }, { headers });
   } catch (error) {
     return Response.json({ error: error instanceof HttpError ? error.message : "Market observations are temporarily unavailable." },

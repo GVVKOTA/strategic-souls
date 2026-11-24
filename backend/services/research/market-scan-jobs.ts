@@ -20,6 +20,7 @@ type Input = {
   definition: ResearchDefinition;
   origin: "CLASSIC" | "BUILD" | "DISCOVER" | "DRAW";
   draw?: { points: DrawPoint[]; windowBars: number; minPatternFit: number };
+  referenceSnapshot?: ResearchUniverse;
 };
 type State = "QUEUED" | "RUNNING" | "COMPLETE" | "PARTIAL" | "FAILED" | "CANCELLED";
 type Job = {
@@ -153,18 +154,29 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
   if (scope.defaultMarket && (input.definition.interval === "30m" || input.definition.interval === "1h"))
     throw new HttpError(422, "The configured Nifty 500 price feed provides daily prices. Choose daily, weekly or monthly. No scan was charged.");
   const refInterval = input.definition.interval !== "30m" && input.definition.interval !== "1h";
-  const allowsReference = refInterval && scope.members.some((id) => id.startsWith("ECB:"));
+  const referenceIds = refInterval ? scope.members.filter((id) => id.startsWith("ECB:")) : [];
+  const allowsReference = referenceIds.length > 0;
   const hasExchange = scope.members.some((id) => !id.startsWith("ECB:"));
   if (!allowsReference && !(hasExchange && await canScanExchange(input.definition.interval, scope.members, scope.defaultMarket ? "INDIANAPI" : undefined)))
     throw new HttpError(503, "Market history is unavailable for this account and timeframe. No scan was charged.");
-  const cutoff = new Date().toISOString();
-  const deadline = new Date(Date.parse(cutoff) + JOB_MS).toISOString();
   const tier: ScanQuotaTier = input.origin === "CLASSIC" ? "CLASSIC" : "ADVANCED";
   try {
-    const reservation = await reserveScanSlot(db, subject, tier, requestKey, Date.parse(cutoff));
+    const reservation = await reserveScanSlot(db, subject, tier, requestKey);
     if (reservation.reusedCompletedScanId)
       throw new HttpError(409, "This request ID belongs to a previous scan.");
     try {
+      if (allowsReference) {
+        const source = await researchUniverse(subject, { provider: "ECB", instrumentIds: referenceIds,
+          limit: referenceIds.length, interval: input.definition.interval });
+        input.referenceSnapshot = source;
+        if (!hasExchange && !source.datasets.length)
+          throw new HttpError(503, "Completed ECB history is unavailable. No scan was charged.");
+      }
+      const acceptedInput = JSON.stringify(input);
+      if (new TextEncoder().encode(acceptedInput).byteLength > 1_300_000)
+        throw new HttpError(413, "The reference snapshot exceeds the scan storage limit. Choose fewer assets.");
+      const cutoff = new Date().toISOString();
+      const deadline = new Date(Date.parse(cutoff) + JOB_MS).toISOString();
       const id = crypto.randomUUID();
       const holdUntil = new Date(Date.parse(deadline) + 86_400_000).toISOString();
       const [queued] = await db.batch([
@@ -174,7 +186,7 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
            SELECT ?,?,?,?,?,?,?,?,?,?,?,'QUEUED' WHERE EXISTS
              (SELECT 1 FROM x51_scan_reservations WHERE id=? AND state='RESERVED' AND lease_expires_at>=?)`,
         ).bind(id, subject, requestKey, signature, reservation.id, scope.version,
-          JSON.stringify(input), cutoff, deadline, scope.defaultMarket ? null : JSON.stringify(scope.members),
+          acceptedInput, cutoff, deadline, scope.defaultMarket ? null : JSON.stringify(scope.members),
           scope.members.length, reservation.id, new Date().toISOString()),
         db.prepare(
           `UPDATE x51_scan_reservations SET lease_expires_at=?
@@ -404,7 +416,7 @@ export async function processMarketScanBatch(loadHistory = researchUniverse, bat
         ...(exchange.length ? [loadHistory(job.subject, { ...options, provider: input.definition.universePreset === "MARKET" ? "INDIANAPI" : "CONNECTED_MARKETS",
           universePreset: input.definition.universePreset === "MARKET" ? "INDIAN_EQUITIES" : input.definition.universePreset,
           instrumentIds: exchange })] : []),
-        ...(reference.length ? [loadHistory(job.subject, { ...options, provider: "ECB", instrumentIds: reference })] : []),
+        ...(reference.length && input.referenceSnapshot ? [Promise.resolve(input.referenceSnapshot)] : []),
       ]);
       const data: ResearchUniverse = {
         ...sources[0],
@@ -412,6 +424,7 @@ export async function processMarketScanBatch(loadHistory = researchUniverse, bat
         excluded: sources.flatMap((source) => source.excluded),
         lineage: sources.flatMap((source) => source.lineage),
       };
+      if (!sources.length) throw new Error("The reference snapshot is unavailable.");
       if (!data.datasets.length && data.diagnostics?.failureCategory === "UPSTREAM_UNAVAILABLE" &&
           job.attempts < MAX_ATTEMPTS - 1) throw new Error("Market upstream unavailable");
       const evaluated = evaluateMarketBatch(batchIds, input, data, job.cutoff);

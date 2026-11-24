@@ -20,8 +20,19 @@ export async function GET(request: Request) {
     const period = params.get("period") ?? "1D";
     const sectorId = params.get("sector");
     if (period !== "1D") {
+      if (period !== "1W" && period !== "1M" && period !== "YTD")
+        throw new HttpError(400, "Choose a sector and a historical period.");
+      if (sectorId?.startsWith("INDUSTRY:")) {
+        const industry = (await approvedIndustryGroups()).find((entry) => entry.id === sectorId);
+        if (!industry) throw new HttpError(404, "This constituent group is unavailable.");
+        const grants = (await sharedHistoryGrants()).filter((grant) => grant.provider === "INDIANAPI");
+        const shared = await readSharedDailyQuotes(industry.constituents.map((stock) => stock.id), grants, Date.now(), period);
+        const quotes = [...shared.values()].filter((quote) => quote.quality !== "STALE" && quote.pctChange !== null)
+          .map(({ instrument, expiresAt, ...quote }) => { void instrument; void expiresAt; return quote; });
+        return Response.json({ quotes, status: quotes.length ? null : "Comparable completed history is unavailable." }, { headers });
+      }
       const sector = NSE_SECTOR_INDICES.find((row) => row.id === sectorId);
-      if (!sector || !["1W", "1M", "YTD"].includes(period))
+      if (!sector)
         throw new HttpError(400, "Choose a sector and a historical period.");
       const quotes = [];
       for (const id of [sector.id, ...sector.constituents.map((stock) => stock.id)]) {
@@ -52,12 +63,14 @@ export async function GET(request: Request) {
     const quotes = ids.flatMap((id) => {
       const sharedQuote = shared.get(id);
       if (!sharedQuote) return [];
-      const { instrument: internal, ...details } = sharedQuote;
+      const { instrument: internal, expiresAt, ...details } = sharedQuote;
       void internal;
+      void expiresAt;
       return [{ ...details, pctChange: sharedQuote.quality === "STALE" ? null : sharedQuote.pctChange }];
     });
-    const industryQuotes = [...shared.values()].map(({ instrument: internal, ...quote }) => {
+    const industryQuotes = [...shared.values()].filter((value) => value.providerId === "INDIANAPI").map(({ instrument: internal, expiresAt, ...quote }) => {
       void internal;
+      void expiresAt;
       return { ...quote, pctChange: quote.quality === "STALE" ? null : quote.pctChange };
     });
     return Response.json({

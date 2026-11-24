@@ -1,6 +1,7 @@
 /** Read-time licence enforcement. Stored snapshots and their digests are never modified. */
 import { currentDisplayRights } from "../market-data/data-service";
 import type { ProviderConfig } from "../market-data/data-types";
+import { EXPLICIT_SCOPE_VERSION, niftyUniverseRightsActive } from "../market-data/nifty-500";
 
 type DisplayRights = {
   displayAllowed: boolean;
@@ -116,6 +117,21 @@ export async function projectResearchSnapshot(
   includeDatasets: boolean,
   cache: DisplayRightsCache = new Map(),
 ) {
+  if (typeof payload.universeVersion === "string" && payload.universeVersion !== EXPLICIT_SCOPE_VERSION) {
+    const key = "universe:" + payload.universeVersion;
+    if (!cache.has(key)) cache.set(key, niftyUniverseRightsActive(payload.universeVersion).catch(() => false)
+      .then((active) => ({ displayAllowed: active, derivedDisplayAllowed: active, rightsExpiresAt: null })));
+    if (!(await cache.get(key))?.displayAllowed) {
+      return {
+        payload: { runState: payload.runState, completedAt: payload.completedAt, rule: payload.rule, origin: payload.origin,
+          name: payload.name, results: { version: payload.results?.version, asOf: payload.results?.asOf, formula: payload.results?.formula,
+            total: payload.results?.total, matches: null, eligible: 0, failed: null, unknown: null, results: [] as ResultRow[] } },
+        redaction: { applied: true, rawInstrumentIds: [] as string[], derivedInstrumentIds: [] as string[],
+          reason: "Constituent display rights have expired." },
+        digestVerifiableFromResponse: false,
+      };
+    }
+  }
   const rights = await snapshotDisplayRights(payload, cache);
   const rawHidden = [...rights]
       .filter(([, r]) => !r.displayAllowed)

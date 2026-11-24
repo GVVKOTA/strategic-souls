@@ -442,7 +442,7 @@ test("[11][24] Search History & Watch Regions: per-user isolation, favorites, an
 });
 
 // ── Profile Opt-In Age Privacy (Never DOB) ────────────────────────────────────
-test("Profile Privacy: age stays hidden publicly unless showAge=true and rejects <18", async () => {
+test("Profile Privacy: private age remains owner-only and rejects <18", async () => {
   const userObj = {
     userId: "user-a",
     displayName: "Alice Quant",
@@ -475,5 +475,7 @@ test("Profile Privacy: age stays hidden publicly unless showAge=true and rejects
     showAge: true,
   });
   const pubVisible = await networkMod.getPublicResearcherProfile("user-b", "alice_quant");
-  assert.equal(pubVisible.profile.age, 29);
+  assert.equal(pubVisible.profile.age, null);
+  const owner = await networkMod.getPublicResearcherProfile("user-a", "alice_quant");
+  assert.equal(owner.profile.age, 29);
 });

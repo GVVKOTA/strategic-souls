@@ -1,6 +1,6 @@
 {
   "name": "strategic-souls-private-research",
-  "version": "2.0.0-x2",
+  "version": "1.0.0-x1",
   "private": true,
   "engines": {
     "node": ">=22.13.0"

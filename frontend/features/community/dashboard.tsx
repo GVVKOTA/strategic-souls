@@ -172,6 +172,7 @@ export default function Community({
   currentUserDisplayName,
   profileRevision = 0,
   initialTab,
+  initialRoom = "",
   tabNonce = 0,
   onOpenSettings,
   onOpenProfile,
@@ -184,6 +185,7 @@ export default function Community({
   currentUserDisplayName?: string | null;
   profileRevision?: number;
   initialTab?: CommunityTab;
+  initialRoom?: string;
   tabNonce?: number;
   onOpenSettings?: (section: SettingsSection) => void;
   onOpenProfile?: (handle: string) => void;
@@ -213,7 +215,7 @@ export default function Community({
     active: boolean;
   } | null>(null);
   const [data, setData] = useState<CommunityState | null>(null),
-    [groupId, setGroupId] = useState(""),
+    [groupId, setGroupId] = useState(initialRoom),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),

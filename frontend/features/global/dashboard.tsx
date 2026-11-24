@@ -13,6 +13,8 @@ import {
   SlidersHorizontal,
   Star,
   Info,
+  Bell,
+  Edit3,
   X,
 } from "lucide-react";
 import {
@@ -31,6 +33,7 @@ import {
 import { INSTRUMENTS } from "../../../backend/services/market-data/instruments";
 import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import { CURRENCIES } from "../../../backend/engines/portfolio";
+import { xirr } from "../../../backend/engines/math";
 import {
   Panel,
   Empty,
@@ -47,6 +50,7 @@ import {
 } from "../../components/workspace/shared";
 import { IconPortfolio, IconWatchlist } from "../../components/workspace/ss-icons";
 import { triggerGoFeedback } from "../../components/workspace/go-feedback";
+import { useAssetCatalog } from "../../components/workspace/asset-picker";
 import type {
   GlobalView,
   IntelligenceSubView,
@@ -96,6 +100,8 @@ type IntelligenceApiPayload = {
   watchRegions: WatchRegionsState | null;
 };
 const AssetTerminal = lazy(() => import("./asset-terminal"));
+const PriceAlerts = lazy(() => import("./price-alerts"));
+const NiftyMarketTable = lazy(() => import("./nifty-market-table"));
 
 type Props = {
   data: MarketSnapshot | null;
@@ -116,7 +122,7 @@ type Props = {
       | "CUSTOM_CSV",
     watchlistId?: string,
   ) => void;
-  openAsset: (id: string) => void;
+  openAsset: (id: string, panel?: "alerts") => void;
   openEventChart?: (ctx: EconomicEventChartContext) => void;
   refreshData: () => void;
   refreshing?: boolean;
@@ -130,7 +136,11 @@ type Props = {
   privateTickerEnabled?: boolean;
   privateTickerMode?: "HOLDINGS" | "WATCHLIST";
   onProfileSynced?: (profile: UserProfileSnapshot) => void;
+  selectedAlert?: string;
+  selectedEvent?: string;
 };
+type ResearchQuote = { id: string; name: string; assetClass: string; currency: string; providerId: string;
+  value: number; pctChange: number | null; latestDate: string; quality: string; attribution: { label: string } };
 export function assetName(id: string, data: MarketSnapshot | null) {
   return (
     [...(data?.quotes || []), ...(data?.yields || [])].find((q) => q.id === id)
@@ -152,6 +162,7 @@ export function AssetDialog({
   onSelectAsset,
   onRequireAuth,
   onClose,
+  initialAlerts = false,
   analyze,
   notify,
 }: {
@@ -166,11 +177,14 @@ export function AssetDialog({
   onSelectAsset?: (nextId: string) => void;
   onRequireAuth?: () => void;
   onClose: () => void;
+  initialAlerts?: boolean;
   analyze: (formula?: string, instrumentId?: string) => void;
   notify: Notice;
 }) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const [alertPanel, setAlertPanel] = useState(initialAlerts);
+  const showAlertControl = authenticated && id.startsWith("NSE:");
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement as HTMLElement | null;
@@ -203,6 +217,12 @@ export function AssetDialog({
         aria-label={`${assetName(id, data)} research`}
         tabIndex={-1}
       >
+        {showAlertControl && <div className="x1-actions x1-asset-actions">
+          <button type="button" className="x1-secondary" aria-expanded={alertPanel} onClick={() => setAlertPanel((visible) => !visible)}>
+            <Bell size={16} aria-hidden="true" /> {alertPanel ? "Back to chart" : "Price alerts"}
+          </button>
+          {alertPanel && <button type="button" className="x1-icon-button" aria-label="Close asset research" onClick={onClose}><X size={16} /></button>}
+        </div>}
         <Suspense
           fallback={
             <WorkspaceSkeleton
@@ -211,7 +231,7 @@ export function AssetDialog({
             />
           }
         >
-          <AssetTerminal
+          {showAlertControl && alertPanel ? <PriceAlerts standalone instrument={id} openAsset={() => setAlertPanel(false)} /> : <AssetTerminal
             id={id}
             authenticated={authenticated}
             isOwner={isOwner}
@@ -224,7 +244,7 @@ export function AssetDialog({
             onClose={onClose}
             onAnalyze={analyze}
             notify={notify}
-          />
+          />}
         </Suspense>
       </div>
     </div>
@@ -254,6 +274,8 @@ export default function Global({
   privateTickerEnabled = false,
   privateTickerMode = "HOLDINGS",
   onProfileSynced,
+  selectedAlert,
+  selectedEvent,
 }: Props) {
   const [listId, setListId] = useState(""),
     [search, setSearch] = useState(""),
@@ -396,13 +418,68 @@ export default function Global({
     [portfolioId, setPortfolioId] = useState("");
   const portfolio =
     portfolios.find((p) => p.id === portfolioId) || portfolios[0];
+  const [editingTransaction, setEditingTransaction] = useState<WorkspaceState["transactions"][number] | null>(null);
+  const [removeTransaction, setRemoveTransaction] = useState<WorkspaceState["transactions"][number] | null>(null);
+  const [txSymbol, setTxSymbol] = useState("");
   const totalWatchlistItems = lists.reduce(
     (sum, l) => sum + (l.payload.items?.length ?? 0),
     0,
   );
+  const [scopedQuotes, setScopedQuotes] = useState<ResearchQuote[]>([]);
+  const [scopedQuoteError, setScopedQuoteError] = useState("");
+  const quoteKey = [...new Set([
+    ...(["DASHBOARD", "WATCHLISTS"].includes(globalView) ? activeList?.payload.items ?? [] : []),
+    ...(["DASHBOARD", "PORTFOLIO"].includes(globalView) ? portfolio?.summary.holdings.map((holding) => holding.symbol) ?? [] : []),
+  ])].filter((id) => /^[A-Z0-9]+:[A-Z0-9._&^-]{1,60}$/.test(id)).sort().join(",");
+  const marketAsOf = data?.asOf;
+  useEffect(() => {
+    if (!authenticated || !quoteKey || refreshing) return;
+    const controller = new AbortController();
+    const ids = quoteKey.split(",");
+    const fetchChunk = (start: number) => api<{ quotes: ResearchQuote[] }>(
+      "/api/market/quote?" + new URLSearchParams({ ids: ids.slice(start, start + 160).join(",") }),
+      undefined, { signal: controller.signal });
+    void Promise.all(Array.from({ length: Math.ceil(ids.length / 160) }, (_, index) => fetchChunk(index * 160)))
+      .then((responses) => {
+        if (!controller.signal.aborted) { setScopedQuotes(responses.flatMap((response) => response.quotes)); setScopedQuoteError(""); }
+      })
+      .catch((err: Error) => { if (!controller.signal.aborted) { setScopedQuotes([]); setScopedQuoteError(err.message); } });
+    return () => controller.abort();
+  }, [authenticated, quoteKey, refreshing, marketAsOf]);
+  const quotes = new Map((authenticated ? scopedQuotes : []).map((quote) => [quote.id, quote]));
+  const openHoldings = (portfolio?.summary.holdings ?? []).filter((holding) => holding.quantity > 0);
+  const marks = new Map(openHoldings.flatMap((holding) => {
+    const q = quotes.get(holding.symbol);
+    return q?.assetClass === "EQUITY" && q.providerId === "INDIANAPI" && q.quality === "PUBLISHED_EOD" &&
+        q.currency === (portfolio?.payload.currency || "INR")
+      ? [[holding.symbol, { quote: q, value: holding.quantity * q.value, basis: holding.basis }] as const] : [];
+  }));
+  const markDate = [...marks.values()].map(({ quote }) => quote.latestDate).sort().at(-1);
+  for (const [symbol, mark] of marks) if (mark.quote.latestDate !== markDate) marks.delete(symbol);
+  const markedValue = [...marks.values()].reduce((sum, mark) => sum + mark.value, 0);
+  const markedBasis = [...marks.values()].reduce((sum, mark) => sum + mark.basis, 0);
+  const terminalValue = marks.size && marks.size === openHoldings.length && portfolio!.summary.cash >= 0
+    ? markedValue + portfolio!.summary.cash : null;
+  const ledger = workspace?.transactions.filter((entry) => entry.portfolio_id === portfolio?.id) ?? [];
+  const externalFlows = ledger.flatMap(({ payload }) => payload.kind === "DEPOSIT" || payload.kind === "WITHDRAWAL"
+    ? [{ date: payload.date, amount: payload.kind === "DEPOSIT" ? -payload.price : payload.price }] : []);
+  const funded = -externalFlows.reduce((sum, flow) => sum + flow.amount, 0);
+  const eligiblePerformance = globalView === "PORTFOLIO" && terminalValue !== null && markDate &&
+    ledger.every(({ payload }) => payload.date <= markDate);
+  let annualized: number | null = null;
+  if (eligiblePerformance && externalFlows.length && funded > 0 && terminalValue > 0) {
+    try { annualized = xirr([...externalFlows, { date: markDate!, amount: terminalValue }]).rate * 100; }
+    catch { /* XIRR is unavailable for unsupported or ambiguous cash-flow roots. */ }
+  }
+  const { instruments: catalog } = useAssetCatalog(!!authenticated &&
+    (globalView === "WATCHLISTS" || globalView === "PORTFOLIO" || !!edit));
 
   const registry = useMemo(
     () => [
+      ...(authenticated ? catalog : []).map((i) => ({
+        id: i.id, name: i.name, label: i.label ?? i.id, kind: i.assetClass ?? "",
+        assetClass: i.assetClass ?? "", market: i.market, sector: i.sector, aliases: i.aliases,
+      })),
       ...[...(data?.quotes || []), ...(data?.yields || [])].map((q) => ({
         id: q.id,
         label: q.id.split(":")[1] ?? q.id,
@@ -423,7 +500,7 @@ export default function Global({
         sector: i.sector,
       })),
     ],
-    [data],
+    [data, authenticated, catalog],
   );
   const filtered = useMemo(
     () => searchCanonicalInstruments(search, registry, { limit: 40 }),
@@ -446,7 +523,11 @@ export default function Global({
       onRequireAuth?.();
       return;
     }
-    if (kind === "transaction") setTxDefaultKind(defaultTxKind);
+    if (kind === "transaction") {
+      setTxDefaultKind(defaultTxKind);
+      setEditingTransaction(null);
+      setTxSymbol("");
+    }
     setEdit(kind);
   };
   async function mutate(input: Record<string, unknown>) {
@@ -483,6 +564,7 @@ export default function Global({
       );
       notify("Saved to your private workspace.");
       setEdit(null);
+      setRemoveTransaction(null);
     } catch (e) {
       notify((e as Error).message, true);
     } finally {
@@ -499,12 +581,16 @@ export default function Global({
     });
 
   const focusedHeaderTitle: Record<Exclude<GlobalView, "DASHBOARD">, string> = {
-    INTELLIGENCE: "Market Intelligence / Economic Calendar",
-    HEATMAP: "Heatmap",
+    INTELLIGENCE: intelligenceSubView === "CALENDAR" ? "Economic Calendar" :
+      intelligenceSubView === "MARKET_VOX" ? "Market Vox" : "Market Intelligence",
+    HEATMAP: "Sector Heatmap",
     GLOBE_FOCUS: "Strategic Globe",
     PORTFOLIO: "My Portfolio",
     WATCHLISTS: "Watchlists",
-    MARKET_EXPLORER: "Data Coverage & Sources",
+    MARKET_EXPLORER: "Market Explorer",
+    COMPARE: "Asset Comparison",
+    MOVERS: "Market Movers & Breadth",
+    PRICE_ALERTS: "Price Alerts",
   };
 
   return (
@@ -551,9 +637,9 @@ export default function Global({
 
       {/* =====================================================================
           MAIN GLOBAL OVERVIEW — STRICTLY 4 CONTENT BLOCKS (X5.3 Section 02):
-          A. Centered "Strategic Dashboard" + 9 Market Cards
+          A. Centered "Strategic Dashboard" + 8 Market Cards
           B. My Portfolio & Watchlist (compact overview; details on click)
-          C. Enlarged, Truly Zoomable 3D Strategic Globe (NO 2D map)
+          C. Strategic Globe
           D. Redesigned Economic Calendar (at very bottom)
          ===================================================================== */}
       {globalView === "DASHBOARD" && (
@@ -569,7 +655,8 @@ export default function Global({
             notify={notify}
           />
 
-          {/* Lightweight Dismissible First-Use Welcome Checklist (Sec 18.1) */}
+          <section className="x53-pw-section" aria-labelledby="x53-portfolio-heading">
+          {/* Optional first-use checklist within the personal workspace block */}
           {authenticated &&
             !welcomeDismissed &&
             ((workspace?.scans.length ?? 0) === 0 ||
@@ -651,10 +738,6 @@ export default function Global({
             )}
 
           {/* BLOCK B: Highlighted My Portfolio + Watchlist Compact Overview */}
-          <section
-            className="x53-pw-section"
-            aria-labelledby="x53-portfolio-heading"
-          >
             <div className="x53-pw-grid">
               <article className="x53-pw-card ss-v3-pw-card-featured">
                 <div className="x53-pw-card-head">
@@ -808,7 +891,7 @@ export default function Global({
             </div>
           </section>
 
-          {/* BLOCK C: ONE Much Bigger, Truly Zoomable 3D Strategic Globe (NO 2D Map) */}
+          {/* BLOCK C: Strategic Globe */}
           <StrategicGlobe
             data={data}
             hazards={intel?.hazards.events ?? []}
@@ -878,6 +961,8 @@ export default function Global({
           )}
           {intelligenceSubView === "CALENDAR" && (
             <EconomicCalendar
+              key={selectedEvent ?? "calendar"}
+              initialEventId={selectedEvent}
               authenticated={authenticated}
               onRequireAuth={onRequireAuth}
               onOpenEventChart={openEventChart}
@@ -897,11 +982,18 @@ export default function Global({
       {/* =====================================================================
           FOCUSED VIEW 3: Heatmap (NSE Sector Explorer & Asset Comparison)
          ===================================================================== */}
-      {globalView === "HEATMAP" && (
+      {(globalView === "HEATMAP" || globalView === "COMPARE") && (
         <div className="x53-focused-stack">
-          <SectorExplorer key={authenticated ? "member" : "guest"} data={data} onOpenAsset={openAsset} />
+          <SectorExplorer key={(authenticated ? "member" : "guest") + globalView} data={data} onOpenAsset={openAsset}
+            initialCompare={globalView === "COMPARE"} onCloseInitialCompare={() => onGlobalViewChange("HEATMAP")} />
         </div>
       )}
+      {globalView === "MOVERS" && <Suspense fallback={<p role="status">Loading market breadth…</p>}>
+        <NiftyMarketTable movers openAsset={openAsset} onScan={(id) => analyze(undefined, id)} />
+      </Suspense>}
+      {globalView === "PRICE_ALERTS" && (authenticated ?
+        <Suspense fallback={<p role="status">Loading price alerts…</p>}><PriceAlerts openAsset={openAsset} selected={selectedAlert} /></Suspense> :
+        <Empty title="Sign in to manage price alerts"><button className="x1-primary" onClick={onRequireAuth}>Sign in</button></Empty>)}
 
       {/* =====================================================================
           FOCUSED VIEW 4: Strategic Globe (Immersive Focus on Same ONE 3D Earth)
@@ -985,6 +1077,7 @@ export default function Global({
                     </button>
                   </div>
                 </div>
+                {scopedQuoteError && <p role="status" className="x1-caption">{scopedQuoteError}</p>}
                 {activeList.payload.items?.length ? (
                   activeList.payload.items.map((id, i, items) => (
                     <div className="x1-list-item" key={id}>
@@ -992,10 +1085,12 @@ export default function Global({
                         className="x1-asset-button"
                         onClick={() => openAsset(id)}
                       >
-                        <strong>{assetName(id, data)}</strong>
-                        <span>{id}</span>
+                        <strong>{quotes.get(id)?.name ?? catalog.find((candidate) => candidate.id === id)?.name ?? assetName(id, data)}</strong>
+                        <span>{id} · {quotes.has(id) ? `${number(quotes.get(id)?.value)} ${quotes.get(id)?.currency} · ${quotes.get(id)?.latestDate}` : "Quote unavailable"}</span>
                       </button>
                       <div className="x1-actions">
+                        {id.startsWith("NSE:") && <button className="x1-icon-button" type="button" aria-label={"Price alerts for " + id}
+                          onClick={() => openAsset(id, "alerts")}><Bell size={16} /></button>}
                         <button
                           className="x1-icon-button"
                           disabled={busy || i === 0}
@@ -1458,6 +1553,23 @@ export default function Global({
                 }))}
                 onRecordDeposit={() => openEditor("transaction", "DEPOSIT")}
               />
+              <Panel title="Completed-session valuation">
+                {scopedQuoteError && <p role="status">{scopedQuoteError}</p>}
+                <p className="x1-caption">{marks.size} of {openHoldings.length} holdings marked
+                  {markDate ? " · " + markDate + " · Indian API" : ""}</p>
+                {marks.size ? <dl className="x1-data-grid">
+                  <div className="x1-data-card"><dt>{marks.size < openHoldings.length ? "Marked subtotal" : "Market value"}</dt>
+                    <dd>{formatCurrency(markedValue, portfolio.payload.currency)}</dd></div>
+                  <div className="x1-data-card"><dt>Unrealized P/L on marked holdings</dt>
+                    <dd>{formatCurrency(markedValue - markedBasis, portfolio.payload.currency)}</dd></div>
+                </dl> : <p>Valuation unavailable for the recorded holdings.</p>}
+                <p className="x1-caption">Moving average cost includes trade fees. Return calculations use same-currency cash flows and completed closing marks.</p>
+                <dl className="x1-data-grid">
+                  <div className="x1-data-card"><dt>Value including cash</dt><dd>{terminalValue === null ? "Unavailable" : formatCurrency(terminalValue, portfolio.payload.currency)}</dd></div>
+                  <div className="x1-data-card"><dt>Net gain on contributions</dt><dd>{eligiblePerformance && funded > 0 ? number((terminalValue - funded) / funded * 100) + "%" : "Unavailable"}</dd></div>
+                  <div className="x1-data-card"><dt>Annualized money-weighted return</dt><dd>{annualized === null ? "Unavailable" : number(annualized) + "%"}</dd></div>
+                </dl>
+              </Panel>
               <Panel
                 title="Holdings at recorded cost"
                 action={
@@ -1481,7 +1593,7 @@ export default function Global({
                         title={`Inspect ${h.symbol} in Asset Detail`}
                       >
                         <div>
-                          <strong>{h.symbol}</strong>
+                          <strong>{catalog.find((candidate) => candidate.id === h.symbol)?.name ?? h.symbol}</strong>
                           <div className="x1-caption">
                             Tap for Chart &amp; Analysis
                           </div>
@@ -1494,7 +1606,7 @@ export default function Global({
                           <strong>
                             {formatCurrency(h.basis, portfolio.payload.currency)}
                           </strong>
-                          <div className="x1-caption">Recorded cost basis</div>
+                          <div className="x1-caption">Cost basis{marks.has(h.symbol) && " · Close " + number(marks.get(h.symbol)?.quote.value)}</div>
                         </div>
                       </button>
                     ))}
@@ -1509,7 +1621,7 @@ export default function Global({
                   No automatic currency conversion. Manual cost-basis records only — not a tax statement.
                 </p>
               </Panel>
-              <Panel title="Transaction history" kicker="Append-only records">
+              <Panel title="Transaction history">
                 <div className="x1-table-wrap">
                   <table>
                     <thead>
@@ -1520,6 +1632,7 @@ export default function Global({
                         <th>Quantity</th>
                         <th>Price / amount</th>
                         <th>Fees</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1533,6 +1646,14 @@ export default function Global({
                             <td>{formatQuantity(t.payload.quantity, 4)}</td>
                             <td>{formatCurrency(t.payload.price, portfolio.payload.currency)}</td>
                             <td>{formatCurrency(t.payload.fees, portfolio.payload.currency)}</td>
+                            <td><div className="x1-actions">
+                              <button className="x1-icon-button" type="button" disabled={busy} aria-label="Edit transaction"
+                                onClick={() => {
+                                  setEditingTransaction(t); setTxSymbol(t.payload.symbol); setTxDefaultKind(t.payload.kind); setEdit("transaction");
+                                }}><Edit3 size={16} /></button>
+                              <button className="x1-icon-button" type="button" disabled={busy} aria-label="Delete transaction"
+                                onClick={() => setRemoveTransaction(t)}><Trash2 size={16} /></button>
+                            </div></td>
                           </tr>
                         ))}
                     </tbody>
@@ -1562,7 +1683,9 @@ export default function Global({
         </>
       )}
       {globalView === "MARKET_EXPLORER" && (
-        <MarketExplorer
+        <><Suspense fallback={<p role="status">Loading the instrument universe…</p>}>
+          <NiftyMarketTable openAsset={openAsset} onScan={(id) => analyze(undefined, id)} />
+        </Suspense><MarketExplorer
           data={data}
           authenticated={authenticated}
           isOwner={isOwner}
@@ -1570,8 +1693,18 @@ export default function Global({
           openAsset={openAsset}
           analyze={analyze}
           notify={notify}
-        />
+        /></>
       )}
+      {removeTransaction && portfolio && <Modal title="Delete transaction?" onClose={() => { if (!busy) setRemoveTransaction(null); }}>
+        <p>The transaction will be removed from the portfolio calculations. Its audit history is retained.</p>
+        <div className="x1-actions">
+          <button type="button" className="x1-secondary" disabled={busy} onClick={() => setRemoveTransaction(null)}>Cancel</button>
+          <button type="button" className="x1-primary" disabled={busy} onClick={() => void mutate({
+            action: "delete-transaction", transactionId: removeTransaction.id, portfolioId: portfolio.id,
+            version: portfolio.version, requestId: crypto.randomUUID(),
+          })}>Delete transaction</button>
+        </div>
+      </Modal>}
       {edit && (
         <Modal
           title={
@@ -1581,7 +1714,7 @@ export default function Global({
                 ? "Create a manual portfolio"
                 : edit === "rename"
                   ? "Rename watchlist"
-                  : "Record a transaction"
+                  : editingTransaction ? "Edit transaction" : "Record a transaction"
           }
           onClose={() => setEdit(null)}
         >
@@ -1606,7 +1739,8 @@ export default function Global({
                 });
               else if (portfolio)
                 mutate({
-                  action: "transaction",
+                  action: editingTransaction ? "correct-transaction" : "transaction",
+                  transactionId: editingTransaction?.id,
                   portfolioId: portfolio.id,
                   version: portfolio.version,
                   requestId: crypto.randomUUID(),
@@ -1653,8 +1787,7 @@ export default function Global({
               <>
                 <p className="x1-callout">
                   {portfolio?.name} · {portfolio?.payload.currency}.
-                  Transactions are append-only; verify your inputs before
-                  saving.
+                  Verify the transaction against your records before saving.
                 </p>
                 <label>
                   Transaction type
@@ -1671,9 +1804,15 @@ export default function Global({
                   <input
                     name="symbol"
                     maxLength={50}
+                    list="ss-transaction-instruments"
+                    value={txSymbol}
+                    onChange={(event) => setTxSymbol(event.target.value)}
                     placeholder="Example: NSE:SBIN (manual identity)"
                   />
                 </label>
+                <datalist id="ss-transaction-instruments">
+                  {catalog.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+                </datalist>
                 <div className="x1-form-grid">
                   <label>
                     Quantity
@@ -1682,7 +1821,7 @@ export default function Global({
                       type="number"
                       step="any"
                       min="0"
-                      defaultValue="0"
+                      defaultValue={editingTransaction?.payload.quantity ?? 0}
                       required
                     />
                   </label>
@@ -1693,6 +1832,7 @@ export default function Global({
                       type="number"
                       step="any"
                       min="0"
+                      defaultValue={editingTransaction?.payload.price}
                       required
                     />
                   </label>
@@ -1703,7 +1843,7 @@ export default function Global({
                       type="number"
                       step="any"
                       min="0"
-                      defaultValue="0"
+                      defaultValue={editingTransaction?.payload.fees ?? 0}
                       required
                     />
                   </label>
@@ -1714,7 +1854,7 @@ export default function Global({
                       type="date"
                       required
                       defaultValue={
-                        data?.asOf.slice(0, 10) ||
+                        editingTransaction?.payload.date || data?.asOf.slice(0, 10) ||
                         new Date().toISOString().slice(0, 10)
                       }
                       max={
@@ -1725,8 +1865,7 @@ export default function Global({
                   </label>
                 </div>
                 <p className="x1-caption">
-                  Cash movements and dividends: quantity 0; amount in the price
-                  field. Enter transactions in chronological order.
+                  For a cash movement or dividend, enter zero quantity and put the amount in the price field.
                 </p>
               </>
             )}

@@ -12,65 +12,16 @@ Strategic Souls combines a focused **Strategic Dashboard**, an enlarged interact
 
 ---
 
-## 1. What the Application Actually Does (Three Primary Workspaces)
+## X 1.0 release candidate
 
-1. **Global (`frontend/features/global/`)**
-   - **Primary scroll (exact 4 blocks in locked order):**
-     1. Centered **Strategic Dashboard** title + **strict 8-tile Markets Grid** (`NIFTY 50`, `SENSEX`, `BANK NIFTY`, `NIFTY MIDCAP`, `GOLD`, `SILVER MCX`, `CL`, `USD/INR`; `2×4` on desktop, `2-column` equal-height grid on mobile; `Reorder` modal; neutral `"Data unavailable"` copy when a feed is not yet entitled; separate source `as-of` vs `Checked` timestamps).
-     2. Dismissible First-Use Welcome Checklist + highlighted **My Portfolio** card (with vivid color Allocation Donut, clean INR & quantity formatting, single calm funding disclosure, and an independent 8-artwork Portfolio Backdrop Library `p01`–`p08`) beside **Watchlist**.
-     3. **ONE enlarged, zoomable 3D `Strategic Globe`** (`1.0×`–`5.0×` true perspective WebGL camera, drag with inertia, pinch/double-tap/keyboard zoom, authentic historical NASA Blue/Black Marble textures, 24 exchange clocks, live USGS M4.5+ earthquakes & NASA EONET natural disasters; **zero 2D geographic map**).
-     4. Redesigned **Economic Calendar** at the bottom (official RBI, MoSPI, FOMC, BLS, BEA, EIA, ECB schedules verified through March 2027; IST/UTC/New York timezones; inline skeleton/error/retry states; **zero `HIGH/MEDIUM/LOW` impact badges** and zero synthesized release times).
-   - **Top-left three-dot drawer (exact 4 entries):**
-     1. `Strategic Dashboard`
-     2. `Market Intelligence / Economic Calendar` (internal tabs: `Headlines` | `Calendar` | `Market Vox`)
-     3. `Heatmap` (curated NSE sector leaders, neutral-until-connected expandable heatmaps & Asset Comparison)
-     4. `Strategic Globe` (immersive focus on the same 3D Earth renderer)
+- **Global.** The overview has eight BharatStock-only market cards, private portfolio and watchlist views, the NASA-textured Strategic Globe with a nearby regional map, and the Economic Calendar. The Global menu also opens Nifty 500 exploration, breadth, sector heatmaps, Asset Comparison, Market Vox and Price Alerts.
+- **Strategy.** Classic, Advanced, Discover and Draw use the same deterministic evaluation engine. Market scans default to the licensed official Nifty 500 snapshot. Incomplete or cancelled runs do not consume the completed-scan allowances of 20 Classic scans per IST day and one Advanced scan per rolling hour.
+- **Community.** Researcher identity and explicitly published Souls are discoverable. Direct messages, saved scans, portfolios and account details require the applicable owner, participant or membership authorization.
+- **Market access.** Provider credentials authenticate in Cloudflare. A verified exchange-data grant is required separately for display, shared analysis, retention and redistribution. Missing access appears as unavailable in the dashboard and research tools.
 
-2. **Strategy (`frontend/features/strategy/`)**
-   - Two full-width tabs: **Soul Scan** and **Formula Lab** (lazy-loaded Correlation Lab, Black-Scholes-Merton Options/Greeks, Implied Volatility, CAGR, XIRR, Historical Investment).
-   - **Default-Ready in 1 Click & One Canonical Deterministic Engine (`backend/engines/scan.ts`):** **Classic** (50 deterministic presets with live numeric parameter & AST expression editing, per-user D1 **Formula Pinning**, full-width `Browse all 50 formulas`, private copy saving, prefilled editable Soul name, **20 completed scans / IST day**) and **Advanced** (`Rule Builder` / `Discover` / simplified **Pattern Scan** with 3 visual SVG templates + View all 8, single-trajectory teal canvas, flat-shape rejection, fullscreen draw mode, and account-private saved patterns; 1 completed scan / rolling 60 min). Both compile to and evaluate through the same 3-valued AST (`TRUE` / `FALSE` / `UNKNOWN`).
-   - Primary **Market** (NSE + BSE + active MCX futures) & **Watchlist** sources plus expandable scopes (`NSE / BSE`, `MCX Futures`, `ECB FX Daily`, `Private CSV`) and capability-gated timeframes (`30m`, `1 Hour`, `Daily`, `Weekly`, `Monthly` — genuine completed-session intraday candles where entitled, never synthesized from daily bars). Explicit scan lifecycle with cancellation, truthful disjoint coverage (`Matched`, `Did not match`, `Insufficient data`, `Deferred`), and standalone **GRAVEYARD** immediately below with immutable archived scans and one-click `Publish Soul`.
+The existing production deployment serves V3.1. X 1.0 remains under review on the feature branch. See the [X 1.0 provider and release notes](operations/docs/X1_MARKET_RELEASE.md) for the dated provider tests, supported datasets, migration order and release gates.
 
-3. **Community — `Soul Network` (`frontend/features/community/`)**
-   - Prominent blue `Community` header, compact `"My Profile"` strip, public researcher search by **Body ID** (`@handle`), and **enlarged, discoverable 3-column navigation** (`Soul Feed` · `Chats` with live real unread count badge · `Rooms`) with `28px` top / `22px` bottom separation and keyboard arrow support.
-   - **Truthful Soul Post Metrics & Author-Only Insights:** Server-persisted `Likes`, `Comments`, `Saves`, `Shares`, daily-deduplicated `Views` (excluding author self-views), `Try this formula` handoff into Strategy Builder, and strictly **author-only `Post Insights`** (`403` for non-authors, zero viewer identity leaks).
-   - **Canonical `PublicProfileSheet`:** Opens from every `@handle` surface and `?view=community&profile=<handle>` deep link with `Tab`/`Shift+Tab` modal focus trapping, independent 8-artwork Profile Cover Banner Library (`b01`–`b08`), 50 SVG avatar presets, `Souls | Followers | Following` drawers, `Share profile` (QR SVG), and `Try this formula`.
-   - **Telegram-Like Compact `Chats` (`frontend/features/community/messenger/`):** Mobile full-screen conversation or inbox (`100dvh`, `visualViewport` keyboard sync) and desktop 2-pane layout, compact message bubbles with inline timestamps & server-confirmed read states, contextual message actions (`Edit`, `Retract`, `Copy`, `Report`), monotonic message merging, and cross-thread abort/sequence guards.
-   - **Collaborative `Rooms`:** Private or discoverable research rooms, pinned group research (max 3), server-enforced membership/block/consent boundaries, zero private portfolio exposure, and zero public P&L leaderboards.
-
-4. **Account, Profile & Security (`frontend/features/account/`, `backend/auth/`)**
-   - Telegram-inspired Settings navigation (`Edit Profile`, `Password & Security`, `Privacy`, `Notifications`, `Active Sessions`, `Preferences`, `Help & Support`, `About Strategic Souls`, `Account & Data`, `Log Out`), selectable Research Focus chips, zero user-visible `"optional"` copy, verified support email (`strategicsoulsgvv@gmail.com`), authenticated password change with session rotation, non-enumerating single-use password reset flow, email change verification, and live **Active Sessions** device list & revocation.
-
----
-
-## 2. Trust Boundaries & Non-Goals
-
-- **Research & education only:** Strategic Souls is **not** a brokerage, trading platform, execution terminal, or registered investment adviser.
-- **Zero order execution & zero guaranteed returns:** The application never places, routes, or automates trades and never claims predictive profit guarantees.
-- **No fabricated market data:** Unconnected commercial feeds never display fake prices or `LIVE` badges. Date-only observations (e.g., ECB daily FX reference rates, US Treasury daily yield curves) never receive fabricated wall-clock timestamps. `NULL`/`UNKNOWN` data is never coerced to `0`.
-
----
-
-## 3. Verified Current Feature Status (`V3.1 — Reliability & Premium Experience`)
-
-| Capability | Status | Verified Details & Boundaries |
-| --- | --- | --- |
-| **Strategic Dashboard (8-Tile Global Overview)** | **Live (Working)** | Strict 8-tile allowlist (`NIFTY 50`, `SENSEX`, `BANK NIFTY`, `NIFTY MIDCAP` `99926011`, `GOLD`, `SILVER MCX`, `CL`, `USD/INR`), MCX partial-holiday & NYMEX Globex session accuracy, truthful compact timestamps & shared live clock (zero `"Last available"` pills), semantic `#42CF91`/`#EF666A`/`#929CA7` sparklines, white major headings, and restrained Strategic Teal (`#4FA3A1`) personal ownership highlights (`My Portfolio`, `Watchlist`). |
-| **Chart-First Mobile Asset Research** | **Live (Working)** | Full-screen responsive sheet (`100dvh` mobile, spacious centered desktop dialog), clean hero with tabular price & session vs selected-range return, semantic green/red/neutral SVG Line & Candle charts, `1D`/`1W`/`1M`/`3M`/`1Y`/`ALL` range selector, `30m`/`1h`/`Daily`/`Weekly`/`Monthly` intervals, Watchlist bookmarking, consolidated `(i)` attribution drawer (zero internal vendor/token strings), and `Scan Asset` single-asset handoff into Classic Soul Scan. |
-| **My Portfolio & Independent Banner Libraries** | **Live (Working)** | Strategic Teal ownership accent, vivid colored Allocation Donut SVG, clean INR/quantity formatting, single calm funding disclosure, and independent 8-artwork Portfolio Backdrop (`p01`–`p08`) vs Profile Cover (`b01`–`b08`) libraries. |
-| **Enlarged Zoomable 3D Earth (`Strategic Globe`)** | **Live (Working)** | Perspective WebGL camera (`1.0×`–`5.0×` zoom), historical NASA Blue/Black Marble textures (SHA-256 verified), 24 exchange clocks, live keyless USGS M4.5+ earthquakes & NASA EONET events, `Set<WebGLBuffer>` cleanup, 15s texture timeout, reduced-quality cloud skip, and `prefers-reduced-motion` / minimal-motion throttling. |
-| **Economic Calendar & Market Vox** | **Live (Working)** | Official statutory calendar verified through March 2027 (zero impact badges) + `MARKET VOX` (`NIFTY & Gold community vote`) with server-enforced post-close open / pre-open cutoff (`HTTP 409` outside window) and zero personal scorecards. |
-| **Soul Scan (`20/day` Classic, Editable AST, Pattern Scan & GRAVEYARD)** | **Code Complete (Shared Commercial Key Required for Ordinary Live NSE/BSE/MCX Scans)** | Classic (`20 completed scans / IST day`, 50 presets with live parameter & AST expression editing, full-width `Browse all 50 formulas`, D1 Formula Pinning, private copy saving) & Advanced (`Rule Builder`/`Discover`/redesigned `Pattern Scan` with visual templates, teal single-trajectory canvas, fullscreen draw, flat-line validation, saved patterns; `1 / rolling 60 min`). Capability-gated `30m`/`1h` completed-session intraday bars (never synthesized). Ordinary-member live NSE/BSE/MCX scans remain **fail-closed (0 quota charged)** until a licensed commercial feed secret (`X2_TRUEDATA_BEARER_TOKEN` or `X2_EODHD_API_TOKEN`) and verified `x2_providers` redistribution config are provisioned in Cloudflare. |
-| **Soul Network (`Soul Feed` · `Chats` · `Rooms`) & Post Metrics** | **Live (Working)** | Enlarged discoverable 3-tab bar with live `Chats` unread count badge, server-backed `Likes`, `Comments`, `Saves`, `Shares`, daily-deduplicated `Views` (excluding author self-views), `Try this formula` handoff, and strictly author-only `Post Insights` (`403` for non-authors). |
-| **Account Security, Password Recovery & Active Sessions** | **Live (Email Delivery Key-Gated)** | Telegram-style Settings, password change with session rotation, non-enumerating single-use password reset & email change verification (`v3_auth_tokens`), live Active Sessions list/revocation (`v3_session_meta`), and verified support contact `strategicsoulsgvv@gmail.com`. Outbound reset/verification email delivery requires `RESEND_API_KEY` or `SS_EMAIL_WEBHOOK_URL`. |
-| **Keyless Official Public Feeds** | **Live (Working)** | ECB daily Eurofxref FX (`USD/INR`), US Treasury daily par yields, USGS M4.5+ Earthquake GeoJSON, and NASA EONET v3 natural events. |
-| **Shared Commercial Equities & Commodities Feeds** | **Blocked Pending Owner License/Secret** | Fails closed honestly with zero quota charged until a licensed commercial provider secret (`X2_TRUEDATA_BEARER_TOKEN` / `X2_EODHD_API_TOKEN`) and verified `x2_providers` redistribution config are provisioned. Owner-only private broker credentials are strictly isolated and never shared with ordinary users. |
-| **Cloudflare R2 Custom Media Uploads** | **Disabled (Account-disabled)** | Fails closed cleanly; 50 built-in SVG avatars (`public/avatars/`) and 16 built-in curated banners (`b01`–`b08` Profile + `p01`–`p08` Portfolio) operate natively without R2. |
-| **Optional V3 Local Supabase + Python Quant Stack** | **Optional (Local/CI)** | Python quant suite (`29 / 29` pytest tests in `backend/quant/`) runs locally; local Supabase PostgreSQL RLS stack (`supabase/`) is inactive in production D1 deployment. |
-
----
-
-## 4. Technology Stack & High-Level Architecture
+## Technology Stack & High-Level Architecture
 
 - **Runtime & Hosting:** Cloudflare Workers (`strategic-souls`, compatibility date `2026-05-15`, `nodejs_compat`) + Cloudflare Workers Static Assets (`dist/client`).
 - **App Framework & Bundler:** Vinext (`1.0.0-beta.5`, Next.js App Router compatible RSC/SSR/Client pipeline) on Vite (`8.1.6`) + React (`19.2.9`) + TypeScript (`5.9.3`).
@@ -101,7 +52,7 @@ strategic-souls/
 │   ├── README.md                     Area guide: what belongs here, entrypoints, verification
 │   ├── components/
 │   │   ├── ui/                       Vendored shadcn/ui accessible primitives (56 files)
-│   │   └── workspace/                App shell (workspace.tsx), 4-item global-menu.ts, eclipse-intro.tsx,
+│   │   └── workspace/                App shell (workspace.tsx), grouped global-menu.ts, eclipse-intro.tsx,
 │   │                                 universal-search.tsx, private-ticker.tsx, shared.tsx, motion.css
 │   ├── features/
 │   │   ├── account/                  settings-view.tsx, account-quick-panel.tsx, avatar-studio.tsx, avatar-badge.tsx
@@ -136,7 +87,7 @@ strategic-souls/
 │       ├── market-data/              providers.ts (validation & entitlement contracts), market-data.ts,
 │       │   │                         nine-card-markets.ts, daily-pulse.ts, economic-calendar.ts,
 │       │   │                         exchanges.ts, globe.ts, sectors-and-ecosystem.ts, instrument-registry.ts
-│       │   └── angelone/             Owner-gated read-only Angel One SmartAPI adapter & loopback server
+│       │   └── shared-history.ts    Rights-gated, versioned market history and ingestion
 │       ├── profile/                  profile.ts, avatar-presets.ts, banner-presets.ts
 │       ├── research/                 classic-presets.ts (50 presets), discover-parser.ts, scan-quota.ts,
 │       │                             research.ts, scan-projection.ts, workspace.ts
@@ -202,7 +153,7 @@ Area guides: [`frontend/README.md`](frontend/README.md) · [`backend/README.md`]
 | If You Want to Edit or Inspect... | Primary Path(s) | Critical Invariants & Guardrails |
 | --- | --- | --- |
 | **Global 4-block layout & market cards** | `frontend/features/global/dashboard.tsx`, `market-grid.tsx`, `backend/services/market-data/nine-card-markets.ts` | Keep exact 4-block order; preserve date-only timestamp precision; no 2D map. |
-| **Global 4-item three-dot menu & shell** | `frontend/components/workspace/global-menu.ts`, `workspace.tsx` | Locked 4-entry menu contract (`tests/unit/x53-terminal-globe-evidence.test.mjs`). |
+| **Global three-dot menu & shell** | `frontend/components/workspace/global-menu.ts`, `workspace.tsx` | Grouped destinations and canonical deep links. |
 | **3D Strategic Globe & camera/shader math** | `frontend/features/global/strategic-globe.tsx`, `globe-canvas.tsx`, `backend/services/market-data/globe.ts`, `public/data/earth-assets.json` | Perspective zoom `1.0×`–`5.0×`; preserve NASA SHA-256 asset hashes (`tests/unit/x1-globe.test.mjs`). |
 | **Economic Calendar & Market Vox polls** | `frontend/features/global/economic-calendar.tsx`, `daily-pulse.tsx`, `backend/services/market-data/economic-calendar.ts`, `daily-pulse.ts`, `app/api/polls/route.ts` | Zero `HIGH/MEDIUM/LOW` impact badges; never synthesize missing release times; enforce `opensAtUtc <= now < closesAtUtc` server-side. |
 | **Authentication, sessions, CSRF & headers** | `backend/auth/session.ts`, `backend/middleware/index.ts`, `backend/middleware/security.ts`, `app/api/auth/[...action]/route.ts` | Standalone D1 `PBKDF2-SHA256` + hashed `HttpOnly` cookies; preserve `X-Request-Id` & `Server-Timing`; never log query strings or PII. |
@@ -256,24 +207,14 @@ node operations/scripts/local-preview.mjs launch
 ### Secret-Handling Rules
 - **Never commit `.env`, `.dev.vars`, `.secrets/*`, API tokens, session cookies, or private database dumps.**
 - Production secrets belong exclusively in **Cloudflare Worker Secrets**.
-- Owner-only local Angel One broker credentials belong exclusively in gitignored `.secrets/angelone.env` (never in Worker secrets or `.dev.vars`).
 
 ---
 
-## 9. Financial Data Licensing, Entitlements & Attribution
+## 9. Financial data licensing and attribution
 
-- **Keyless official public feeds (active):**
-  - **European Central Bank (ECB):** Daily Eurofxref reference exchange rates (date-only precision preserved).
-  - **U.S. Department of the Treasury:** Daily Treasury Par Yield Curve rates (date-only precision preserved).
-  - **U.S. Geological Survey (USGS):** Real-time M4.5+ Earthquake GeoJSON feed.
-  - **NASA Earth Observatory Natural Event Tracker (EONET v3):** Active natural hazard events.
-  - **NASA Visible Earth / Goddard Space Flight Center:** Historical Blue Marble Next Generation (2004) & Black Marble (2016) textures (`public/data/`, attribution in [`operations/docs/data-rights/GLOBE_ASSET_RIGHTS_X1.md`](operations/docs/data-rights/GLOBE_ASSET_RIGHTS_X1.md)).
-- **Commercial & exchange data licensing boundary:**
-  - Technical API access (`HTTP 200`) **does not** grant public web-display, derived-display, caching, or redistribution rights.
-  - `evaluateFeedEntitlement` (`backend/services/market-data/providers.ts`) fails closed whenever public display rights or redistribution licenses are absent or expired.
-  - Retail broker APIs (such as Angel One SmartAPI) are strictly restricted to authenticated owner-only private inspection and are **never** redistributed to public visitors. See [`operations/docs/PROVIDER_INTEGRATION_READINESS.md`](operations/docs/PROVIDER_INTEGRATION_READINESS.md) and [`operations/docs/MARKET_DATA_LICENSES.md`](operations/docs/MARKET_DATA_LICENSES.md).
+The production Worker uses encrypted secrets. BharatStock feeds the dashboard. Indian API supplies eligible NSE research closes from a shared snapshot. Independently sourced official calendars, ECB reference FX, US Treasury yields, USGS and NASA EONET remain attributed to their publishers. Other explicitly licensed legacy research sources keep their original entitlement boundaries.
 
----
+See [X 1.0 market-data configuration and coverage](operations/docs/X1_MARKET_RELEASE.md).
 
 ## 10. Deployment & Rollback Overview
 
@@ -287,15 +228,11 @@ node operations/scripts/local-preview.mjs launch
 
 ---
 
-## 11. Known Limitations & External Dependencies
+## 11. External dependencies
 
-1. **Commercial live quotes & newswires not connected:** Public NSE/BSE/MCX and global equity/commodity live quotes (`SS_GLOBAL_QUOTES_API_KEY`), third-party financial news (`SS_NEWS_API_KEY`), and armed-conflict event feeds (`UCDP_ACCESS_TOKEN`) remain fail-closed (`RESTRICTED` / `NOT_CONNECTED`) until commercial display agreements and keys are provisioned.
-2. **Economic Calendar schedule horizon:** Statutory schedules are currently verified through **March 2027** and require periodic schedule updates as central banks publish future calendars.
-3. **Cloudflare R2 custom media uploads disabled (`403 code 10042`):** Custom binary avatar/banner uploads remain gated at the Cloudflare account level; all 50 built-in SVG avatars and 8 Obsidian banners work without R2.
-4. **Google OAuth & payments dormant:** Email/password D1 authentication is active; Google OAuth remains dormant until client credentials are configured, and zero billing/payment/ad SDKs are installed.
-5. **Retained unused `maplibre-gl` lockfile entry:** `maplibre-gl` remains in `package.json` / `pnpm-lock.yaml` to avoid lockfile churn; zero MapLibre code is imported or bundled in the active application (`tests/unit/x53-terminal-globe-evidence.test.mjs`).
-
----
+- Full dashboard and Nifty 500 release acceptance requires the verified coverage and rights documented in the [release notes](operations/docs/X1_MARKET_RELEASE.md).
+- Password and email verification delivery depends on the configured outbound mail service.
+- The regional map uses local 1:50m vector data and historical NASA textures. Review the [geographic asset provenance](operations/docs/data-rights/GLOBE_ASSET_RIGHTS_X1.md).
 
 ## 12. Contributing & Documentation Index
 

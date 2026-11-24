@@ -1,6 +1,8 @@
 # Documentation Index (`operations/docs/`)
 
-Start here if you are new to Strategic Souls (`X5.5`):
+Start here for Strategic Souls X 1.0.
+
+- [X 1.0 Provider Configuration and Release Evidence](X1_MARKET_RELEASE.md)
 - [Root `README.md` — Product Overview, Five Ownership Areas & Quickstart](../../README.md)
 - [Engineering Governance & Invariants (`AGENTS.md`)](../../AGENTS.md)
 - [Operations Overview (`operations/README.md`)](../README.md)
@@ -14,7 +16,9 @@ Start here if you are new to Strategic Souls (`X5.5`):
 
 ---
 
-## Active Operations, Data Rights & Deployment Guides
+## Operations, Data Rights & Deployment Guides
+
+The X 1.0 provider notes supersede the older provider integration reports below.
 
 - [Deployment & Rollback Runbook (GitHub + Cloudflare Workers Builds)](DEPLOYMENT_RUNBOOK.md)
 - [Provider Integration Readiness Matrix](PROVIDER_INTEGRATION_READINESS.md)

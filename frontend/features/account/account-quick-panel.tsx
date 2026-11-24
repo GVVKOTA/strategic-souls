@@ -38,7 +38,6 @@ type Props = {
   genderSymbol?: "MALE" | "FEMALE" | "HIDDEN";
   instagramHandle?: string;
   counts?: { followers: number; following: number; publishedSouls: number };
-  discoverable?: boolean;
   unreadNotifications?: number;
   motionPref: "system" | "minimal" | "full";
   onMotionChange: (next: "system" | "minimal" | "full") => void;
@@ -67,7 +66,6 @@ export default function AccountQuickPanel({
   genderSymbol = "HIDDEN",
   instagramHandle = "",
   counts,
-  discoverable,
   unreadNotifications = 0,
   motionPref,
   onMotionChange,
@@ -148,7 +146,7 @@ export default function AccountQuickPanel({
                   {handle ? `@${handle}` : "No Body ID set yet"}
                 </span>
                 <span className="x6-quick-status">
-                  {discoverable ? "Discoverable profile" : "Private profile"} · Portfolio hidden
+                  {handle ? "Public researcher profile" : "Create a researcher profile"} · Portfolio private
                 </span>
               </div>
             </div>
@@ -221,7 +219,7 @@ export default function AccountQuickPanel({
               >
                 <span className="x6-quick-row-left">
                   <Settings size={16} />
-                  <span>Settings &amp; Preferences</span>
+                  <span>Settings</span>
                 </span>
                 <ChevronRight size={15} />
               </button>

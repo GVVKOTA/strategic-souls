@@ -52,6 +52,7 @@ import AuthPanel, {
 import { api, Modal, WorkspaceSkeleton, type WorkspaceState } from "./shared";
 import {
   GLOBAL_MENU_ITEMS,
+  globalViewUrl,
   parseGlobalViewParam,
   parseIntelligenceSubViewParam,
   type GlobalView,
@@ -76,9 +77,10 @@ export default function X1Workspace() {
     [contextHelpOpen, setContextHelpOpen] = useState(false),
     [thoughtDismissed, setThoughtDismissed] = useState(false),
     [bellOpen, setBellOpen] = useState(false),
-    [followRequests, setFollowRequests] = useState<
-      { handle: string; displayName: string; avatarId: string; createdAt: string }[]
-    >([]),
+    [notices, setNotices] = useState<{ id: string; kind: string; readAt: string | null }[]>([]),
+    [noticeStatus, setNoticeStatus] = useState(""),
+    [noticeBusy, setNoticeBusy] = useState(false),
+    [deepLink, setDeepLink] = useState({ thread: "", room: "", post: "", anchor: "", scan: "", event: "" }),
     [globalView, setGlobalViewState] = useState<GlobalView>("DASHBOARD"),
     [intelligenceSubView, setIntelligenceSubView] =
       useState<IntelligenceSubView>("HEADLINES"),
@@ -94,6 +96,8 @@ export default function X1Workspace() {
       null,
     ),
     [asset, setAsset] = useState(""),
+    [assetAlerts, setAssetAlerts] = useState(""),
+    [selectedAlert, setSelectedAlert] = useState(""),
     [assetEventContext, setAssetEventContext] =
       useState<EconomicEventChartContext | null>(null),
     [initialProfileHandle, setInitialProfileHandle] = useState<string | null>(
@@ -125,13 +129,8 @@ export default function X1Workspace() {
     (next: GlobalView, sub?: IntelligenceSubView) => {
       setGlobalViewState(next);
       if (sub) setIntelligenceSubView(sub);
-      const url =
-        next === "DASHBOARD"
-          ? "/?view=global"
-          : next === "INTELLIGENCE" && sub
-            ? `/?view=global&section=intelligence&tab=${sub.toLowerCase()}`
-            : `/?view=global&section=${next.toLowerCase()}`;
-      window.history.replaceState(null, "", url);
+      const url = globalViewUrl(next, sub);
+      if (window.location.pathname + window.location.search !== url) window.history.pushState(null, "", url);
       window.scrollTo({ top: 0, behavior: "instant" });
       document.getElementById("x1-main")?.focus();
     },
@@ -283,20 +282,34 @@ export default function X1Workspace() {
 
   useEffect(() => {
     let alive = true;
-    queueMicrotask(() => {
+    const syncLocation = (event?: PopStateEvent) => {
       const params = new URLSearchParams(window.location.search),
         target = params.get("view")?.toLowerCase(),
         sec = params.get("section")?.toLowerCase();
-      if (target === "strategy") setView("Strategy");
+      const validId = (name: string) => {
+        const id = params.get(name) ?? "";
+        return /^[A-Za-z0-9_-]{8,80}$/.test(id) ? id : "";
+      };
+      setDeepLink({ thread: validId("thread"), room: validId("room"), post: validId("post"),
+        anchor: validId("anchor"), scan: validId("scan"), event: validId("event") });
+      const alert = params.get("alert") ?? "";
+      setSelectedAlert(/^[0-9a-f-]{36}$/i.test(alert) ? alert : "");
+      if (event) {
+        setSectionDrawerOpen(false);
+        setAsset("");
+        setAssetAlerts("");
+      }
+      setView(target === "strategy" ? "Strategy" : target === "community" ? "Community" : target === "settings" ? "Settings" : "Global");
       const rawProf = (params.get("profile") || params.get("handle") || "")
         .trim()
         .replace(/^@+/, "");
       if (target === "community" || rawProf) {
         setView("Community");
         const tab = params.get("tab")?.toLowerCase();
-        if (rawProf) setInitialProfileHandle(rawProf);
+        setInitialProfileHandle(rawProf || null);
         if (rawProf || tab === "souls" || tab === "web") setCommunityTab("web");
         else if (tab === "rooms" || tab === "groups") setCommunityTab("groups");
+        else setCommunityTab("chats");
       }
       if (target === "settings") {
         setView("Settings");
@@ -305,23 +318,23 @@ export default function X1Workspace() {
           sec === "appearance" ||
           sec === "notifications" ||
           sec === "privacy" ||
-          sec === "account"
+          sec === "account" || sec === "security" || sec === "sessions" || sec === "help" || sec === "about"
         ) {
           setSettingsSection(sec);
         }
       }
-      if (params.get("section") && target !== "settings") {
-        setGlobalViewState(parseGlobalViewParam(params.get("section")));
-        if (params.get("tab")) {
-          setIntelligenceSubView(parseIntelligenceSubViewParam(params.get("tab")));
-        }
+      if (target !== "settings") {
+        setGlobalViewState(parseGlobalViewParam(sec));
+        setIntelligenceSubView(parseIntelligenceSubViewParam(params.get("tab") ?? sec));
       }
       if (params.get("panel")) {
         const panelParam = params.get("panel")!;
         setGlobalViewState(parseGlobalViewParam(panelParam));
         setStrategyPanel(panelParam);
       }
-    });
+    };
+    queueMicrotask(() => { if (alive) syncLocation(); });
+    window.addEventListener("popstate", syncLocation);
 
     api<AuthSessionResponse>("/api/auth/session")
       .then((session) => {
@@ -343,6 +356,7 @@ export default function X1Workspace() {
 
     return () => {
       alive = false;
+      window.removeEventListener("popstate", syncLocation);
     };
   }, [hydrateForSession, loadMarket]);
 
@@ -398,8 +412,9 @@ export default function X1Workspace() {
       setCommunitySavedOnly(false);
       setInitialProfileHandle(null);
     }
+    if (view !== next) setDeepLink({ thread: "", room: "", post: "", anchor: "", scan: "", event: "" });
     setView(next);
-    window.history.replaceState(null, "", "/?view=" + next.toLowerCase());
+    window.history.pushState(null, "", "/?view=" + next.toLowerCase());
     document.getElementById("x1-main")?.focus();
     window.scrollTo({ top: 0, behavior: "instant" });
     return true;
@@ -457,42 +472,32 @@ export default function X1Workspace() {
     }
   }, []);
 
-  const loadFollowRequests = useCallback(async () => {
-    if (!authRef.current.authenticated) return;
+  const loadNotices = useCallback(async () => {
+    if (!authRef.current.authenticated || !authRef.current.accepted) return;
+    setNoticeStatus("Loading notifications…");
     try {
-      const res = await api<{
-        requests: {
-          handle: string;
-          displayName: string;
-          avatarId: string;
-          createdAt: string;
-        }[];
-      }>("/api/community/network?view=follow-requests");
-      setFollowRequests(res.requests ?? []);
-    } catch {
-      /* Ignore when unauthenticated */
-    }
+      const response = await api<{ notifications: typeof notices }>("/api/notifications");
+      if (authRef.current.authenticated) { setNotices(response.notifications); setNoticeStatus(""); }
+    } catch (err) { setNoticeStatus((err as Error).message); }
   }, []);
 
-  async function respondFollowRequest(
-    handle: string,
-    decision: "APPROVE" | "DECLINE",
-  ) {
+  async function openNotification(id: string) {
+    if (noticeBusy || (view === "Strategy" && researchDirty.current &&
+        !window.confirm("Leave this unsaved research draft?"))) return;
+    setNoticeBusy(true);
     try {
-      await api("/api/community/network", {
-        action: "respond-follow",
-        handle,
-        decision,
-      });
-      setFollowRequests((prev) => prev.filter((r) => r.handle !== handle));
-      notify(
-        decision === "APPROVE"
-          ? `Approved follow request from @${handle}.`
-          : `Declined follow request from @${handle}.`,
-      );
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "Action failed.", true);
-    }
+      const response = await api<{ href: string | null; unread: number }>("/api/notifications", { id });
+      if (!authRef.current.authenticated) return;
+      setNotices((current) => current.map((item) => item.id === id ? { ...item, readAt: new Date().toISOString() } : item));
+      window.dispatchEvent(new CustomEvent("ss-unread-synced", { detail: response.unread }));
+      setBellOpen(false);
+      if (response.href?.startsWith("/?")) {
+        window.history.pushState(null, "", response.href);
+        window.dispatchEvent(new PopStateEvent("popstate"));
+        window.scrollTo({ top: 0 });
+      } else notify("The notification target is no longer available.", true);
+    } catch (err) { notify((err as Error).message, true); }
+    finally { setNoticeBusy(false); }
   }
 
   async function hidePrivateTicker() {
@@ -595,10 +600,11 @@ export default function X1Workspace() {
       setQuickMenuOpen(false);
       setAuthenticated(false);
       setAuthUser(null);
+      setNotices([]);
       setAccepted(null);
       setIsOwner(false);
       setWorkspace(null);
-      setFollowRequests([]);
+      setNotices([]);
       setInitialProfileHandle(null);
       setCommunitySearch("");
       setSharedFormula("");
@@ -725,6 +731,10 @@ export default function X1Workspace() {
                 >
                   <MoreVertical size={18} />
                 </button>
+                <span className="x1-india-identity">
+                  <img src="/data/india-flag.png" alt="Flag of India" width={24} height={16} />
+                  <span>Made in India<br />For India ❤️</span>
+                </span>
               </div>
               <div className="x51-topbar-search-wrap">
                 <UniversalSearch
@@ -811,20 +821,18 @@ export default function X1Workspace() {
                   <button
                     type="button"
                     className="x51-bell-btn"
-                    aria-label="Notifications and follow requests"
+                    aria-label="Notifications"
                     aria-expanded={bellOpen}
                     onClick={() => {
                       const next = !bellOpen;
                       setBellOpen(next);
-                      if (next) void loadFollowRequests();
+                      if (next) void loadNotices();
                     }}
                   >
                     <Bell size={18} />
-                    {((authUser?.unreadNotifications ?? 0) +
-                      followRequests.length) > 0 && (
+                    {(authUser?.unreadNotifications ?? 0) > 0 && (
                       <span className="x51-bell-badge">
-                        {(authUser?.unreadNotifications ?? 0) +
-                          followRequests.length}
+                        {authUser?.unreadNotifications ?? 0}
                       </span>
                     )}
                   </button>
@@ -832,7 +840,7 @@ export default function X1Workspace() {
                     <div
                       className="x51-bell-dropdown"
                       role="dialog"
-                      aria-label="Notifications & follow requests"
+                      aria-label="Notifications"
                     >
                       <div
                         style={{
@@ -853,82 +861,14 @@ export default function X1Workspace() {
                           All settings
                         </button>
                       </div>
-                      {followRequests.length > 0 ? (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                          <span className="x1-caption">
-                            Pending Follow Requests ({followRequests.length})
-                          </span>
-                          {followRequests.map((req) => (
-                            <div
-                              key={req.handle}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                gap: 8,
-                                padding: 8,
-                                borderRadius: 8,
-                                background: "var(--x51-surface-card)",
-                                border: "1px solid var(--x51-hairline)",
-                              }}
-                            >
-                              <button
-                                type="button"
-                                className="x1-text-button"
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                  minWidth: 0,
-                                  padding: 0,
-                                }}
-                                onClick={() => {
-                                  setBellOpen(false);
-                                  setInitialProfileHandle(req.handle);
-                                  setCommunityTab("web");
-                                  setCommunityTabNonce((n) => n + 1);
-                                  navigate("Community");
-                                }}
-                              >
-                                <AvatarBadge avatarId={req.avatarId} size={26} alt="" />
-                                <span style={{ fontSize: "0.82rem", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                  @{req.handle}
-                                </span>
-                              </button>
-                              <div style={{ display: "flex", gap: 4 }}>
-                                <button
-                                  type="button"
-                                  className="x51-chip is-active"
-                                  style={{ minHeight: 28, padding: "2px 8px" }}
-                                  onClick={() =>
-                                    void respondFollowRequest(req.handle, "APPROVE")
-                                  }
-                                >
-                                  Approve
-                                </button>
-                                <button
-                                  type="button"
-                                  className="x51-chip"
-                                  style={{ minHeight: 28, padding: "2px 8px" }}
-                                  onClick={() =>
-                                    void respondFollowRequest(req.handle, "DECLINE")
-                                  }
-                                >
-                                  Decline
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="x1-caption" style={{ margin: 0 }}>
-                          {isSignedIn
-                            ? (authUser?.unreadNotifications ?? 0) > 0
-                              ? `${authUser?.unreadNotifications} unread activity alert(s). Open Notifications settings to view and clear.`
-                              : "No pending follow requests or unread alerts."
-                            : "Sign in to receive in-app follow requests and Soul comment notifications."}
-                        </p>
-                      )}
+                      {noticeStatus ? <p role="status">{noticeStatus}</p> : isSignedIn ? (
+                        notices.length ? <div className="x1-global-menu-group">
+                          {notices.map((item) => <button type="button" className={"x51-drawer-item" + (item.readAt ? "" : " is-active")}
+                            key={item.id} disabled={noticeBusy} onClick={() => void openNotification(item.id)}>
+                            {item.kind.replaceAll("_", " ").toLowerCase()} <ArrowRight size={14} aria-hidden="true" />
+                          </button>)}
+                        </div> : <p>No notifications.</p>
+                      ) : <p>Sign in to view notifications.</p>}
                     </div>
                   )}
                 </div>
@@ -993,8 +933,7 @@ export default function X1Workspace() {
               genderSymbol={authUser?.genderSymbol}
               instagramHandle={authUser?.instagramHandle}
               counts={authUser?.counts}
-              discoverable={authUser?.discoverable}
-              unreadNotifications={authUser?.unreadNotifications ?? 0}
+                    unreadNotifications={authUser?.unreadNotifications ?? 0}
               motionPref={motionPref}
               onMotionChange={updateMotionPref}
               busy={busy}
@@ -1147,8 +1086,9 @@ export default function X1Workspace() {
                   reload={reload}
                   notify={notify}
                   analyze={analyze}
-                  openAsset={(id) => {
+                  openAsset={(id, panel) => {
                     setAssetEventContext(null);
+                    setAssetAlerts(panel === "alerts" ? id : "");
                     setAsset(id);
                   }}
                   openEventChart={(ctx) => {
@@ -1160,22 +1100,15 @@ export default function X1Workspace() {
                   globalView={globalView}
                   onGlobalViewChange={selectGlobalView}
                   intelligenceSubView={intelligenceSubView}
-                  onIntelligenceSubViewChange={(sub) => {
-                    setIntelligenceSubView(sub);
-                    if (globalView === "INTELLIGENCE") {
-                      window.history.replaceState(
-                        null,
-                        "",
-                        `/?view=global&section=intelligence&tab=${sub.toLowerCase()}`,
-                      );
-                    }
-                  }}
+                  onIntelligenceSubViewChange={(sub) => selectGlobalView("INTELLIGENCE", sub)}
                   onNavigate={navigate}
                   earthQuality={earthQuality}
                   portfolioBackdrop={authUser?.portfolioBackdrop}
                   privateTickerEnabled={!!authUser?.preferences?.privateTickerEnabled}
                   privateTickerMode={authUser?.preferences?.privateTickerMode ?? "HOLDINGS"}
                   onProfileSynced={handleProfileSynced}
+                  selectedAlert={selectedAlert}
+                  selectedEvent={deepLink.event}
                 />
               ) : view === "Strategy" ? (
                 <Strategy
@@ -1201,6 +1134,7 @@ export default function X1Workspace() {
                   initialUniversePreset={initialUniversePreset}
                   initialWatchlistId={initialScanWatchlist}
                   initialPanel={strategyPanel}
+                  initialRunId={deepLink.scan}
                   onOpenCommunityWeb={() => {
                     setCommunityTab("web");
                     setCommunitySavedOnly(false);
@@ -1229,6 +1163,8 @@ export default function X1Workspace() {
                     onBack={() => navigate(previousView.current)}
                     onProfileSynced={handleProfileSynced}
                     onSignOut={() => void handleSignOut()}
+                    onOpenNotification={(id) => void openNotification(id)}
+                    onOpenPriceAlerts={() => { if (navigate("Global")) selectGlobalView("PRICE_ALERTS"); }}
                   />
                 ) : (
                   <section className="x1-panel">
@@ -1266,6 +1202,11 @@ export default function X1Workspace() {
                   profileRevision={profileRevision}
                   initialTab={communityTab}
                   initialProfileHandle={initialProfileHandle}
+                  initialThread={deepLink.thread}
+                  initialRoom={deepLink.room}
+                  initialPost={deepLink.post}
+                  initialAnchor={deepLink.anchor}
+                  onOpenNotification={(id) => void openNotification(id)}
                   savedOnlyRequested={communitySavedOnly}
                   tabNonce={communityTabNonce}
                   onOpenSettings={openSettings}
@@ -1351,7 +1292,9 @@ export default function X1Workspace() {
       )}
       {asset && (
         <AssetDialog
+          key={asset + (assetAlerts === asset ? ":alerts" : "")}
           id={asset}
+          initialAlerts={assetAlerts === asset}
           data={data}
           authenticated={isSignedIn && accepted === true}
           isOwner={isOwner}
@@ -1370,6 +1313,7 @@ export default function X1Workspace() {
           }}
           onClose={() => {
             setAsset("");
+            setAssetAlerts("");
             setAssetEventContext(null);
           }}
           analyze={(formula, id) => analyze(formula, id)}
@@ -1399,7 +1343,7 @@ export default function X1Workspace() {
           />
         </Modal>
       )}
-      {/* Left Section Navigation Drawer (Global exact 4-item contract / Strategy 2-item contract) */}
+      {/* Workspace section navigation */}
       {sectionDrawerOpen && (
         <>
           <div
@@ -1464,37 +1408,21 @@ export default function X1Workspace() {
                       <ArrowRight size={14} />
                     </button>
                   ))
-                : GLOBAL_MENU_ITEMS.map((item) => {
-                    const isActive =
-                      globalView === item.id ||
-                      (item.id === "DASHBOARD" &&
-                        (globalView === "PORTFOLIO" ||
-                          globalView === "WATCHLISTS" ||
-                          globalView === "MARKET_EXPLORER"));
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={
-                          "x51-drawer-item" + (isActive ? " is-active" : "")
-                        }
-                        aria-current={globalView === item.id ? "page" : undefined}
-                        onClick={() => {
-                          setSectionDrawerOpen(false);
-                          selectGlobalView(
-                            item.id,
-                            item.id === "INTELLIGENCE" ? "HEADLINES" : undefined,
-                          );
-                        }}
-                      >
-                        <span>
+                : GLOBAL_MENU_ITEMS.map((group) => (
+                    <section key={group.label} aria-label={group.label} className="x1-global-menu-group">
+                      <h3>{group.label}</h3>
+                      {group.items.map((item) => {
+                        const active = globalView === item.id && (!item.sub || intelligenceSubView === item.sub);
+                        return <button key={item.label} type="button"
+                          className={"x51-drawer-item" + (active ? " is-active" : "")}
+                          aria-current={active ? "page" : undefined}
+                          onClick={() => { setSectionDrawerOpen(false); selectGlobalView(item.id, item.sub); }}>
                           <strong>{item.label}</strong>
-                          <small>{item.description}</small>
-                        </span>
-                        <ArrowRight size={14} />
-                      </button>
-                    );
-                  })}
+                          <ArrowRight size={14} aria-hidden="true" />
+                        </button>;
+                      })}
+                    </section>
+                  ))}
             </nav>
           </aside>
         </>

@@ -197,7 +197,8 @@ export async function workspaceState(
       .all<RawRecord>(),
     db
       .prepare(
-        "SELECT id,portfolio_id,payload,created_at FROM x1_ledger WHERE subject=? ORDER BY CAST(json_extract(payload,'$.ledgerSequence') AS INTEGER),id LIMIT 2001",
+        `SELECT id,portfolio_id,payload,created_at FROM x1_effective_ledger WHERE subject=?
+           ORDER BY json_extract(payload,'$.date'),CAST(json_extract(payload,'$.ledgerSequence') AS INTEGER),id LIMIT 2001`,
       )
       .bind(subject)
       .all<{
@@ -903,6 +904,49 @@ export async function mutateWorkspace(
       throw new HttpError(409, "This record changed. Refresh and retry.");
     return { saved: true };
   }
+  if (action === "correct-transaction" || action === "delete-transaction") {
+    const record = await owned(subject, input.portfolioId);
+    if (record.kind !== "portfolio") throw new HttpError(400, "Portfolio required.");
+    const id = input.transactionId;
+    if (typeof id !== "string" || !/^[a-zA-Z0-9_-]{8,80}$/.test(id)) throw new HttpError(404, "Transaction unavailable.");
+    const key = retryKey(input.requestId);
+    let replacement: Transaction | null = null;
+    if (action === "correct-transaction") {
+      try { replacement = validateTransaction(input.transaction, now); }
+      catch (err) { throw new HttpError(400, (err as Error).message); }
+    }
+    const hash = await digest({ portfolioId: record.id, id, replacement });
+    const prior = () => db.prepare("SELECT ledger_id,digest FROM x1_ledger_corrections WHERE subject=? AND request_key=?")
+      .bind(subject, key).first<{ ledger_id: string; digest: string }>();
+    const previous = await prior();
+    if (previous) {
+      if (previous.digest !== hash) throw new HttpError(409, "Request ID belongs to another transaction change.");
+      return { id: previous.ledger_id, replayed: true };
+    }
+    if (input.version !== record.version) throw new HttpError(409, "Portfolio changed. Refresh before editing.");
+    const { results } = await db.prepare("SELECT id,payload FROM x1_effective_ledger WHERE subject=? AND portfolio_id=? LIMIT 2001")
+      .bind(subject, record.id).all<{ id: string; payload: string }>();
+    const current = results.find((row) => row.id === id);
+    if (!current) throw new HttpError(404, "Transaction unavailable.");
+    type Ordered = Transaction & { ledgerSequence?: number };
+    const amended: Ordered | null = replacement ? { ...replacement,
+      ledgerSequence: (JSON.parse(current.payload) as Ordered).ledgerSequence } : null;
+    const next = results.flatMap((row) => row.id !== id ? [JSON.parse(row.payload) as Ordered] : amended ? [amended] : []);
+    next.sort((a, b) => a.date.localeCompare(b.date) || (a.ledgerSequence ?? 0) - (b.ledgerSequence ?? 0));
+    try { summarizePortfolio(next, JSON.parse(record.payload).currency); }
+    catch (err) { throw new HttpError(400, (err as Error).message); }
+    const op = crypto.randomUUID();
+    const [, inserted] = await db.batch([
+      db.prepare(`UPDATE x1_records SET version=version+1,last_write=?,updated_at=?
+        WHERE id=? AND subject=? AND version=? AND archived=0`).bind(op, now, record.id, subject, record.version),
+      db.prepare(`INSERT INTO x1_ledger_corrections(subject,ledger_id,revision,request_key,digest,payload,created_at)
+        SELECT ?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM x1_records WHERE id=? AND subject=? AND last_write=?)`)
+        .bind(subject, id, record.version + 1, key, hash, amended ? JSON.stringify(amended) : null, now, record.id, subject, op),
+    ]);
+    if (!inserted.meta.changes && (await prior())?.digest !== hash)
+      throw new HttpError(409, "Portfolio changed. Refresh before editing.");
+    return { id };
+  }
   if (action === "transaction") {
     const r = await owned(subject, input.portfolioId);
     if (r.kind !== "portfolio") throw new HttpError(400, "Portfolio required.");
@@ -932,7 +976,8 @@ export async function mutateWorkspace(
       );
     const rows = await db
       .prepare(
-        "SELECT payload FROM x1_ledger WHERE subject=? AND portfolio_id=? ORDER BY CAST(json_extract(payload,'$.ledgerSequence') AS INTEGER),id LIMIT 2001",
+        `SELECT payload FROM x1_effective_ledger WHERE subject=? AND portfolio_id=?
+           ORDER BY json_extract(payload,'$.date'),CAST(json_extract(payload,'$.ledgerSequence') AS INTEGER),id LIMIT 2001`,
       )
       .bind(subject, r.id)
       .all<{ payload: string }>();

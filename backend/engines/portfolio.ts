@@ -30,7 +30,7 @@ export function validateTransaction(
     !["BUY", "SELL", "DIVIDEND", "DEPOSIT", "WITHDRAWAL"].includes(t.kind) ||
     typeof t.symbol !== "string" ||
     t.symbol.length > 50 ||
-    !/^[-A-Za-z0-9:._/ ]{0,50}$/.test(t.symbol) ||
+    !/^[-A-Za-z0-9:._/&^ ]{0,50}$/.test(t.symbol) ||
     !CURRENCIES.includes(t.currency) ||
     ![t.quantity, t.price, t.fees].every(Number.isFinite) ||
     t.quantity < 0 ||

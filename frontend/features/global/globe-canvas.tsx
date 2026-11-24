@@ -16,6 +16,7 @@ import {
   xyz,
 } from "../../../backend/services/market-data/globe";
 import type { Exchange } from "../../../backend/services/market-data/exchanges";
+import type { GeographicFocus } from "./globe-projection";
 
 export type GlobePointMarker = {
   id: string;
@@ -38,7 +39,8 @@ type Props = {
   autoRotate: boolean;
   onPause: () => void;
   onSelect: (venue: Exchange) => void;
-  onZoom: (zoom: number) => void;
+  onZoom: (zoom: number, focus?: GeographicFocus | null) => void;
+  cameraRef?: React.RefObject<(() => GeographicFocus | null) | null>;
   zoom: number;
   forceFallback?: boolean;
   motionOverride?: boolean;
@@ -194,6 +196,7 @@ export default function GlobeCanvas({
   onPause,
   onSelect,
   onZoom,
+  cameraRef,
   zoom,
   forceFallback = false,
   motionOverride = false,
@@ -230,7 +233,10 @@ export default function GlobeCanvas({
       showArcs,
       earthQuality,
     }),
-    rotation = useRef({ yaw: -1.36, pitch: 0.34 }), // Centers comfortably on India / Eurasia / Africa at load
+    rotation = useRef(focusCoords ? {
+      yaw: -focusCoords.lon * Math.PI / 180,
+      pitch: Math.max(-1.32, Math.min(1.32, focusCoords.lat * Math.PI / 180)),
+    } : { yaw: -1.36, pitch: 0.34 }),
     currentZoom = useRef(clampGlobeZoom(zoom)),
     [failure, setFailure] = useState(false),
     [satelliteStage, setSatelliteStage] = useState<
@@ -241,6 +247,17 @@ export default function GlobeCanvas({
   useEffect(() => {
     onFallbackChange?.(forceFallback || failure);
   }, [forceFallback, failure, onFallbackChange]);
+
+  useEffect(() => {
+    if (!cameraRef) return;
+    cameraRef.current = () => {
+      const shape = canvas.current?.getBoundingClientRect();
+      if (!shape?.width || !shape.height) return null;
+      return unprojectScreenToLatLon(shape.width / 2, shape.height / 2,
+        rotation.current.yaw, rotation.current.pitch, shape.width, shape.height, currentZoom.current);
+    };
+    return () => { cameraRef.current = null; };
+  }, [cameraRef]);
 
   useEffect(() => {
     settings.current = {
@@ -1218,7 +1235,7 @@ export default function GlobeCanvas({
       const cur = settings.current.zoom;
       const next =
         cur < 1.7 ? 2.1 : cur < 3.1 ? 3.5 : cur < 4.6 ? 5.0 : GLOBE_ZOOM_MIN;
-      settings.current.onZoom(next);
+      settings.current.onZoom(next, hit);
       start();
     };
 
@@ -1284,7 +1301,10 @@ export default function GlobeCanvas({
       settings.current.onPause();
       const factor = Math.exp(-e.deltaY * 0.0022);
       const next = clampGlobeZoom(settings.current.zoom * factor);
-      settings.current.onZoom(Math.round(next * 100) / 100);
+      const box = el.getBoundingClientRect();
+      const focus = unprojectScreenToLatLon(e.clientX - box.left, e.clientY - box.top,
+        rotation.current.yaw, rotation.current.pitch, box.width, box.height, currentZoom.current);
+      settings.current.onZoom(Math.round(next * 100) / 100, focus);
       start();
     };
 

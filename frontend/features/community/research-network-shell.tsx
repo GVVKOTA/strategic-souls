@@ -152,6 +152,11 @@ type Props = {
   profileRevision?: number;
   initialTab?: PrimaryCommunityTab;
   initialProfileHandle?: string | null;
+  initialThread?: string;
+  initialRoom?: string;
+  initialPost?: string;
+  initialAnchor?: string;
+  onOpenNotification?: (id: string) => void;
   savedOnlyRequested?: boolean;
   tabNonce?: number;
   onOpenSettings: (section: SettingsSection) => void;
@@ -171,6 +176,11 @@ export default function ResearchNetworkShell({
   profileRevision = 0,
   initialTab = "chats",
   initialProfileHandle = null,
+  initialThread = "",
+  initialRoom = "",
+  initialPost = "",
+  initialAnchor = "",
+  onOpenNotification,
   savedOnlyRequested = false,
   tabNonce = 0,
   onOpenSettings,
@@ -193,9 +203,6 @@ export default function ResearchNetworkShell({
   const [posts, setPosts] = useState<PublishedSoulCard[]>([]);
   const [loadingFeed, setLoadingFeed] = useState(true);
   const [myProfile, setMyProfile] = useState<UserProfileSnapshot | null>(null);
-  const [legacyBannerDismissed, setLegacyBannerDismissed] = useState(false);
-  const [optingPublic, setOptingPublic] = useState(false);
-
   // Author-only Post Insights modal
   const [insightsPost, setInsightsPost] = useState<PublishedSoulCard | null>(null);
   const [insightsData, setInsightsData] = useState<PostInsightsSnapshot | null>(null);
@@ -242,6 +249,27 @@ export default function ResearchNetworkShell({
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [actionBusy, setActionBusy] = useState("");
+  const [noticePost, setNoticePost] = useState<PublishedSoulCard | null>(null);
+  const [noticePostError, setNoticePostError] = useState("");
+
+  useEffect(() => {
+    queueMicrotask(() => setTab(initialTab));
+  }, [initialTab]);
+
+  useEffect(() => {
+    if (!initialPost) return;
+    const controller = new AbortController();
+    void api<{ post: PublishedSoulCard }>("/api/community/network?view=post&postId=" + encodeURIComponent(initialPost),
+      undefined, { signal: controller.signal }).then(({ post }) => {
+        if (!controller.signal.aborted) { setNoticePost(post); setNoticePostError(""); }
+      }).catch(() => { if (!controller.signal.aborted) setNoticePostError("This Soul is unavailable."); });
+    return () => controller.abort();
+  }, [initialPost, authenticated]);
+
+  useEffect(() => {
+    if (!initialAnchor || !discussPost || commentsLoading) return;
+    document.getElementById("ss-comment-" + initialAnchor)?.scrollIntoView({ block: "nearest" });
+  }, [initialAnchor, discussPost, commentsLoading]);
 
   useEffect(() => {
     if (tabNonce <= 0) return;
@@ -546,27 +574,6 @@ export default function ResearchNetworkShell({
     }
   }
 
-  async function optInLegacyPublic() {
-    if (!authenticated || optingPublic) return;
-    setOptingPublic(true);
-    try {
-      const res = await api<{ profile: UserProfileSnapshot }>("/api/profile", {
-        action: "update-preferences",
-        social: { discoverable: true },
-      });
-      setMyProfile(res.profile);
-      onProfileSynced?.(res.profile);
-      notify("Your researcher profile is now publicly discoverable.");
-    } catch (err) {
-      notify(
-        err instanceof Error ? err.message : "Could not update profile visibility.",
-        true,
-      );
-    } finally {
-      setOptingPublic(false);
-    }
-  }
-
   async function toggleSaveSoul(post: PublishedSoulCard) {
     if (!authenticated) {
       onRequireAuth?.();
@@ -661,7 +668,7 @@ export default function ResearchNetworkShell({
   async function shareSoul(post: PublishedSoulCard) {
     const shareUrl =
       typeof window !== "undefined"
-        ? `${window.location.origin}/?view=community&profile=${encodeURIComponent(post.authorHandle)}`
+        ? `${window.location.origin}/?view=community&tab=souls&post=${encodeURIComponent(post.id)}`
         : "";
     let channel: "NATIVE" | "COPY" = "COPY";
     let completed = false;
@@ -762,7 +769,7 @@ export default function ResearchNetworkShell({
   }
 
   async function deletePublishedSoul(post: PublishedSoulCard) {
-    if (!window.confirm(`Delete published Soul "${post.title}" from Community?`)) {
+    if (!window.confirm("Delete Soul? This Soul will be permanently deleted. This action cannot be undone. Your saved private run remains in GRAVEYARD.")) {
       return;
     }
     setActionBusy("del:" + post.id);
@@ -854,11 +861,6 @@ export default function ResearchNetworkShell({
   const avatarId = myProfile?.avatarId ?? currentUser?.avatarId ?? "a01";
   const counts = myProfile?.counts ??
     currentUser?.counts ?? { followers: 0, following: 0, publishedSouls: 0 };
-  const isLegacyPrivate =
-    authenticated &&
-    !legacyBannerDismissed &&
-    (myProfile?.legacyPrivateProfile ?? currentUser?.legacyPrivateProfile === true);
-
   return (
     <div className="x51-global-stack" style={{ gap: 12 }}>
       <header className="ss-v3-comm-header">
@@ -926,33 +928,6 @@ export default function ResearchNetworkShell({
           </>
         )}
       </div>
-
-      {/* One-time consent notice ONLY for legacy private profiles (never bulk-exposed silently!) */}
-      {isLegacyPrivate && (
-        <div className="x54-legacy-optin" role="region" aria-label="Legacy private profile notice">
-          <span>
-            Your legacy profile <strong>@{handle}</strong> stays hidden until you opt in.
-            DMs, portfolios, and drafts always stay private.
-          </span>
-          <div className="x1-actions" style={{ gap: 6 }}>
-            <button
-              type="button"
-              className="x54-btn-primary"
-              disabled={optingPublic}
-              onClick={() => void optInLegacyPublic()}
-            >
-              {optingPublic ? "Updating…" : "Make profile public"}
-            </button>
-            <button
-              type="button"
-              className="x54-tiny-btn"
-              onClick={() => setLegacyBannerDismissed(true)}
-            >
-              Keep hidden
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* 2. COMPACT RESEARCHER SEARCH RESULTS */}
       {trimmedSearch.length >= 1 && (
@@ -1363,8 +1338,10 @@ export default function ResearchNetworkShell({
                 onView={setChatView}
                 notify={notify}
                 query={searchQuery}
-                initialThreadId={pendingThreadId}
+                initialThreadId={pendingThreadId || initialThread}
+                initialMessageId={initialAnchor}
                 onClearInitialThread={() => setPendingThreadId("")}
+                onOpenNotification={onOpenNotification}
                 onOpenProfile={openResearcherProfile}
                 onOpenGroup={() => selectCommunityTab("groups")}
                 onMobileChatActive={onMobileChatActive}
@@ -1398,6 +1375,7 @@ export default function ResearchNetworkShell({
             currentUserDisplayName={displayName}
             profileRevision={profileRevision}
             initialTab="rooms"
+            initialRoom={initialRoom}
             onOpenSettings={onOpenSettings}
             onOpenProfile={openResearcherProfile}
           />
@@ -1405,6 +1383,11 @@ export default function ResearchNetworkShell({
       )}
 
       {/* Discuss / Comments Modal — all @handles open canonical PublicProfileSheet */}
+      {initialPost && noticePostError && <p role="status">{noticePostError}</p>}
+      {initialPost && noticePost?.id === initialPost && !discussPost && <section className="x1-panel" aria-label="Linked Soul">
+        <h2>{noticePost.title}</h2><p>{noticePost.summary}</p>
+        <button type="button" className="x1-secondary" onClick={() => setDiscussPost(noticePost)}>Open discussion</button>
+      </section>}
       {discussPost && (
         <Modal
           title={`Discuss · ${discussPost.title}`}
@@ -1444,6 +1427,8 @@ export default function ResearchNetworkShell({
               {comments.map((c) => (
                 <div
                   key={c.id}
+                  id={"ss-comment-" + c.id}
+                  className={initialAnchor === c.id ? "x1-alert-selected" : undefined}
                   style={{
                     padding: 10,
                     borderRadius: 10,

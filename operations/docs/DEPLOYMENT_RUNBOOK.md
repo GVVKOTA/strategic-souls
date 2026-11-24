@@ -89,6 +89,9 @@ Production secrets are stored **only** in Cloudflare Worker Secrets (`Workers & 
 | Secret Name | Purpose | Required Today? |
 | --- | --- | --- |
 | `X2_OWNER_SUBJECT` | Verified owner account ID authorizing owner-only Data Connections | Optional (fail-closed if unset) |
+| `BHARATSTOCK_API_KEY` | Encrypted BharatStock credential | Approved dashboard grants only |
+| `INDIA_API_KEY` | Encrypted Indian API credential | Approved NSE research grants only |
+| `INDIA_API_HOST` | Server deployment variable | `stock.indianapi.in` for the existing free tier, defined in `vite.config.ts` |
 | `X2_EODHD_API_TOKEN` | Licensed EODHD market-data API token | Optional (keyless fallback active) |
 | `X2_TRUEDATA_BEARER_TOKEN` | Licensed TrueData historical bearer token | Optional (keyless fallback active) |
 | `GOOGLE_CLIENT_ID` | Optional Google OAuth 2.0 client ID | Optional (email/password active) |

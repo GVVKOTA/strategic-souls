@@ -631,6 +631,6 @@ test("X5.5 P1: frontend source invariants hold for concurrency guards, modal foc
   );
   assert.match(workspace, /legacyPrivateProfile: profile\.legacyPrivateProfile/);
   assert.match(workspace, /ss-unread-synced/);
-  assert.match(workspace, /setFollowRequests\(\[\]\)/);
+  assert.match(workspace, /setNotices\(\[\]\)/);
   assert.match(workspace, /setInitialProfileHandle\(null\)/);
 });

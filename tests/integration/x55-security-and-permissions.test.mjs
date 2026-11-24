@@ -312,8 +312,8 @@ test("guest gets 401 on private APIs; release reports X7 provenance without leak
   const relRes = await releaseRoute.GET(req("/api/release"));
   assert.equal(relRes.status, 200);
   const rel = await relRes.json();
-  assert.equal(rel.release, "X8");
-  assert.equal(rel.revisionMarker, "x8-shared-market-history-2026-11-24");
+  assert.equal(rel.release, "X 1.0");
+  assert.equal(rel.revisionMarker, "x1-market-rights-2026-11-25");
   assert.equal(rel.buildCommit, null);
   assert.equal(rel.classicDailyLimit, 20);
   assert.equal(rel.advancedRollingLimit, 1);
@@ -330,11 +330,14 @@ test("guest gets 401 on private APIs; release reports X7 provenance without leak
   assert.doesNotMatch(pubRaw, /owner@secret\.invalid/);
   assert.doesNotMatch(pubRaw, /sec_owner/);
 
-  // Guest cannot open legacy-private profile
+  // A previously non-discoverable Body ID exposes only the approved public profile fields.
   const privRes = await networkRoute.GET(
     req("/api/community/network?view=profile&handle=legacy_sec"),
   );
-  assert.equal(privRes.status, 404);
+  assert.equal(privRes.status, 200);
+  const safeProfile = (await privRes.json()).profile;
+  assert.equal(safeProfile.age, null);
+  assert.equal("email" in safeProfile, false);
 });
 
 test("X5.5 P3.2: pre-consent account blocked (403) from Community & DM mutations", async () => {

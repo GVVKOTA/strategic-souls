@@ -35,6 +35,8 @@ type SectorQuote = {
 type Props = {
   data: MarketSnapshot | null;
   onOpenAsset: (id: string) => void;
+  initialCompare?: boolean;
+  onCloseInitialCompare?: () => void;
 };
 
 function toneClass(tone: SectorHeatmapSummary["tiles"][number]["tone"]): string {
@@ -86,12 +88,12 @@ function ComparisonSvgChart({ comp }: { comp: AssetComparisonResult }) {
  * [16] NSE Sector Explorer + [17] Miniature & Full-Screen Expandable Heatmaps + [13] Asset Comparison Modal.
  * Zero fabricated quotes or fake colored heatmap tiles when licensed exchange quotes are pending.
  */
-export default function SectorExplorer({ data, onOpenAsset }: Props) {
+export default function SectorExplorer({ data, onOpenAsset, initialCompare, onCloseInitialCompare }: Props) {
   const [expandedSectorId, setExpandedSectorId] = useState<string | null>(null);
   const [textMode, setTextMode] = useState(false);
 
   // [13] Quick Asset Comparison Modal state
-  const [compareOpen, setCompareOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(!!initialCompare);
   const [assetA, setAssetA] = useState("ECB:USDINR");
   const [assetB, setAssetB] = useState("ECB:EURUSD");
   const [compareRes, setCompareRes] = useState<CompareApiResponse | null>(null);
@@ -229,7 +231,8 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
   const expandedTiles = [...(expandedHm?.tiles ?? [])].sort((a, b) =>
     sort === "symbol" ? a.symbol.localeCompare(b.symbol) :
       (b.pctChange ?? -Infinity) - (a.pctChange ?? -Infinity) || a.symbol.localeCompare(b.symbol));
-  const latestQuote = sectorQuotes.map((quote) => quote.timestamp ?? "").sort().at(-1);
+  const latestSession = (groups === industryGroups ? industryQuotes : sectorQuotes)
+    .filter(({ quality }) => quality !== "STALE").map(({ latestDate }) => latestDate ?? "").sort().at(-1);
 
   return (
     <section aria-labelledby="x52-sectors-heading">
@@ -238,8 +241,8 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
         <p>
           {groups === industryGroups ? "Nifty 500 constituents by industry · Equal-weighted completed-session returns" : "Curated sector representatives · Equal-area tiles · Session change"}
         </p>
-        <p role="status">{quoteStatus || (latestQuote
-          ? "Latest quote · " + new Date(latestQuote).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) + " IST"
+        <p role="status">{quoteStatus || (latestSession
+          ? "Latest completed session · " + latestSession
           : "Quote timestamp unavailable")}</p>
         <div className="x52-section-center-actions">
           {!!industryGroups.length && <button type="button" className="x1-secondary" onClick={() => {
@@ -394,11 +397,11 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
                 ? `${expandedHm.connectedCount}/${expandedHm.totalCount} with ${heatPeriod} change`
                 : "Quotes unavailable"}
             </span>
-            {expandedSector.groupType !== "industry" && <label>Period
+            <label>Period
               <select value={heatPeriod} onChange={(event) => changeHeatPeriod(event.target.value)}>
                 {["1D", "1W", "1M", "YTD"].map((period) => <option key={period}>{period}</option>)}
               </select>
-            </label>}
+            </label>
             <label>Sort
               <select value={sort} onChange={(event) => setSort(event.target.value)}>
                 <option value="performance">Performance</option><option value="symbol">Symbol</option>
@@ -494,7 +497,7 @@ export default function SectorExplorer({ data, onOpenAsset }: Props) {
       {compareOpen && (
         <Modal
           title="Compare performance"
-          onClose={() => setCompareOpen(false)}
+          onClose={() => { setCompareOpen(false); if (initialCompare) onCloseInitialCompare?.(); }}
         >
           <div className="x1-form">
             <div className="x1-actions" aria-label="Comparison mode">

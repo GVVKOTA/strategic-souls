@@ -749,6 +749,7 @@ export async function listWebSouls(
     search?: string;
     sort?: "newest" | "following" | "evidence";
     authorHandle?: string;
+    postId?: string;
     savedOnly?: boolean;
   } = {},
 ): Promise<{ posts: PublishedSoulCard[] }> {
@@ -762,6 +763,7 @@ export async function listWebSouls(
   const authorQ = (options.authorHandle ?? "").trim().replace(/^@/, "").toLowerCase();
 
   const whereAuthor = authorQ ? " AND lower(p.author_handle) = ?" : "";
+  const wherePost = options.postId ? " AND p.id = ?" : "";
   const whereSaved = options.savedOnly
     ? " AND EXISTS(SELECT 1 FROM x51_web_soul_saves sv WHERE sv.post_id = p.id AND sv.subject = ?)"
     : "";
@@ -777,6 +779,7 @@ export async function listWebSouls(
   ];
   if (authorQ) bindParams.push(authorQ);
   if (options.savedOnly) bindParams.push(viewer);
+  if (options.postId) bindParams.push(options.postId);
 
   // Server-enforced visibility query:
   // PUBLIC visible to all non-blocked viewers;
@@ -809,7 +812,7 @@ export async function listWebSouls(
            SELECT 1 FROM x2_blocks z
            WHERE (z.subject = ? AND z.target = p.author_subject)
               OR (z.subject = p.author_subject AND z.target = ?)
-         )${whereAuthor}${whereSaved}
+         )${whereAuthor}${whereSaved}${wherePost}
        ORDER BY p.created_at DESC, p.id DESC
        LIMIT 80`,
     )
@@ -1231,11 +1234,10 @@ export async function getPublicResearcherProfile(
   }
 
   const prefs = await db
-    .prepare("SELECT discoverable, messages FROM x2_social_preferences WHERE subject=?")
+    .prepare("SELECT messages FROM x2_social_preferences WHERE subject=?")
     .bind(target.subject)
-    .first<{ discoverable: number; messages: string }>();
+    .first<{ messages: string }>();
 
-  const discoverable = !!prefs?.discoverable;
   let followState: "NONE" | "PENDING" | "ACTIVE" = "NONE";
   if (viewerSubject && !isMe) {
     const f = await db
@@ -1245,22 +1247,6 @@ export async function getPublicResearcherProfile(
       .bind(viewerSubject, target.subject)
       .first<{ state: string }>();
     if (f?.state === "ACTIVE") followState = "ACTIVE";
-    else if (f?.state === "PENDING") followState = "PENDING";
-  }
-
-  // Non-discoverable profiles can only be opened by self, active followers, or shared group members
-  if (!isMe && !discoverable && followState !== "ACTIVE") {
-    const sharedGroup = viewerSubject
-      ? await db
-          .prepare(
-            "SELECT 1 FROM x1_memberships a JOIN x1_memberships b ON b.group_id=a.group_id WHERE a.subject=? AND b.subject=? LIMIT 1",
-          )
-          .bind(viewerSubject, target.subject)
-          .first()
-      : null;
-    if (!sharedGroup) {
-      throw new HttpError(404, "Body ID not found or profile is private.");
-    }
   }
 
   const [ext, counts, feed] = await Promise.all([
@@ -1275,17 +1261,17 @@ export async function getPublicResearcherProfile(
       displayName: target.display_name,
       bio: target.bio,
       avatarId: normalizeAvatarId(target.avatar),
-      stateCode: ext.stateCode,
-      stateName: ext.stateName,
-      age: ext.showAge ? ext.age : null,
-      genderSymbol: ext.genderSymbol,
+      stateCode: isMe ? ext.stateCode : null,
+      stateName: isMe ? ext.stateName : null,
+      age: isMe && ext.showAge ? ext.age : null,
+      genderSymbol: isMe ? ext.genderSymbol : "HIDDEN",
       bannerPresetId: ext.bannerPresetId,
       bannerPosition: ext.bannerPosition,
       bannerOverlay: ext.bannerOverlay,
-      instagramHandle: ext.instagramHandle,
-      websiteUrl: ext.websiteUrl,
-      researchInterests: ext.researchInterests,
-      discoverable,
+      instagramHandle: isMe ? ext.instagramHandle : null,
+      websiteUrl: isMe ? ext.websiteUrl : null,
+      researchInterests: isMe ? ext.researchInterests : [],
+      discoverable: true,
       isMe,
       followState,
       canMessage: !isMe && (prefs?.messages ?? "REQUESTS") !== "NONE",
@@ -1313,11 +1299,6 @@ export type PublicResearcherSearchItem = {
   isMe: boolean;
 };
 
-/**
- * Search ONLY intentionally public (discoverable = 1) researcher profiles.
- * Excludes blocked accounts in both directions and legacy-private accounts.
- * Never returns email, internal subject IDs, age, or private portfolios.
- */
 export async function searchPublicResearchers(
   viewerSubject: string | null,
   rawQuery: string,
@@ -1341,9 +1322,7 @@ export async function searchPublicResearchers(
          (SELECT count(*) FROM x51_web_souls s WHERE s.author_subject = b.subject AND s.deleted_at IS NULL AND s.audience = 'PUBLIC') AS publishedSouls,
          (SELECT f.state FROM x51_follows f WHERE f.follower_subject = ? AND f.target_subject = b.subject LIMIT 1) AS followState
        FROM x1_bodies b
-       JOIN x2_social_preferences p ON p.subject = b.subject
-       WHERE p.discoverable = 1
-         AND (lower(b.handle) LIKE ? ESCAPE '!' OR lower(b.display_name) LIKE ? ESCAPE '!')
+       WHERE (lower(b.handle) LIKE ? ESCAPE '!' OR lower(b.display_name) LIKE ? ESCAPE '!')
          AND NOT EXISTS (
            SELECT 1 FROM x2_blocks z
            WHERE (z.subject = ? AND z.target = b.subject)
@@ -1389,11 +1368,6 @@ export async function searchPublicResearchers(
   return { researchers: items.slice(0, 12) };
 }
 
-/**
- * Permitted Followers / Following list for a researcher profile.
- * Enforces the exact same profile visibility & block gates as getPublicResearcherProfile,
- * and omits blocked or legacy-private non-self researchers from third-party views.
- */
 export async function listProfileConnections(
   viewerSubject: string | null,
   rawHandle: string,
@@ -1423,34 +1397,6 @@ export async function listProfileConnections(
     throw new HttpError(404, "Body ID not found.");
   }
 
-  const prefs = await db
-    .prepare("SELECT discoverable FROM x2_social_preferences WHERE subject=?")
-    .bind(target.subject)
-    .first<{ discoverable: number }>();
-  const targetDiscoverable = !!prefs?.discoverable;
-
-  if (!isTargetMe && !targetDiscoverable) {
-    const activeFollower = viewerSubject
-      ? await db
-          .prepare(
-            "SELECT 1 FROM x51_follows WHERE follower_subject=? AND target_subject=? AND state='ACTIVE' LIMIT 1",
-          )
-          .bind(viewerSubject, target.subject)
-          .first()
-      : null;
-    const sharedGroup = !activeFollower && viewerSubject
-      ? await db
-          .prepare(
-            "SELECT 1 FROM x1_memberships a JOIN x1_memberships b ON b.group_id=a.group_id WHERE a.subject=? AND b.subject=? LIMIT 1",
-          )
-          .bind(viewerSubject, target.subject)
-          .first()
-      : null;
-    if (!activeFollower && !sharedGroup) {
-      throw new HttpError(404, "Body ID not found or profile is private.");
-    }
-  }
-
   const viewer = viewerSubject ?? "__guest__";
   const joinCol = kind === "followers" ? "f.follower_subject" : "f.target_subject";
   const filterCol = kind === "followers" ? "f.target_subject" : "f.follower_subject";
@@ -1463,29 +1409,25 @@ export async function listProfileConnections(
          b.display_name AS displayName,
          b.avatar,
          b.bio,
-         COALESCE(p.discoverable, 0) AS discoverable,
          (SELECT vf.state FROM x51_follows vf WHERE vf.follower_subject = ? AND vf.target_subject = b.subject LIMIT 1) AS followState
        FROM x51_follows f
        JOIN x1_bodies b ON b.subject = ${joinCol}
-       LEFT JOIN x2_social_preferences p ON p.subject = b.subject
        WHERE ${filterCol} = ? AND f.state = 'ACTIVE'
          AND NOT EXISTS (
            SELECT 1 FROM x2_blocks z
            WHERE (z.subject = ? AND z.target = b.subject)
               OR (z.subject = b.subject AND z.target = ?)
          )
-         AND (? = 1 OR COALESCE(p.discoverable, 0) = 1 OR b.subject = ?)
        ORDER BY f.updated_at DESC, b.handle ASC
        LIMIT 60`,
     )
-    .bind(viewer, target.subject, viewer, viewer, isTargetMe ? 1 : 0, viewer)
+    .bind(viewer, target.subject, viewer, viewer)
     .all<{
       subject: string;
       handle: string;
       displayName: string;
       avatar: string;
       bio: string;
-      discoverable: number;
       followState: string | null;
     }>();
 
@@ -1506,33 +1448,6 @@ export async function listProfileConnections(
       isMe: r.subject === viewerSubject,
     })),
   };
-}
-
-export async function getPendingFollowRequests(subject: string) {
-  const rows = await database()
-    .prepare(
-      `SELECT f.follower_subject AS followerSubject, b.handle, b.display_name AS displayName,
-              b.avatar, f.created_at AS createdAt
-       FROM x51_follows f
-       JOIN x1_bodies b ON b.subject = f.follower_subject
-       WHERE f.target_subject = ? AND f.state = 'PENDING'
-       ORDER BY f.created_at DESC
-       LIMIT 30`,
-    )
-    .bind(subject)
-    .all<{
-      followerSubject: string;
-      handle: string;
-      displayName: string;
-      avatar: string;
-      createdAt: string;
-    }>();
-  return (rows.results ?? []).map((r) => ({
-    handle: r.handle,
-    displayName: r.displayName,
-    avatarId: normalizeAvatarId(r.avatar),
-    createdAt: r.createdAt,
-  }));
 }
 
 export async function mutateResearchNetwork(
@@ -1646,9 +1561,9 @@ export async function mutateResearchNetwork(
     const postId = id(input.postId, "Post");
     const res = await db
       .prepare(
-        "UPDATE x51_web_souls SET deleted_at=?, pinned=0 WHERE id=? AND author_subject=? AND deleted_at IS NULL",
+        "DELETE FROM x51_web_souls WHERE id=? AND author_subject=? AND deleted_at IS NULL",
       )
-      .bind(now, postId, subject)
+      .bind(postId, subject)
       .run();
     if (!res.meta.changes) {
       throw new HttpError(404, "Published Soul not found or not owned by you.");
@@ -1782,17 +1697,7 @@ export async function mutateResearchNetwork(
       .bind(subject, target.subject)
       .first<{ state: string }>();
 
-    const prefs = await db
-      .prepare("SELECT discoverable FROM x2_social_preferences WHERE subject=?")
-      .bind(target.subject)
-      .first<{ discoverable: number }>();
-
-    // Public profiles follow immediately (ACTIVE); legacy private profiles keep PENDING unless already ACTIVE.
-    const nextState =
-      existingFollow?.state === "ACTIVE" || prefs?.discoverable
-        ? "ACTIVE"
-        : "PENDING";
-
+    const nextState = "ACTIVE";
     if (existingFollow?.state !== nextState) {
       await db
         .prepare(
@@ -1805,51 +1710,13 @@ export async function mutateResearchNetwork(
 
       await pushNotification(
         target.subject,
-        nextState === "PENDING" ? "FOLLOW_REQUEST" : "NEW_FOLLOWER",
+        "NEW_FOLLOWER",
         bodyRow.handle,
         `follow:${subject}:${target.subject}:${nextState}`,
       );
     }
 
     return { state: nextState, counts: await getSocialCounts(target.subject) };
-  }
-
-  if (action === "respond-follow") {
-    const followerHandle = bodyHandle(input.handle);
-    const decision = String(input.decision ?? "").toUpperCase();
-    if (!["APPROVE", "DECLINE"].includes(decision)) {
-      throw new HttpError(400, "Choose APPROVE or DECLINE.");
-    }
-    const follower = await db
-      .prepare("SELECT subject FROM x1_bodies WHERE handle=?")
-      .bind(followerHandle)
-      .first<{ subject: string }>();
-    if (!follower) throw new HttpError(404, "Follow request not found.");
-
-    if (decision === "APPROVE") {
-      const res = await db
-        .prepare(
-          "UPDATE x51_follows SET state='ACTIVE', updated_at=? WHERE follower_subject=? AND target_subject=? AND state='PENDING'",
-        )
-        .bind(now, follower.subject, subject)
-        .run();
-      if (!res.meta.changes) throw new HttpError(404, "Pending follow request not found.");
-      await pushNotification(
-        follower.subject,
-        "FOLLOW_APPROVED",
-        bodyRow.handle,
-        `follow-approved:${subject}:${follower.subject}`,
-      );
-      return { state: "ACTIVE" };
-    } else {
-      await db
-        .prepare(
-          "DELETE FROM x51_follows WHERE follower_subject=? AND target_subject=? AND state='PENDING'",
-        )
-        .bind(follower.subject, subject)
-        .run();
-      return { state: "DECLINED" };
-    }
   }
 
   throw new HttpError(400, "Unsupported Community network action.");

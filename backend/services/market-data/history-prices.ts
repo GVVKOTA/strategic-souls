@@ -18,7 +18,8 @@ export async function completedResearchPrices(id: string, subject: string) {
   const observations: PriceObservation[] = !hasRights ? [] : asset.capabilities.candles
     ? completed.map((bar) => ({ date: bar.date, close: adjusted ? bar.adjustedClose! : bar.close }))
     : asset.references.map((row) => ({ date: row.date, close: row.close }));
-  const basis = id.startsWith("ECB:") ? "Daily reference rates" : adjusted ? "Adjusted closes" : "Raw closes";
+  const basis = id.startsWith("ECB:") ? "Daily reference rates" : adjusted ? "Adjusted closes"
+    : asset.references.length && !asset.capabilities.candles ? "Published closes · Adjustment unspecified" : "Raw closes";
   return {
     id: asset.instrument?.id ?? asset.id, label: asset.name, currency: asset.currency,
     source: asset.provider, series: observations, basis, dataState: asset.state,

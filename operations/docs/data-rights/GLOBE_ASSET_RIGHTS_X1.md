@@ -1,5 +1,13 @@
 # X1 Earth texture provenance and rights
 
+## Regional map and header identity
+
+The X 1.0 regional view uses self-hosted land, boundaries and populated places from the Natural Earth v5.1.2 distribution at 1:50m scale. The GeoJSON retains geometry and attributes needed for display. It rounds coordinates to four decimals and includes selected towns and cities. The renderer uses the Natural Earth India boundary classifications where available and distinguishes disputed lines. It supplies regional geography with city and exchange markers. Attribution is shown in the map.
+
+Natural Earth is public domain. The map renderer uses the installed BSD-3-Clause MapLibre GL JS library. The India flag artwork follows the Ministry of Home Affairs proportions and 24-spoke design. [Natural Earth terms](https://www.naturalearthdata.com/about/terms-of-use/) · [Natural Earth tagged release](https://github.com/nvkelso/natural-earth-vector/releases/tag/v5.1.2) · [Flag Code of India](https://mha.gov.in/files/national_flag_emblem_anthem_documents/flagcode2002_20072023.pdf)
+
+## NASA textures
+
 Verified and downloaded **17 November 2026**, 15:15–15:19 UTC. These are original NASA-hosted files, preserved byte for byte. No image generation, raster editing, resizing, recompression, recoloring or synthetic detail was performed.
 
 | Local asset | Original dimensions / mode | Exact bytes | SHA-256 |

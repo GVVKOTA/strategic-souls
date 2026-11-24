@@ -477,7 +477,7 @@ export async function getSessionProfileMeta(subject: string): Promise<{
   preferences: UiPreferences;
 }> {
   const db = database();
-  const [bodyRow, stored, prefsRow, unreadRow, counts] = await Promise.all([
+  const [bodyRow, stored, unreadRow, counts] = await Promise.all([
     db
       .prepare("SELECT handle, bio, avatar FROM x1_bodies WHERE subject = ?")
       .bind(subject)
@@ -486,14 +486,7 @@ export async function getSessionProfileMeta(subject: string): Promise<{
     readStoredProfileRecord(subject),
     db
       .prepare(
-        "SELECT discoverable FROM x2_social_preferences WHERE subject = ?",
-      )
-      .bind(subject)
-      .first<{ discoverable: number }>()
-      .catch(() => null),
-    db
-      .prepare(
-        "SELECT count(*) AS count FROM x2_notifications WHERE subject = ? AND read_at IS NULL",
+        "SELECT count(*) AS count FROM x1_visible_notices WHERE subject = ? AND read_at IS NULL",
       )
       .bind(subject)
       .first<{ count: number }>()
@@ -512,8 +505,8 @@ export async function getSessionProfileMeta(subject: string): Promise<{
     avatarId,
     handle: bodyRow?.handle ?? null,
     bio: bodyRow?.bio ?? "",
-    discoverable: !!prefsRow?.discoverable,
-    legacyPrivateProfile: !!bodyRow && !prefsRow?.discoverable,
+    discoverable: !!bodyRow,
+    legacyPrivateProfile: false,
     unreadNotifications: Number(unreadRow?.count ?? 0),
     stateCode: stateEntry?.code ?? null,
     stateName: stateEntry?.name ?? null,
@@ -571,7 +564,7 @@ export async function getPrivateProfile(user: {
         .catch(() => null),
       db
         .prepare(
-          "SELECT id, kind, target_id AS targetId, created_at AS createdAt, read_at AS readAt FROM x2_notifications WHERE subject = ? ORDER BY created_at DESC, id DESC LIMIT 30",
+          "SELECT id, kind, target_id AS targetId, created_at AS createdAt, read_at AS readAt FROM x1_visible_notices WHERE subject = ? ORDER BY created_at DESC, id DESC LIMIT 30",
         )
         .bind(subject)
         .all<{
@@ -602,7 +595,7 @@ export async function getPrivateProfile(user: {
   const stateEntry = getIndianStateByCode(stored?.stateCode ?? null);
   const social: SocialSettingsSnapshot = socialRow
     ? {
-        discoverable: !!socialRow.discoverable,
+        discoverable: !!bodyRow,
         messages:
           socialRow.messages === "GROUPS" || socialRow.messages === "NONE"
             ? socialRow.messages
@@ -636,7 +629,7 @@ export async function getPrivateProfile(user: {
     defaultPostAudience: stored?.defaultPostAudience ?? "PUBLIC",
     counts,
     hasCommunityProfile: !!bodyRow,
-    legacyPrivateProfile: !!bodyRow && !social.discoverable,
+    legacyPrivateProfile: false,
     preferences: stored?.preferences ?? { ...DEFAULT_UI_PREFERENCES },
     social,
     unreadNotifications,
@@ -1017,10 +1010,6 @@ export async function mutatePrivateProfile(
             receipts: number;
             notifications: number;
           }>();
-        const discoverable =
-          typeof s.discoverable === "boolean"
-            ? s.discoverable
-            : !!(currentSocial?.discoverable ?? 0);
         const receipts =
           typeof s.receipts === "boolean"
             ? s.receipts
@@ -1048,7 +1037,7 @@ export async function mutatePrivateProfile(
           )
           .bind(
             subject,
-            discoverable ? 1 : 0,
+            1,
             messages,
             receipts ? 1 : 0,
             notifications ? 1 : 0,
@@ -1062,12 +1051,10 @@ export async function mutatePrivateProfile(
   }
 
   if (action === "mark-notifications-read") {
-    await db
-      .prepare(
-        "UPDATE x2_notifications SET read_at = COALESCE(read_at, ?) WHERE subject = ?",
-      )
-      .bind(now, subject)
-      .run();
+    await db.batch([
+      db.prepare("UPDATE x2_notifications SET read_at=? WHERE subject=? AND read_at IS NULL").bind(now, subject),
+      db.prepare("UPDATE x1_account_notices SET read_at=? WHERE subject=? AND read_at IS NULL").bind(now, subject),
+    ]);
     return getPrivateProfile(user);
   }
 

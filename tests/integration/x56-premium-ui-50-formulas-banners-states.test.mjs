@@ -593,10 +593,10 @@ test("X5.6 Phase 3 & 4: 8 visual banner presets (including 2 light designs) and 
   assert.equal(saved.stateCode, "AP");
   assert.equal(saved.stateName, "Andhra Pradesh");
 
-  // Public researcher profile reflects AP -> Andhra Pradesh and b04 banner
+  // The banner is public. The selected state remains in the owner's profile.
   const pub = await netSvc.getPublicResearcherProfile(null, "vishnu_ap");
-  assert.equal(pub.profile.stateCode, "AP");
-  assert.equal(pub.profile.stateName, "Andhra Pradesh");
+  assert.equal(pub.profile.stateCode, null);
+  assert.equal(pub.profile.stateName, null);
   assert.equal(pub.profile.bannerPresetId, "b04");
   assert.equal(pub.profile.bannerPosition, "top");
 

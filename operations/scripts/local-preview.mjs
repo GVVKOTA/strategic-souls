@@ -29,6 +29,7 @@ function configuration() {
     main: resolve('dist/server', built.main),
     compatibility_date: built.compatibility_date,
     compatibility_flags: built.compatibility_flags,
+    vars: built.vars,
     no_bundle: built.no_bundle,
     rules: built.rules,
     assets: { ...built.assets, directory: resolve('dist/server', built.assets.directory) },

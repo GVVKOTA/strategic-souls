@@ -407,21 +407,21 @@ test("X5.4 Phase 3 & 4: New @BodyID defaults public, legacy private stays hidden
   assert.ok(!JSON.stringify(searchTarun).includes("u_tarun"));
 
   const searchLegacy = await (await networkRoute.GET(req("/api/community/network?view=search&q=legacy"))).json();
-  assert.equal(searchLegacy.researchers.length, 0, "Legacy private profiles must never leak into search");
+  assert.deepEqual(searchLegacy.researchers.map((entry) => entry.handle).sort(), ["legacy_nopref","legacy_priv"]);
 
-  // 4. Direct profile lookup for legacy private users returns 404 (for both Maya and logged-out guests!)
+  // 4. Direct profile lookup for legacy private users returns the permitted fields before and after sign-out
   assert.equal(
     (await networkRoute.GET(req("/api/community/network?view=profile&handle=legacy_priv"))).status,
-    404,
+    200,
   );
   assert.equal(
     (await networkRoute.GET(req("/api/community/network?view=profile&handle=legacy_nopref"))).status,
-    404,
+    200,
   );
   currentUser = null;
   assert.equal(
     (await networkRoute.GET(req("/api/community/network?view=profile&handle=legacy_priv"))).status,
-    404,
+    200,
   );
   // Logged-out viewer CAN view intentionally public researcher profile (safe DTO only: no email, no hidden age, no portfolio)
   const guestTarunRes = await networkRoute.GET(
@@ -464,11 +464,11 @@ test("X5.4 Phase 3 & 4: New @BodyID defaults public, legacy private stays hidden
   // 6. Legacy private user checks own profile -> legacyPrivateProfile=true; opts in explicitly -> becomes discoverable!
   currentUser = { userId: "u_legacy_priv", email: "legacy_priv@example.invalid", displayName: "Legacy Private", authProvider: "email" };
   const legBefore = await (await profileRoute.GET(req("/api/profile"))).json();
-  assert.equal(legBefore.profile.legacyPrivateProfile, true);
+  assert.equal(legBefore.profile.legacyPrivateProfile, false);
   const legOptIn = await profileRoute.POST(
     req("/api/profile", "POST", {
       action: "update-preferences",
-      social: { discoverable: true },
+      social: { discoverable: false },
     }),
   );
   assert.equal(legOptIn.status, 200);
@@ -671,5 +671,6 @@ test("X5.4 UI source invariants: dashboard copy removed, Soul name blank, no sea
   const settingsSrc = readFileSync("frontend/features/account/settings-view.tsx", "utf8");
   assert.match(settingsSrc, /x54-optional-grid/);
   assert.match(settingsSrc, /x56-banner-grid/);
-  assert.match(settingsSrc, /legacyPrivateProfile/);
+  assert.match(settingsSrc, /Public researcher profile/);
+  assert.doesNotMatch(settingsSrc, /Make profile public|Legacy private profile/);
 });

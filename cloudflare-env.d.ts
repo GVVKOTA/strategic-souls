@@ -7,6 +7,7 @@ declare namespace Cloudflare {
     BHARATSTOCK_API_KEY?: string;
     INDIA_API_KEY?: string;
     INDIA_API_HOST?: string;
+    CF_VERSION_METADATA?: { id: string; tag: string; timestamp: string };
     X2_TRUEDATA_BEARER_TOKEN?: string;
     GOOGLE_CLIENT_ID?: string;
     GOOGLE_CLIENT_SECRET?: string;

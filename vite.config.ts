@@ -34,6 +34,7 @@ const cloudflareWorkerConfig = {
   observability: { enabled: true },
   triggers: { crons: ["* * * * *", "*/2 * * * *"] },
   vars: { INDIA_API_HOST: "stock.indianapi.in" },
+  version_metadata: { binding: "CF_VERSION_METADATA" },
   d1_databases: [
     {
       binding: CLOUDFLARE_D1_BINDING,

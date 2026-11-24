@@ -136,9 +136,11 @@ export function SocialWorkspace({
   notify,
   query = "",
   initialThreadId = "",
+  initialMessageId = "",
   onClearInitialThread,
   onOpenProfile,
   onOpenGroup,
+  onOpenNotification,
   shareSoul,
   onClearShare,
   onMobileChatActive,
@@ -148,9 +150,11 @@ export function SocialWorkspace({
   notify: Notice;
   query?: string;
   initialThreadId?: string;
+  initialMessageId?: string;
   onClearInitialThread?: () => void;
   onOpenProfile?: (handle: string) => void;
   onOpenGroup: (id: string) => void;
+  onOpenNotification?: (id: string) => void;
   shareSoul?: { id: string; revision: number; title: string } | null;
   onClearShare?: () => void;
   onMobileChatActive?: (active: boolean) => void;
@@ -760,6 +764,7 @@ export function SocialWorkspace({
 
               <ConversationView
                 thread={thread}
+                initialMessageId={threadId === initialThreadId ? initialMessageId : ""}
                 hasActiveThread={!!threadId}
                 older={older}
                 olderError={olderError}
@@ -1173,7 +1178,8 @@ export function SocialWorkspace({
                 >
                   <strong>{n.kind.replaceAll("_", " ")}</strong>
                   <small>{moment(n.createdAt)}</small>
-                  {n.kind === "MESSAGE" || n.kind === "MESSAGE_REQUEST" ? (
+                  {onOpenNotification ? <button type="button" onClick={() => onOpenNotification(n.id)}>Open</button> :
+                  n.kind === "MESSAGE" || n.kind === "MESSAGE_REQUEST" ? (
                     <button
                       type="button"
                       onClick={() => {

@@ -1085,6 +1085,34 @@ test("V2 P09: Password change, non-enumerating single-use reset, email change ve
 // ---------------------------------------------------------------------------
 // 5. GVV Logo Integrity & Zero User-Visible "optional" / Vendor Leak Static Gate
 // ---------------------------------------------------------------------------
+test("X1 portfolio corrections recalculate holdings, preserve original entries and enforce owner/version checks", async () => {
+  const owner = await registerUser("portfolio_revision@example.test", "StrongPass200!fixture", "Portfolio Revision");
+  const viewer = await registerUser("portfolio_viewer@example.test", "StrongPass201!fixture", "Portfolio Viewer");
+  const created = await workspaceMod.mutateWorkspace(owner.userId, {
+    action: "create-portfolio", name: "Private ledger", currency: "INR", requestId: randomUUID(),
+  });
+  const current = () => sql.prepare("SELECT version FROM x1_records WHERE id=?").get(created.id).version;
+  const transaction = (kind, quantity, price) => ({ kind, symbol:"NSE:FIXTURE", quantity, price, fees: 0, currency:"INR", date:"2026-11-20" });
+  const append = (tx) => workspaceMod.mutateWorkspace(owner.userId, {
+    action:"transaction", portfolioId:created.id, version:current(), requestId:randomUUID(), transaction:tx,
+  });
+  const buy = await append(transaction("BUY", 10, 100));
+  const sell = await append(transaction("SELL", 4, 120));
+  const remove = (transactionId) => ({
+    action:"delete-transaction", portfolioId:created.id, transactionId, version:current(), requestId:randomUUID(),
+  });
+  await assert.rejects(workspaceMod.mutateWorkspace(viewer.userId, remove(buy.id)), (err) => err.status === 404);
+  await assert.rejects(workspaceMod.mutateWorkspace(owner.userId, remove(buy.id)), (err) => err.status === 400);
+  const revision = { ...remove(buy.id), action:"correct-transaction", transaction:transaction("BUY", 10, 110) };
+  await workspaceMod.mutateWorkspace(owner.userId, revision);
+  assert.equal((await workspaceMod.mutateWorkspace(owner.userId, revision)).replayed, true);
+  assert.equal(JSON.parse(sql.prepare("SELECT payload FROM x1_ledger WHERE id=?").get(buy.id).payload).price, 100);
+  assert.equal(JSON.parse(sql.prepare("SELECT payload FROM x1_effective_ledger WHERE id=?").get(buy.id).payload).price, 110);
+  await workspaceMod.mutateWorkspace(owner.userId, remove(sell.id));
+  assert.equal(sql.prepare("SELECT id FROM x1_effective_ledger WHERE id=?").get(sell.id), undefined);
+  assert.equal(sql.prepare("SELECT id FROM x1_ledger WHERE id=?").get(sell.id).id, sell.id);
+});
+
 test("V2/V3 Asset & Copy Invariants: GVV logo SHA-256 unchanged, zero user-visible 'optional' or 'Angel One' in active UI", () => {
   const logoBytes = readFileSync(resolve(root, "public/gvv-approved.jpg"));
   const sha = createHash("sha256").update(logoBytes).digest("hex").toUpperCase();

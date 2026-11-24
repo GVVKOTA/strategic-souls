@@ -1,4 +1,7 @@
-import { hasReadySharedHistory, sharedHistoryGrants } from "../../../backend/services/market-data/shared-history";
+import { env } from "cloudflare:workers";
+import { hasReadySharedHistory, readSharedDailyQuotes, sharedHistoryGrants } from "../../../backend/services/market-data/shared-history";
+import { niftyUniverse } from "../../../backend/services/market-data/nifty-500";
+import { BHARATSTOCK_INDEX_SYMBOLS } from "../../../backend/services/market-data/providers";
 import { APP_RELEASE } from "../../../backend/services/release-meta";
 import {
   CLASSIC_DAILY_LIMIT, ADVANCED_ROLLING_LIMIT,
@@ -7,7 +10,13 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const configured = await sharedHistoryGrants().catch(() => []);
+  const [configured, dashboard, membership] = await Promise.all([
+    sharedHistoryGrants().catch(() => []),
+    sharedHistoryGrants(Date.now(), "dashboard").catch(() => []),
+    niftyUniverse().catch(() => null),
+  ]);
+  const dates = await readSharedDailyQuotes([...BHARATSTOCK_INDEX_SYMBOLS.keys()], dashboard).catch(() => null);
+  const connectedTiles = dates ? [...dates.values()].filter(({ quality }) => quality === "PUBLISHED_EOD").length : 0;
   const [daily, halfHour, hourly] = await Promise.all((["1d", "30m", "1h"] as const).map((resolution) =>
     hasReadySharedHistory(configured, resolution).catch(() => false)));
   const intervals = [["30m", halfHour], ["1h", hourly]].flatMap(([resolution, available]) => available ? [resolution] : []);
@@ -21,6 +30,7 @@ export async function GET() {
       supportEmail: APP_RELEASE.supportEmail,
       targetLaunchDate: APP_RELEASE.targetLaunchDate,
       revisionMarker: APP_RELEASE.revisionMarker,
+      workerVersionId: env.CF_VERSION_METADATA?.id ?? null,
       buildCommit:
         typeof process === "undefined"
           ? null
@@ -41,6 +51,12 @@ export async function GET() {
       capabilities: {
         publicOfficialReferences: true,
         sharedCommercialMarketData: daily || halfHour || hourly,
+        dashboardConnectedTiles: connectedTiles,
+        nifty500Constituents: membership?.constituents.length ?? null,
+        nifty500FullScanAvailable: !!membership && membership.constituents.length === 500 &&
+          await hasReadySharedHistory(configured.filter(({ provider }) => provider === "INDIANAPI"), "1d",
+            membership.constituents.map(({ id }) => id), "all").catch(() => false),
+        priceAlertMonitoringConfigured: configured.some(({ provider }) => provider === "INDIANAPI"),
         sharedIntradayIntervalsAvailable: intervals,
         intradayIntervalsSupported: ["30m", "1h"],
         tradingExecutionEnabled: false,

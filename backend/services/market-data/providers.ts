@@ -1,3 +1,5 @@
+import { normalizeIndianReportPeriods } from "./indian-report-periods";
+export type { IndianReportPeriod } from "./indian-report-periods";
 import type {
   Candle,
   Fundamental,
@@ -32,7 +34,7 @@ export const PROVIDERS = {
     secret: "INDIA_API_KEY",
     docs: "https://indianapi.in/documentation/indian-stock-market",
     rightsUrl: "https://indianapi.in/indian-stock-market",
-    markets: ["NSE"], datasets: ["prices"],
+    markets: ["NSE"], datasets: ["prices", "fundamentals"],
     status: "Daily NSE price history for Soul Scan",
   },
   EODHD: {
@@ -467,6 +469,16 @@ export function normalizeTrueData(value: unknown, now = Date.now()): Candle[] {
   });
 }
 export type IndianDailyPrice = { date: string; close: number; volume: number | null };
+
+export async function indianReportPeriods(symbol: string, secret: string, host: unknown, fetcher = fetch) {
+  if (typeof host !== "string" || !INDIAN_API_HOSTS.includes(host))
+    throw new ProviderFailure("INVALID_DATA", "The Indian API account hostname is unavailable.");
+  const url = new URL("/stock", "https://" + host);
+  url.searchParams.set("name", symbol);
+  const data = await fetchProviderJson(url, { "X-API-Key": secret }, fetcher);
+  try { return normalizeIndianReportPeriods(data, symbol); }
+  catch { throw new ProviderFailure("INVALID_DATA", "The reported company identity or statement history is unavailable."); }
+}
 
 export async function indianDailyPrices(symbol: string, secret: string, host: unknown, fetcher = fetch): Promise<IndianDailyPrice[]> {
   if (typeof host !== "string" || !INDIAN_API_HOSTS.includes(host))

@@ -91,6 +91,7 @@ type Props = {
   initialWatchlistId?: string;
   initialUniversePreset?: ScanUniversePreset;
   initialPanel?: string;
+  initialRunId?: string;
 };
 
 type StrategyTab = "scan" | "lab";
@@ -440,6 +441,7 @@ export default function Strategy({
   initialUniversePreset,
   initialWatchlistId,
   initialPanel,
+  initialRunId,
 }: Props) {
   const [section, setSection] = useState<StrategyTab>(
     initialPanel === "lab" ? "lab" : "scan",
@@ -539,6 +541,14 @@ export default function Strategy({
   >("ALL");
   const [graveyardQuery, setGraveyardQuery] = useState("");
   const [review, setReview] = useState<ScanRun | null>(null);
+  useEffect(() => {
+    if (!initialRunId || !authenticated) return;
+    const controller = new AbortController();
+    void api<ScanRun>("/api/x1/workspace?scanId=" + encodeURIComponent(initialRunId), undefined, { signal: controller.signal })
+      .then((record) => { if (!controller.signal.aborted) setReview(record); })
+      .catch(() => { if (!controller.signal.aborted) notify("This saved Soul is unavailable.", true); });
+    return () => controller.abort();
+  }, [initialRunId, authenticated, notify]);
   const [publishingId, setPublishingId] = useState<string | null>(null);
   const [reviewBusy, setReviewBusy] = useState(false);
 
@@ -2658,16 +2668,16 @@ export default function Strategy({
         </>
       )}
 
-      {scanDialog && <Modal title={scanDialog.action === "delete" ? "Delete scan" : "Rename scan"}
+      {scanDialog && <Modal title={scanDialog.action === "delete" ? "Delete Soul?" : "Rename scan"}
         onClose={() => { if (!scanActionBusy) setScanDialog(null); }}>
         <form className="x1-form" onSubmit={(event) => { event.preventDefault(); void confirmScanAction(); }}>
           {scanDialog.action === "delete"
-            ? <p>Delete {scanDialog.scan.name} and its private results? Published Souls are managed in Community.</p>
+            ? <p>This Soul will be permanently deleted. This action cannot be undone. Any separately published Soul stays in Community.</p>
             : <label>Scan name<input autoFocus maxLength={100} required value={nextName} onChange={(event) => setNextName(event.target.value)} /></label>}
           <div className="x1-actions">
             <button type="button" className="x1-secondary" disabled={scanActionBusy} onClick={() => setScanDialog(null)}>Cancel</button>
             <button type="submit" className="x1-primary" disabled={scanActionBusy}>
-              {scanDialog.action === "delete" ? "Delete" : "Save name"}
+              {scanDialog.action === "delete" ? "Delete permanently" : "Save name"}
             </button>
           </div>
         </form>

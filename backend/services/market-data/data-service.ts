@@ -29,7 +29,7 @@ import {
   statementMetrics,
   validateConfig,
 } from "./providers";
-import { reserveProviderCall } from "./provider-budget";
+import { recordProviderBackoff, reserveProviderCall } from "./provider-budget";
 import { niftyUniverse } from "./nifty-500";
 import { X2_INSTRUMENTS, registryInstrument } from "./instrument-registry";
 import { completedCommercialIntradayObservations, scanFreshnessMs } from "./candle-sessions";
@@ -179,6 +179,12 @@ export async function configureProvider(
       .prepare("SELECT * FROM x2_providers WHERE provider=?")
       .bind(next.provider)
       .first<ConfigRow>();
+  const previousConfig = row ? JSON.parse(row.payload) as ProviderConfig : null;
+  if (previousConfig?.constituentGrant && !next.constituentGrant) {
+    if (JSON.stringify(next.instruments) !== JSON.stringify(previousConfig.instruments))
+      throw new HttpError(409, "Refresh the licensed constituent snapshot before editing its imported mappings.");
+    next.constituentGrant = previousConfig.constituentGrant;
+  }
   if (row?.last_write === next.lastWrite) {
     if (!sameConfig(JSON.parse(row.payload), next))
       throw new HttpError(
@@ -330,6 +336,7 @@ export async function testProvider(
         health.accepted.push(instrument.id);
         health.lastEventAt = bars.at(-1)?.date ?? null;
       } catch (e) {
+        await recordProviderBackoff(c, e);
         health.rejected.push(instrument.id);
         health.state =
           e instanceof ProviderFailure

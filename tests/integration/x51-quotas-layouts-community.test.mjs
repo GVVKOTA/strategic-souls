@@ -614,23 +614,14 @@ test("Community Research Network: One-Click Post Soul, Angel One redaction (403)
   const feedBefore = await (await networkRoute.GET(makeReq("/api/community/network?view=web"))).json();
   assert.ok(!feedBefore.posts.some((p) => p.id === pub1Json.postId));
 
-  // User B requests to follow private User A -> state PENDING
-  const followReq = await networkRoute.POST(
+  // New follows activate immediately. The legacy request endpoint has no pending workflow.
+  const followed = await networkRoute.POST(
     makeReq("/api/community/network", "POST", { action: "follow", handle: "alice_quant", active: true }),
   );
-  assert.equal(followReq.status, 200);
-  assert.equal((await followReq.json()).state, "PENDING");
-
-  // User A approves follow request -> state ACTIVE
-  currentUser = { userId: "user-a", displayName: "Alice Quant", email: "a@test.local", authProvider: "email" };
+  assert.equal(followed.status, 200);
+  assert.equal((await followed.json()).state, "ACTIVE");
   const pendingList = await (await networkRoute.GET(makeReq("/api/community/network?view=follow-requests"))).json();
-  assert.equal(pendingList.requests.length, 1);
-  assert.equal(pendingList.requests[0].handle, "bob_macro");
-
-  const approve = await networkRoute.POST(
-    makeReq("/api/community/network", "POST", { action: "respond-follow", handle: "bob_macro", decision: "APPROVE" }),
-  );
-  assert.equal(approve.status, 200);
+  assert.deepEqual(pendingList.requests, []);
 
   // Now User B CAN see the FOLLOWERS post, Save it, Comment on it, Make a Copy, and inspect Alice's public profile safely
   currentUser = { userId: "user-b", displayName: "Bob Macro", email: "b@test.local", authProvider: "email" };
@@ -679,6 +670,8 @@ test("Community Research Network: One-Click Post Soul, Angel One redaction (403)
     makeReq("/api/community/network", "POST", { action: "delete-soul", postId: pub1Json.postId }),
   );
   assert.equal(goodDel.status, 200);
+  const gone = await networkRoute.GET(makeReq("/api/community/network?view=post&postId=" + pub1Json.postId));
+  assert.equal(gone.status, 404);
 });
 
 test("Media Upload validator enforces auth (401), same-origin CSRF (403), rejects forged SVG/script MIME (400), and fails closed without R2 (503)", async () => {

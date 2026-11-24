@@ -14,14 +14,17 @@ export async function GET(request: Request) {
     const [membership, grants] = await Promise.all([niftyUniverse(), sharedHistoryGrants()]);
     const configured = grants.filter(({ provider }) => provider === "INDIANAPI");
     const hasSource = configured.length > 0;
-    const current = Boolean(membership && hasSource &&
-      await hasReadySharedHistory(configured, "1d", membership.constituents.map(({id}) => id)));
+    const ids = membership?.constituents.map(({ id }) => id);
+    const intervals = await Promise.all((["1d", "1wk", "1mo"] as const).map(async (interval) =>
+      ids && hasSource && await hasReadySharedHistory(configured, interval, ids) ? interval : null));
+    const current = intervals[0] !== null;
     return Response.json({
       availability: current ? "OBSERVATIONS_AVAILABLE" : !membership ? "CONSTITUENTS_UNAVAILABLE"
         : hasSource ? "HISTORY_PENDING" : "ENTITLEMENT_REQUIRED",
       constituentCount: membership?.constituents.length ?? null,
       effectiveDate: membership?.effectiveDate ?? null,
-      intervals: current ? ["1d", "1wk", "1mo"] : [],
+      intervals: intervals.filter(Boolean),
+      fullDailyCoverage: !!ids && hasSource && await hasReadySharedHistory(configured, "1d", ids, "all"),
       serverTimestampUTC,
     }, { headers });
   } catch {

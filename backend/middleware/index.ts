@@ -1,11 +1,15 @@
 import handler from "vinext/server/fetch-handler";
 import { refreshSharedHistory } from "../services/market-data/shared-history";
 import { processMarketScanBatch } from "../services/research/market-scan-jobs";
+import { checkPriceAlerts } from "../services/market-data/price-alerts";
+import { clearExpiredReports } from "../services/market-data/company-reports";
 
 const worker = {
   async scheduled(controller: ScheduledController) {
     if (controller.cron === "*/2 * * * *") {
       await refreshSharedHistory();
+      await checkPriceAlerts();
+      await clearExpiredReports();
       return;
     }
     // One lease across events, up to two batches of up to 15 instruments.

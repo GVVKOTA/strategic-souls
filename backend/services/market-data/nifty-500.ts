@@ -4,6 +4,11 @@ import { HttpError } from "../../middleware/security";
 
 export const NIFTY_500_COUNT = 500;
 export const EXPLICIT_SCOPE_VERSION = "x8-scoped-v1";
+export async function niftyUniverseRightsActive(version: string) {
+  return !!await database().prepare(
+    "SELECT 1 FROM x78_market_universes WHERE version=? AND rights_expires_at>?",
+  ).bind(version, new Date().toISOString()).first();
+}
 export type NiftyConstituent = { id: string; isin: string; name: string; industry: string };
 type UniverseRow = {
   version: string;

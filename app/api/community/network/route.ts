@@ -5,7 +5,6 @@ import {
   protectMutation,
 } from "../../../../backend/middleware/security";
 import {
-  getPendingFollowRequests,
   getPostComments,
   getPostInsights,
   getPublicResearcherProfile,
@@ -80,13 +79,16 @@ export async function GET(request: Request): Promise<Response> {
       if (!viewerId) {
         throw new HttpError(401, "Sign in to view follow requests.");
       }
-      return json(
-        { requests: await getPendingFollowRequests(viewerId) },
-        200,
-        true,
-      );
+      return json({ requests: [] });
     }
 
+    if (view === "post") {
+      const postId = params.get("postId") ?? "";
+      if (!/^[A-Za-z0-9_-]{8,80}$/.test(postId)) throw new HttpError(404, "Soul unavailable.");
+      const result = await listWebSouls(viewerId, { postId });
+      if (!result.posts.length) throw new HttpError(404, "Soul unavailable.");
+      return json({ post: result.posts[0] });
+    }
     const rawSort = params.get("sort") ?? "newest";
     const sort =
       rawSort === "following" || rawSort === "evidence" ? rawSort : "newest";

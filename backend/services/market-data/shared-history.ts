@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { database } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import type { Candle, Instrument, Interval, ProviderConfig, ProviderId, SharedHistoryGrant } from "./data-types";
-import { reserveProviderCall } from "./provider-budget";
+import { recordProviderBackoff, reserveProviderCall } from "./provider-budget";
 import { indianDailyPrices, type IndianDailyPrice, providerCandles, providerIntradayCandles, ProviderFailure, requiresCreditWindow, rightsActive, secretFrom, verifiedCreditWindow } from "./providers";
 import { getExchangeSessionWindowMinutes, getIstDateAndMinutes } from "./exchange-calendar";
 import { intradayBarCloseMs } from "./candle-sessions";
@@ -232,14 +232,16 @@ function resolveSharedInstrument(config: Grant, id: string, now: number) {
 }
 
 type DailySummary = {
-  instrument_id: string; received_at: number; last_event: string; last_close: number;
+  instrument_id: string; received_at: number; expires_at: number; last_event: string; last_close: number;
   prior_close: number | null; prior_event: string | null; last_volume: number | null;
+  period_day?: string | null; period_close?: number | null; period_anchor?: string;
 };
-export async function readSharedDailyQuotes(ids: readonly string[], grants: readonly Grant[], now = Date.now()) {
+export async function readSharedDailyQuotes(ids: readonly string[], grants: readonly Grant[], now = Date.now(),
+  period: "1D" | "1W" | "1M" | "YTD" = "1D") {
   const result = new Map<string, {
     id: string; value: number; priorClose: number | null; pctChange: number | null; change: number | null;
-    latestDate: string; referenceDate: string | null; timestamp: null; receivedAt: string;
-    quality: "PUBLISHED_EOD" | "STALE"; unit: string; provider: string; volume: number | null;
+    latestDate: string; referenceDate: string | null; timestamp: null; receivedAt: string; expiresAt: number;
+    quality: "PUBLISHED_EOD" | "STALE"; unit: string; provider: string; providerId: ProviderId; volume: number | null;
     attribution: { label: string; url: string }; instrument: Instrument;
   }>();
   for (const config of grants) {
@@ -249,16 +251,27 @@ export async function readSharedDailyQuotes(ids: readonly string[], grants: read
       return instrument && !result.has(id) ? [[id, instrument] as const] : [];
     }));
     if (!mappings.size) continue;
-    const rows = await database().prepare(
-      `WITH wanted(id) AS (SELECT value FROM json_each(?))
-        SELECT s.instrument_id,s.received_at,s.last_event,s.last_close,s.prior_close,s.prior_event,s.last_volume
+    const history = period === "1D" ? null : period === "1W" ? "-7 days" : period === "1M" ? "-31 days" : "start of year";
+    const snapshots = `WITH wanted(id) AS (SELECT value FROM json_each(?)), latest AS (
+        SELECT s.instrument_id,s.received_at,s.expires_at,s.last_event,s.last_close,s.prior_close,s.prior_event,s.last_volume
+          ${history ? ", s.bars" : ""}
         FROM wanted w JOIN x8_shared_history_snapshot s ON s.rowid = (
           SELECT t.rowid FROM x8_shared_history_snapshot t
           WHERE t.provider=? AND t.config_version=? AND t.instrument_id=w.id AND t.interval='1d'
           AND t.expires_at>? AND t.received_at<=? ORDER BY t.received_at DESC LIMIT 1
-        ) WHERE EXISTS(SELECT 1 FROM x2_providers p WHERE p.provider=s.provider AND p.version=s.config_version)`,
-    ).bind(JSON.stringify([...new Set([...mappings.values()].map(({ id }) => id))]),
-      config.provider, config.version, now, now).all<DailySummary>();
+        ) WHERE EXISTS(SELECT 1 FROM x2_providers p WHERE p.provider=s.provider AND p.version=s.config_version)
+      )`;
+    const params = [JSON.stringify([...new Set([...mappings.values()].map(({ id }) => id))]), config.provider, config.version, now, now];
+    const rows = await (history ? database().prepare(snapshots + `, anchored AS (
+        SELECT latest.*, date(last_event,?,?) period_anchor FROM latest
+      ), bases AS (
+        SELECT anchored.*, (SELECT value FROM json_each(anchored.bars) j
+          WHERE json_extract(value,'$.date')<=period_anchor AND json_extract(value,'$.date')>=date(period_anchor,'-10 days')
+          ORDER BY CAST(j.key AS INTEGER) DESC LIMIT 1) base FROM anchored
+      ) SELECT instrument_id,received_at,expires_at,last_event,last_close,prior_close,prior_event,last_volume,period_anchor,
+        json_extract(base,'$.date') period_day,json_extract(base,'$.close') period_close FROM bases`)
+        .bind(...params, history, period === "YTD" ? "-1 day" : "+0 days")
+      : database().prepare(snapshots + " SELECT * FROM latest").bind(...params)).all<DailySummary>();
     const byId = new Map(rows.results.map((row) => [row.instrument_id, row]));
     for (const [id, instrument] of mappings) {
       const row = byId.get(instrument.id);
@@ -271,14 +284,16 @@ export async function readSharedDailyQuotes(ids: readonly string[], grants: read
         if (sessionClose(instrument, candidate) !== null) { previousDay = candidate; break; }
       }
       // Some venues publish on a different UTC date. When the expected reference is unknown, omit the change.
-      const comparable = row.prior_event === previousDay && row.prior_close !== null && row.prior_close > 0;
-      const priorClose = comparable ? row.prior_close : null;
+      const previous = history ? row.period_day : row.prior_event === previousDay ? row.prior_event : null;
+      const price = history ? row.period_close : row.prior_close;
+      const priorClose = previous && typeof price === "number" && price > 0 ? price : null;
       result.set(id, {
         id, value: row.last_close, priorClose, pctChange: priorClose === null ? null : (row.last_close / priorClose - 1) * 100,
         change: priorClose === null ? null : row.last_close - priorClose, latestDate: row.last_event,
-        referenceDate: comparable ? row.prior_event : null, timestamp: null,
-        receivedAt: new Date(row.received_at).toISOString(), quality: current === "STALE" ? "STALE" : "PUBLISHED_EOD",
-        unit: instrument.unit, volume: row.last_volume, provider: SHARED_HISTORY_LABEL, instrument,
+        referenceDate: priorClose === null ? null : previous ?? null, timestamp: null,
+        receivedAt: new Date(row.received_at).toISOString(), expiresAt: row.expires_at,
+        quality: current === "STALE" ? "STALE" : "PUBLISHED_EOD",
+        unit: instrument.unit, volume: row.last_volume, provider: SHARED_HISTORY_LABEL, providerId: config.provider, instrument,
         attribution: { label: config.sharedHistory.attribution, url: config.sharedHistory.attributionUrl },
       });
     }
@@ -376,6 +391,7 @@ async function refresh(task: Task, config: Grant, fetchHistory: typeof providerH
       interval: task.interval, bars: bars.length, rejected: (prices ?? source).length - bars.length, elapsedMs: now - started });
   } catch (error) {
     const now = Date.now();
+    await recordProviderBackoff(config, error, now);
     const kind = error instanceof ProviderFailure ? error.code
       : error instanceof HttpError && error.status === 429 ? "LOCAL_RATE_BUDGET" : "PROVIDER_DOWN";
     const transient = kind === "PROVIDER_DOWN";
@@ -400,23 +416,30 @@ async function refresh(task: Task, config: Grant, fetchHistory: typeof providerH
 
 export async function hasReadySharedHistory(
   grants: readonly Grant[], interval: Interval, instrumentIds?: readonly string[],
+  mode: "some" | "all" = "some",
 ) {
   const resolution = nativeInterval(interval);
   const now = Date.now();
   for (const grant of grants) {
     if (!grant.sharedHistory.intervals.includes(resolution)) continue;
     const needsCompletedSession = grant.provider === "INDIANAPI" || grant.provider === "BHARATSTOCK";
+    if (!grant.instruments.length) continue;
     const earliest = needsCompletedSession
       ? expectedDailyDate(grant.instruments[0], now, grant.sharedHistory.lagMinutes) : null;
     if (needsCompletedSession && (!earliest || interval === "1h" || interval === "30m")) continue;
     const ready = await database().prepare(
-      `SELECT 1 AS ready FROM x8_shared_history_snapshot WHERE provider=? AND config_version=? AND interval=?
+      `SELECT ${mode === "all" ? "count(DISTINCT instrument_id)" : "1"} AS ready
+        FROM x8_shared_history_snapshot WHERE provider=? AND config_version=? AND interval=?
         AND expires_at>? AND received_at<=?
         AND (? IS NULL OR last_event >= ?)
+        AND (?=0 OR julianday(last_event)-julianday(first_event)>=?)
+        AND EXISTS(SELECT 1 FROM x2_providers p WHERE p.provider=? AND p.version=?)
         AND (? IS NULL OR instrument_id IN (SELECT value FROM json_each(?))) LIMIT 1`,
-    ).bind(grant.provider, grant.version, resolution, now, now, earliest, earliest, instrumentIds ? "filtered" : null,
+    ).bind(grant.provider, grant.version, resolution, now, now, earliest, earliest,
+      interval === "1wk" || interval === "1mo" ? 1 : 0, interval === "1mo" ? 62 : 14, grant.provider, grant.version,
+      instrumentIds ? "filtered" : null,
       JSON.stringify(instrumentIds ?? [])).first<number>("ready");
-    if (ready) return true;
+    if (mode === "all" ? !!instrumentIds?.length && ready === new Set(instrumentIds).size : !!ready) return true;
   }
   return false;
 }

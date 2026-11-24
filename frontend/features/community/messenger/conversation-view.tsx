@@ -17,6 +17,7 @@ type Props = {
   hasActiveThread?: boolean;
   older: ChatMessage[];
   olderError?: string;
+  initialMessageId?: string;
   loadingThread: boolean;
   busy: boolean;
   draft: string;
@@ -49,6 +50,7 @@ export default function ConversationView({
   hasActiveThread = false,
   older,
   olderError = "",
+  initialMessageId = "",
   loadingThread,
   busy,
   draft,
@@ -111,11 +113,21 @@ export default function ConversationView({
   }, [thread?.id]);
 
   const lastMessageId = messages.at(-1)?.id ?? "";
+  const resolvedMessage = useRef("");
 
   // Preserve scroll anchor on "Earlier messages", or smooth-scroll to latest when opening thread / at bottom
   useLayoutEffect(() => {
     const log = logRef.current;
     if (!log || !thread) return;
+    const anchor = initialMessageId && resolvedMessage.current !== initialMessageId
+      ? document.getElementById("ss-message-" + initialMessageId) : null;
+    if (anchor && log.contains(anchor)) {
+      resolvedMessage.current = initialMessageId;
+      lastThreadIdRef.current = thread.id;
+      stickBottomRef.current = false;
+      anchor.scrollIntoView({ block: "center" });
+      return;
+    }
     if (prevScrollHeightRef.current !== null) {
       const delta = log.scrollHeight - prevScrollHeightRef.current;
       log.scrollTop = Math.max(0, delta);
@@ -128,7 +140,7 @@ export default function ConversationView({
       log.scrollTop = log.scrollHeight;
       stickBottomRef.current = true;
     }
-  }, [thread, messages.length, lastMessageId]);
+  }, [thread, messages.length, lastMessageId, initialMessageId]);
 
   // Auto-mark read ONLY after server confirms, with visibility recovery and bounded backoff retry
   useEffect(() => {
@@ -356,6 +368,7 @@ export default function ConversationView({
               )}
               <MessageBubble
                 message={m}
+                highlighted={m.id === initialMessageId}
                 groupedWithPrev={within3Min}
                 menuOpen={openMenuId === m.id}
                 onOpenMenu={setOpenMenuId}
