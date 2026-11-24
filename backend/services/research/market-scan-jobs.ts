@@ -6,10 +6,10 @@ import { compileFormula, computeScanMetrics, evaluateScan, requiredScanBars,
   type ScanReport, type ScanResult } from "../../engines/scan";
 import { matchDrawnPattern, validateStrokePoints, type DrawPoint, type DrawScanReport } from "../../engines/pattern-draw";
 import { HttpError } from "../../middleware/security";
-import { canScanExchange, isDataOwner, researchUniverse, scanScopeInstruments, type ResearchUniverse } from "../market-data/data-service";
+import { canScanExchange, researchUniverse, scanScopeInstruments, type ResearchUniverse } from "../market-data/data-service";
 import { EXPLICIT_SCOPE_VERSION, niftyUniverse } from "../market-data/nifty-500";
 import { isScanUniversePreset, scanUniverseForPreset, validateResearch, validateScanRequestScope, type ResearchDefinition } from "./research";
-import { reserveScanSlot, releaseScanReservation, type ScanQuotaTier } from "./scan-quota";
+import { istCalendarDay, reserveScanSlot, releaseScanReservation, type ScanQuotaTier } from "./scan-quota";
 
 const BATCH_SIZE = 5;
 const JOB_MS = 4 * 60 * 60_000;
@@ -126,7 +126,7 @@ async function resolveScope(subject: string, definition: ResearchDefinition) {
   } else if (preset === "INDIVIDUAL") {
     members = definition.instrumentIds;
   } else {
-    members = await scanScopeInstruments(subject, preset, definition.interval);
+    members = await scanScopeInstruments(preset, definition.interval);
   }
   members = [...new Set(members)].sort();
   if (!members.length) throw new HttpError(422, "No eligible instruments are mapped to this scope. No scan was charged.");
@@ -155,7 +155,7 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
   const refInterval = input.definition.interval !== "30m" && input.definition.interval !== "1h";
   const allowsReference = refInterval && scope.members.some((id) => id.startsWith("ECB:"));
   const hasExchange = scope.members.some((id) => !id.startsWith("ECB:"));
-  if (!allowsReference && !(hasExchange && await canScanExchange(subject, input.definition.interval, scope.members, scope.defaultMarket ? "INDIANAPI" : undefined)))
+  if (!allowsReference && !(hasExchange && await canScanExchange(input.definition.interval, scope.members, scope.defaultMarket ? "INDIANAPI" : undefined)))
     throw new HttpError(503, "Market history is unavailable for this account and timeframe. No scan was charged.");
   const cutoff = new Date().toISOString();
   const deadline = new Date(Date.parse(cutoff) + JOB_MS).toISOString();
@@ -242,15 +242,16 @@ export async function cancelMarketScan(subject: string, id: unknown) {
 
 export function evaluateMarketBatch(ids: string[], input: Input, data: ResearchUniverse, cutoff: string): Batch {
   const members = new Set(ids);
+  const cut = Date.parse(cutoff);
   const datasets = data.datasets.filter((d) => members.has(d.instrumentId)).map((d) => ({
-    ...d, observations: d.observations.filter((bar) => Date.parse(bar.eventAt) <= Date.parse(cutoff)),
+    ...d, observations: d.observations.filter((bar) => Date.parse(bar.eventAt) <= cut && Date.parse(bar.knownAt) <= cut),
   }));
   const bySource = new Map(data.excluded.map((item) => [item.id, item]));
   const rows = new Map<string, Outcome>();
   let drawReport: DrawScanReport | undefined;
   if (input.draw) {
     const { points, windowBars, minPatternFit } = input.draw;
-    drawReport = matchDrawnPattern(points, datasets, { windowBars, minPatternFit, asOf: data.asOf });
+    drawReport = matchDrawnPattern(points, datasets, { windowBars, minPatternFit, asOf: cutoff });
     const matches = new Map(drawReport.matches.map((row) => [row.instrumentId, row]));
     const excluded = new Map(drawReport.excluded.map((row) => [row.instrumentId, row.reason]));
     for (const dataset of datasets) {
@@ -265,7 +266,7 @@ export function evaluateMarketBatch(ids: string[], input: Input, data: ResearchU
       });
     }
   } else {
-    const result = evaluateScan(compileFormula(input.definition.formula), datasets, data.asOf);
+    const result = evaluateScan(compileFormula(input.definition.formula), datasets, cutoff);
     for (const row of result.results) rows.set(row.instrumentId, row);
   }
   return {
@@ -321,7 +322,7 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
     universeVersion: job.universe_version, runState: state, completedAt: now, results: { ...results, results: archivalScanRows(results.results) }, coverage,
     sourceSnapshot: job.cutoff, source: "Market history",
     sourceLineage: batches.flatMap((batch) => batch.lineage),
-    knownAtPolicy: "Completed candles observed by retrieval, with market events bounded by the acceptance cutoff.",
+    knownAtPolicy: "Completed observations whose event and availability times are at or before scan acceptance.",
     ...(input.draw && { patternRecipe: input.draw }),
     ...(drawReport && { drawReport }),
     requestDigest: job.request_digest, billing: { charged: chargeQuota ? 1 : 0 },
@@ -334,9 +335,9 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
     ).bind(id, job.subject, job.request_key, definition.mode, definition.name, JSON.stringify(payload),
       await digest(payload), now, id, job.id, job.lease),
     db.prepare(
-      `UPDATE x51_scan_reservations SET state=?,completed_at=?,scan_id=?
+      `UPDATE x51_scan_reservations SET state=?,completed_at=?,scan_id=?,ist_day=COALESCE(?,ist_day)
        WHERE id=? AND EXISTS (SELECT 1 FROM x78_market_scan_jobs WHERE id=? AND lease=? AND state='RUNNING')`,
-    ).bind(chargeQuota ? "COMPLETED" : "FAILED", chargeQuota ? now : null, chargeQuota ? id : null, job.reservation_id, job.id, job.lease),
+    ).bind(chargeQuota ? "COMPLETED" : "FAILED", chargeQuota ? now : null, chargeQuota ? id : null, chargeQuota ? istCalendarDay(Date.parse(now)) : null, job.reservation_id, job.id, job.lease),
     db.prepare(
       `UPDATE x78_market_scan_jobs SET state=?,scan_id=?,cursor=?,evaluated=?,coverage=?,lease=NULL,lease_until=NULL,input='{}'
        WHERE id=? AND lease=? AND state='RUNNING'`,
@@ -349,6 +350,21 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
   console.info({ event: "market_scan_finished", jobId: job.id, state, total: ids.length,
     evaluated: results.eligible, matched: results.matches, unavailable: results.unknown,
     elapsedMs: Date.parse(now) - Date.parse(job.cutoff), universeVersion: job.universe_version });
+}
+
+async function failUnusableJob(job: Job) {
+  const db = database();
+  const coverage = { ...startingCoverage(job.selected_count), deniedOrFailed: job.selected_count, deferred: 0 };
+  await db.batch([
+    db.prepare(`UPDATE x51_scan_reservations SET state='FAILED',completed_at=NULL,scan_id=NULL
+      WHERE id=? AND state IN ('RESERVED','RUNNING') AND EXISTS
+        (SELECT 1 FROM x78_market_scan_jobs WHERE id=? AND lease=? AND state='RUNNING')`)
+      .bind(job.reservation_id, job.id, job.lease),
+    db.prepare(`UPDATE x78_market_scan_jobs SET state='FAILED',evaluated=0,coverage=?,lease=NULL,lease_until=NULL,input='{}'
+      WHERE id=? AND lease=? AND state='RUNNING'`).bind(JSON.stringify(coverage), job.id, job.lease),
+    db.prepare(`DELETE FROM x78_market_scan_batches WHERE job_id=? AND EXISTS
+      (SELECT 1 FROM x78_market_scan_jobs WHERE id=? AND state='FAILED')`).bind(job.id, job.id),
+  ]);
 }
 
 /** Take one global worker lease so market provider traffic is bounded across accounts. */
@@ -364,16 +380,19 @@ export async function processMarketScanBatch(loadHistory = researchUniverse, bat
        RETURNING *`,
   ).bind(lease, new Date(Date.now() + WORKER_LEASE_MS).toISOString(), now, now).first<Job>();
   if (!job) return false;
-  const input = JSON.parse(job.input) as Input;
   try {
+    const input = JSON.parse(job.input) as Input;
     const ids: string[] | undefined = job.scope_members ? JSON.parse(job.scope_members)
       : (await niftyUniverse(job.universe_version))?.constituents.map((row) => row.id);
-    if (!ids || ids.length !== job.selected_count) throw new Error("Pinned universe unavailable");
+    if (!Array.isArray(ids) || ids.length !== job.selected_count || !input.definition) {
+      await failUnusableJob(job);
+      return true;
+    }
     if (job.cursor >= ids.length || job.deadline <= now) {
       await finalize(job, input, ids, now);
       return true;
     }
-    const budget = isDataOwner(job.subject) ? BATCH_SIZE : Math.max(BATCH_SIZE, Math.min(15, batchSize));
+    const budget = Math.max(BATCH_SIZE, Math.min(15, batchSize));
     const batchIds = ids.slice(job.cursor, job.cursor + budget);
     const minimumBars = input.draw?.windowBars ?? requiredScanBars(compileFormula(input.definition.formula).ast);
     let batch: Batch;
@@ -421,9 +440,12 @@ export async function processMarketScanBatch(loadHistory = researchUniverse, bat
   } catch (err) {
     console.warn({ event: "market_scan_batch_retry", jobId: job.id, cursor: job.cursor,
       attempt: job.attempts + 1, error: err instanceof Error ? err.name : "UnknownError" });
-    await db.prepare(
-      "UPDATE x78_market_scan_jobs SET attempts=attempts+1,lease=NULL WHERE id=? AND lease=?",
-    ).bind(job.id, lease).run();
-    return false;
+    if (err instanceof SyntaxError || job.attempts >= MAX_ATTEMPTS - 1 || job.deadline <= now) {
+      await failUnusableJob(job);
+      return true;
+    }
+    await db.prepare(`UPDATE x78_market_scan_jobs SET attempts=attempts+1,lease=NULL,last_batch_at=?
+      WHERE id=? AND lease=?`).bind(now, job.id, lease).run();
+    return true;
   }
 }

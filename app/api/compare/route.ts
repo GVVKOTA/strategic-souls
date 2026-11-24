@@ -17,7 +17,7 @@ const periods: Record<string, number> = { "1W": 7, "1M": 31, "3M": 93, "6M": 186
 async function catalog(subject: string) {
   const [registry, universe, watchlists] = await Promise.all([
     instrumentRegistry(subject || undefined),
-    niftyUniverse(),
+    subject ? niftyUniverse() : null,
     subject ? database().prepare("SELECT payload FROM x1_records WHERE subject=? AND kind='watchlist' AND archived=0")
       .bind(subject).all<{ payload: string }>() : null,
   ]);

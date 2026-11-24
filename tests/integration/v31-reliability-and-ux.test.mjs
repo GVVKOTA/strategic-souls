@@ -84,20 +84,14 @@ async function loadTs(relOrAbsPath) {
 }
 
 const {
-  InstrumentMaster,
-  VERIFIED_SEED_INSTRUMENTS,
-  normalizeScripMasterRow,
-} = await loadTs("backend/services/market-data/angelone/instrument-master.ts");
-const {
   getIndianExchangeSession,
   getNymexGlobexSession,
-} = await loadTs("backend/services/market-data/angelone/calendar.ts");
+} = await loadTs("backend/services/market-data/exchange-calendar.ts");
 const {
-  completedBrokerObservations,
   completedCommercialIntradayObservations,
   hourlyBarCloseMs,
   thirtyMinBarCloseMs,
-} = await loadTs("backend/services/market-data/angelone/scan-history.ts");
+} = await loadTs("backend/services/market-data/candle-sessions.ts");
 const {
   CLASSIC_DAILY_LIMIT,
   ADVANCED_ROLLING_LIMIT,
@@ -176,45 +170,6 @@ function createTestQuotaDb() {
 }
 
 // ── 1. R03 / R04 / R05: Canonical 8-card tokens & true exchange sessions ─────
-
-test("V3.1 R03/R04: NSE:NIFTYMIDCAP100 (99926011) and MCX Gold/Silver exact contracts resolve without mini/guinea mismatch", () => {
-  const master = new InstrumentMaster();
-  const midcap = master.resolve("NSE:NIFTYMIDCAP100");
-  assert.ok(midcap, "NSE:NIFTYMIDCAP100 must resolve from verified seed catalog");
-  assert.equal(midcap.token, "99926011");
-  assert.equal(midcap.exchange, "NSE");
-  assert.equal(midcap.segment, "INDEX");
-
-  // Spaced alias resolves identically
-  const midcapSpaced = master.resolve("NSE:NIFTY MIDCAP 100");
-  assert.equal(midcapSpaced?.id, "NSE:NIFTYMIDCAP100");
-  assert.equal(midcapSpaced?.token, "99926011");
-
-  // Scrip-master normalization strips spaces in NSE AMXIDX IDs
-  const norm = normalizeScripMasterRow({
-    token: "99926011",
-    symbol: "NIFTY MIDCAP 100",
-    name: "NIFTY MIDCAP 100",
-    expiry: "",
-    strike: "-1.000000",
-    lotsize: "1",
-    instrumenttype: "AMXIDX",
-    exch_seg: "NSE",
-    tick_size: "0.05",
-  });
-  assert.equal(norm?.id, "NSE:NIFTYMIDCAP100");
-
-  // Verified seed catalog includes both MCX Gold and MCX Silver active contracts
-  const goldSeeds = VERIFIED_SEED_INSTRUMENTS.filter(
-    (i) => i.exchange === "MCX" && i.symbol === "GOLD",
-  );
-  const silverSeeds = VERIFIED_SEED_INSTRUMENTS.filter(
-    (i) => i.exchange === "MCX" && i.symbol === "SILVER",
-  );
-  assert.ok(goldSeeds.length >= 2, "Expected active + next MCX GOLD futures seeds");
-  assert.ok(silverSeeds.length >= 2, "Expected active + next MCX SILVER futures seeds");
-  assert.ok(silverSeeds.every((s) => s.symbol === "SILVER" && s.lotSize === 30));
-});
 
 test("V3.1 R05: MCX partial-holiday schedule and NYMEX Globex CL schedule are timezone- and DST-accurate", () => {
   // 2026-11-24 is Guru Nanak Jayanti: NSE closed all day; MCX closed morning (11:00 IST) and open evening (18:00 IST)
@@ -329,18 +284,6 @@ test("V3.1 R13/R14: 30m and 1h intraday filters enforce exact NSE/MCX session cl
   const obs30m = completedCommercialIntradayObservations(commercialCandles, "NSE", retrievalIso, "30m");
   assert.equal(obs30m.length, 1);
   assert.equal(obs30m[0].eventAt, "2026-11-23T03:45:00.000Z");
-
-  // Broker series rejects mismatched interval (daily series passed for 30m -> empty)
-  const fakeDailyFor30m = completedBrokerObservations(
-    {
-      instrument: VERIFIED_SEED_INSTRUMENTS[0],
-      interval: "1d",
-      retrievalTimestampUTC: retrievalIso,
-      candles: [],
-    },
-    "30m",
-  );
-  assert.equal(fakeDailyFor30m.length, 0);
 
   // providerIntradayCandles requests TrueData `30min` cleanly and rejects EODHD `30m` honestly
   let capturedUrl = "";
@@ -610,30 +553,6 @@ test("V3.1 UI & Release Contracts: zero 'Last available', clean chart-first Asse
 });
 
 // ── 7. Soul Scan Liquid Universe, Deterministic Metrics & Rich Output Contracts ──
-
-test("Soul Scan liquid seed catalog covers 30 NSE leaders + 5 core MCX commodities with clean canonical IDs", () => {
-  const nseEq = VERIFIED_SEED_INSTRUMENTS.filter(
-    (i) => i.exchange === "NSE" && i.segment === "EQUITY",
-  );
-  assert.ok(nseEq.length >= 30, `Expected >=30 verified NSE equity seeds, got ${nseEq.length}`);
-  const ids = VERIFIED_SEED_INSTRUMENTS.map((i) => i.id);
-  assert.equal(new Set(ids).size, ids.length, "All seed IDs must be unique");
-  for (const id of ids) {
-    assert.match(
-      id,
-      /^[A-Za-z0-9:._-]{3,50}$/,
-      `Seed ID ${id} must stay compatible with watchlist & chart layout regexes`,
-    );
-  }
-  const mcxRoots = new Set(
-    VERIFIED_SEED_INSTRUMENTS.filter(
-      (i) => i.exchange === "MCX" && i.segment === "FUTURE",
-    ).map((i) => i.symbol),
-  );
-  for (const root of ["GOLD", "SILVER", "CRUDEOIL", "NATURALGAS", "COPPER"]) {
-    assert.ok(mcxRoots.has(root), `Core MCX commodity ${root} missing from verified seeds`);
-  }
-});
 
 test("evaluateScan computes independently verified deterministic metrics, crossover proof, and handles index null volume", () => {
   const closes = Array.from({ length: 65 }, (_, i) =>

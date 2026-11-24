@@ -592,6 +592,17 @@ export const X2_INSTRUMENTS: readonly CanonicalRegistryEntry[] = [
     mappingStatus: "IDENTITY_ONLY",
   },
   {
+    id: "FX:USDINR",
+    label: "USD/INR",
+    name: "US Dollar / Indian Rupee",
+    market: "FX",
+    assetClass: "FX",
+    currency: "INR",
+    aliases: ["USD INR", "DOLLAR RUPEE"],
+    sourceUrl: "",
+    mappingStatus: "IDENTITY_ONLY",
+  },
+  {
     id: "ECB:USDINR",
     label: "USD/INR",
     name: "USD / INR (ECB Daily Reference)",

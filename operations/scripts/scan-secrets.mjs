@@ -19,6 +19,8 @@ const RULES = [
   ["PRIVATE_KEY_BLOCK", /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/],
   ["GOOGLE_API_KEY", /\bAIza[0-9A-Za-z_-]{30,}\b/],
   ["OPENAI_API_KEY", /\bsk-(?:proj-|svcacct-)[A-Za-z0-9_-]{24,}\b/],
+  ["INDIAN_API_KEY", /\bsk-live-[A-Za-z0-9_-]{24,}\b/],
+  ["BHARATSTOCK_API_KEY", /\bbsk_live_[A-Za-z0-9_-]{24,}\b/],
   ["GITHUB_PAT", /\b(?:ghp_|github_pat_)[A-Za-z0-9_]{30,}\b/],
   ["SUPABASE_SECRET", /\bsb_secret_[A-Za-z0-9_-]{20,}\b/],
   ["JWT_LITERAL", /\beyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/],
@@ -39,7 +41,7 @@ function loadLocalSecretValuesForLeakCheck() {
     const abs = resolve(root, rel);
     if (!existsSync(abs)) continue;
     for (const line of readFileSync(abs, "utf8").split(/\r?\n/)) {
-      const m = /^\s*(ANGELONE_[A-Z0-9_]+|MARKET_ADAPTER_AUTH_TOKEN|X2_EODHD_API_TOKEN|X2_TRUEDATA_BEARER_TOKEN)\s*=\s*(.+)\s*$/.exec(line);
+      const m = /^\s*(ANGELONE_[A-Z0-9_]+|MARKET_ADAPTER_AUTH_TOKEN|X2_EODHD_API_TOKEN|X2_TRUEDATA_BEARER_TOKEN|BHARATSTOCK_API_KEY|INDIA_API_KEY)\s*=\s*(.+)\s*$/.exec(line);
       if (!m) continue;
       const val = m[2].trim().replace(/^["']|["']$/g, "");
       if (val.length >= 6 && !/^(REPLACE|YOUR_|EXAMPLE|DEMO)/i.test(val)) {

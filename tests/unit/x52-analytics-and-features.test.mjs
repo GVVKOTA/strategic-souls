@@ -331,5 +331,5 @@ test("[04][07] UI source contracts: zero Impact select/badges in Economic Calend
   assert.doesNotMatch(introSrc, /\bX2\b/);
 
   const nineCardSrc = readFileSync("backend/services/market-data/nine-card-markets.ts", "utf8");
-  assert.match(nineCardSrc, /assetClass === "INDEX"\)\s*return "pts"/);
+  assert.match(nineCardSrc, /quoteUnit:.+"index points"/);
 });

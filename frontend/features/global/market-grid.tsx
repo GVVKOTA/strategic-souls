@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import {
   DEFAULT_EIGHT_CARD_IDS,
+  DASHBOARD_LABELS,
   reconcileGlobalMarketIds,
   type MarketLayoutRecord,
   type MarketOverviewCard,
@@ -495,7 +496,7 @@ export default function MarketOverviewGrid({
       >
         {(cards.length === DEFAULT_EIGHT_CARD_IDS.length
           ? cards
-          : Array.from({ length: DEFAULT_EIGHT_CARD_IDS.length }, () => null)
+          : DEFAULT_EIGHT_CARD_IDS.map(() => null)
         ).map((card, idx) => {
           if (!card) {
             return (
@@ -503,11 +504,11 @@ export default function MarketOverviewGrid({
                 key={`skeleton-${idx}`}
                 className="x51-mcard ss-v3-mcard"
                 role="listitem"
-                aria-busy="true"
+                aria-busy={loading}
               >
-                <span className="x51-mcard-name">Loading…</span>
+                <span className="x51-mcard-name">{DASHBOARD_LABELS[DEFAULT_EIGHT_CARD_IDS[idx]] ?? registryInstrument(DEFAULT_EIGHT_CARD_IDS[idx])?.label}</span>
                 <span className="x51-mcard-price">—</span>
-                <span className="ss-v31-mcard-time">Checking…</span>
+                <span className="ss-v31-mcard-time">{loading ? "Checking…" : "Unavailable"}</span>
               </div>
             );
           }

@@ -363,7 +363,7 @@ test("8-Tile Global Market Grid persists per user, enforces 409 optimistic concu
   const badDup = await overviewRoute.POST(
     makeReq("/api/markets/overview", "POST", {
       expectedVersion: 0,
-      ids: ["NSE:NIFTY", "NSE:NIFTY", "NSE:BANKNIFTY", "NSE:NIFTYMIDCAP100", "MCX:GOLD", "MCX:SILVER", "GLOBAL:CL", "ECB:USDINR"],
+      ids: ["NSE:NIFTY", "NSE:NIFTY", "NSE:BANKNIFTY", "NSE:NIFTYMIDCAP100", "MCX:GOLD", "MCX:SILVER", "MCX:CRUDEOIL", "FX:USDINR"],
     }),
   );
   assert.equal(badDup.status, 400);
@@ -371,15 +371,15 @@ test("8-Tile Global Market Grid persists per user, enforces 409 optimistic concu
   const badRetired = await overviewRoute.POST(
     makeReq("/api/markets/overview", "POST", {
       expectedVersion: 0,
-      ids: ["GLOBAL:SPX", "BSE:SENSEX", "NSE:BANKNIFTY", "NSE:NIFTYMIDCAP100", "MCX:GOLD", "MCX:SILVER", "GLOBAL:CL", "ECB:USDINR"],
+      ids: ["GLOBAL:SPX", "BSE:SENSEX", "NSE:BANKNIFTY", "NSE:NIFTYMIDCAP100", "MCX:GOLD", "MCX:SILVER", "MCX:CRUDEOIL", "FX:USDINR"],
     }),
   );
   assert.equal(badRetired.status, 400);
 
   // Valid reordered 8-tile save for User A
   const customIds = [
-    "ECB:USDINR",
-    "GLOBAL:CL",
+    "FX:USDINR",
+    "MCX:CRUDEOIL",
     "MCX:SILVER",
     "MCX:GOLD",
     "NSE:NIFTYMIDCAP100",
@@ -746,11 +746,12 @@ test("Market jobs pin all 500 IDs across modes, reconcile results and protect ow
     name: "Fixture equity " + i,
     industry: "Fixture industry",
   }));
-  const raw = { constituents, effectiveDate: "2026-11-21", provenance: "Isolated test constituent snapshot", rightsConfirmed: true };
+  const raw = { constituents, effectiveDate: "2026-11-21", provenance: "Isolated test constituent snapshot", rightsConfirmed: true, rightsExpiresAt: "2027-11-21T00:00:00Z" };
   const saved = await importNiftyUniverse(raw);
   assert.equal(saved.count, 500);
   await assert.rejects(() => importNiftyUniverse({ ...raw, constituents: [...constituents.slice(1), constituents[1]] }), /Duplicate/);
   assert.equal((await niftyUniverse()).version, saved.version);
+  await assert.rejects(() => importNiftyUniverse({ ...raw, rightsExpiresAt: "2025-11-21T00:00:00Z" }), /expiry/);
 
   currentUser = { userId: "user-b", displayName: "Bob Macro", email: "b@test.local", authProvider: "email" };
   nowMs += 61 * 60 * 1000;

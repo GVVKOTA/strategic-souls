@@ -24,9 +24,6 @@
     "local:setup": "node operations/scripts/local-preview.mjs setup",
     "local:serve": "node operations/scripts/local-preview.mjs serve",
     "dev:hmr": "node operations/scripts/run-framework.mjs dev",
-    "broker:setup": "node operations/scripts/setup-broker-secrets.mjs",
-    "broker:adapter": "node --experimental-strip-types operations/scripts/start-market-adapter.mjs",
-    "broker:verify": "node --experimental-strip-types operations/scripts/verify-angelone-live.mjs",
     "scan:secrets": "node operations/scripts/scan-secrets.mjs"
   },
   "dependencies": {

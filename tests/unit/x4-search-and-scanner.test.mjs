@@ -13,12 +13,7 @@ import assert from "node:assert/strict";
 const {
   X2_INSTRUMENTS,
   searchCanonicalInstruments,
-  scoreCanonicalInstrument,
 } = await import("../../backend/services/market-data/instrument-registry.ts");
-const {
-  InstrumentMaster,
-  VERIFIED_SEED_INSTRUMENTS,
-} = await import("../../backend/services/market-data/angelone/instrument-master.ts");
 const {
   compileFormula,
   evaluateScan,
@@ -72,41 +67,6 @@ test("X4 Search: HDFC, HDFC Bank, HDFCBANK, NSE:HDFCBANK, SBI, RELIANCE, NIFTY, 
     assert.equal(matches[0].id, expectedId, `Alias "${alias}" must rank ${expectedId} #1`);
   }
 
-  // InstrumentMaster resolves both seeds and non-seed ingested ScripMaster rows
-  const master = new InstrumentMaster(VERIFIED_SEED_INSTRUMENTS);
-  assert.equal(master.search({ q: "HDFC", limit: 5 })[0]?.id, "NSE:HDFCBANK");
-  assert.equal(master.resolve("HDFC")?.id, "NSE:HDFCBANK");
-  assert.equal(master.resolve("NSE:HDFCBANK")?.token, "1333");
-  assert.equal(master.resolve("BSE:HDFCBANK")?.token, "500180");
-
-  // Ingest non-seed ScripMaster rows and verify discovery is not constrained to seeds
-  const rawRows = [
-    {
-      token: "5097",
-      symbol: "ZOMATO-EQ",
-      name: "ZOMATO",
-      expiry: "",
-      lotsize: "1",
-      instrumenttype: "",
-      exch_seg: "NSE",
-      tick_size: "5.000000",
-    },
-    {
-      token: "1964",
-      symbol: "TRENT-EQ",
-      name: "TRENT",
-      expiry: "",
-      lotsize: "1",
-      instrumenttype: "",
-      exch_seg: "NSE",
-      tick_size: "10.000000",
-    },
-  ];
-  master.ingestRawRows(rawRows, Date.parse("2026-11-21T10:00:00Z"));
-  const zomatoMatches = master.search({ q: "ZOMATO", limit: 5 });
-  assert.equal(zomatoMatches[0]?.id, "NSE:ZOMATO");
-  assert.equal(zomatoMatches[0]?.token, "5097");
-  assert.ok(scoreCanonicalInstrument("ZOMATO", zomatoMatches[0]) >= 96);
 });
 
 test("X4 Scanner: evaluates 0, 1, 5, 20, 21, 100, and 1,000 instruments with reconciled accounting and zero silent truncation", () => {

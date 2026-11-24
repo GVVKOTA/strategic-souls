@@ -36,7 +36,7 @@ export type DataPoint = {
   eventTimePrecision: "DATE";
   retrievedAt: string | null;
   state: DataState;
-  frequency: "DAILY_REFERENCE" | "DAILY_YIELD" | "DAILY_OHLC";
+  frequency: "DAILY_REFERENCE" | "DAILY_YIELD" | "DAILY_OHLC" | "DAILY_CLOSE";
   reason: string;
   derivation: string | null;
   change: number | null;

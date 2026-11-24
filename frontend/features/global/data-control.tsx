@@ -6,8 +6,6 @@ import type {
   ProviderHealth,
   ProviderId,
 } from "../../../backend/services/market-data/data-types";
-import type { MarketHealthResponse } from "../../../backend/services/market-data/angelone/types";
-import { fetchMarketHealth, submitManualTotpUnlock } from "./private-market-client";
 type ProviderView = {
   id: ProviderId;
   label: string;
@@ -78,7 +76,7 @@ export default function DataControl({
   notify?: (text: string, error?: boolean) => void;
 }) {
   const [state, setState] = useState<Settings | null>(null),
-    [selected, setSelected] = useState<ProviderId>("TRUEDATA"),
+    [selected, setSelected] = useState<ProviderId>("INDIANAPI"),
     [error, setError] = useState(""),
     [busy, setBusy] = useState("Loading"),
     [mapping, setMapping] = useState(mappingTemplate),
@@ -97,10 +95,8 @@ export default function DataControl({
       verified: false,
     }),
     [datasets, setDatasets] = useState<string[]>(["candles"]),
-    [enabled, setEnabled] = useState(false),
-    [brokerHealth, setBrokerHealth] = useState<MarketHealthResponse | null>(null),
-    [totpCode, setTotpCode] = useState(""),
-    [totpBusy, setTotpBusy] = useState(false);
+    [enabled, setEnabled] = useState(false);
+  const [useNiftyUniverse, setUseNiftyUniverse] = useState(false);
   const [universeFile, setUniverseFile] = useState<File | null>(null);
   const [universeImportBusy, setUniverseImportBusy] = useState(false);
   const [universeStatus, setUniverseStatus] = useState("");
@@ -137,34 +133,6 @@ export default function DataControl({
   const active = useRef(false),
     key = useRef<string | null>(null);
   const current = state?.providers.find((p) => p.id === selected);
-  useEffect(() => {
-    let alive = true;
-    fetchMarketHealth()
-      .then((h) => {
-        if (alive) setBrokerHealth(h);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
-  async function unlockAngelSession(e: React.FormEvent) {
-    e.preventDefault();
-    if (totpBusy) return;
-    setTotpBusy(true);
-    setError("");
-    try {
-      await submitManualTotpUnlock(totpCode.trim());
-      setTotpCode("");
-      setBrokerHealth(await fetchMarketHealth());
-      window.dispatchEvent(new Event("x2-data-updated"));
-      notify?.("Exchange read-only feed session authenticated in memory.");
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setTotpBusy(false);
-    }
-  }
   useEffect(() => {
     let alive = true;
     request<Settings>()
@@ -228,13 +196,14 @@ export default function DataControl({
       if (op === "configure") {
         let instruments;
         try {
-          instruments = JSON.parse(mapping);
+          instruments = selected === "INDIANAPI" && useNiftyUniverse ? [] : JSON.parse(mapping);
         } catch {
           throw new Error("Instrument mappings must be a JSON array.");
         }
         key.current ??= crypto.randomUUID();
         payload = {
           op,
+          useNiftyUniverse: selected === "INDIANAPI" && useNiftyUniverse,
           config: {
             provider: selected,
             version: current?.config?.version ?? 0,
@@ -297,55 +266,6 @@ export default function DataControl({
           {error}
         </p>
       )}
-      {brokerHealth && (
-        <div className="x2-provider-status" aria-label="Configured Exchange Feed Adapter">
-          <strong>
-            Configured Exchange Read-Only Feed ·{" "}
-            {brokerHealth.adapterReachable ? "REACHABLE" : "OFFLINE / UNCONFIGURED"}
-          </strong>
-          <span>Mode: {brokerHealth.mode} ({brokerHealth.accessScope})</span>
-          <span>Session state: {brokerHealth.authState}</span>
-          <span>
-            Active segments:{" "}
-            {brokerHealth.enabledExchanges.length
-              ? brokerHealth.enabledExchanges.join(", ")
-              : "None verified yet"}
-          </span>
-          <span>
-            Public quotes gate:{" "}
-            {brokerHealth.flags.publicExchangeQuotesEnabled
-              ? "ENABLED"
-              : "LOCKED OFF (private owner only)"}
-          </span>
-          <span>
-            ScripMaster indexed: {brokerHealth.scripMasterCount ?? "Not loaded"}
-          </span>
-          <span>
-            Last verified fetch: {brokerHealth.lastSuccessfulFetchAt ?? "None yet"}
-          </span>
-          <p>{brokerHealth.message}</p>
-          {brokerHealth.adapterReachable && (
-            <form className="x31-totp-form" onSubmit={(e) => void unlockAngelSession(e)}>
-              <label>
-                Manual 6-digit TOTP (ephemeral, never stored)
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="\d{6}"
-                  maxLength={6}
-                  autoComplete="one-time-code"
-                  placeholder="6-digit TOTP"
-                  value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                />
-              </label>
-              <button type="submit" disabled={totpBusy || totpCode.length !== 6}>
-                {totpBusy ? "Authenticating…" : "Authenticate read-only session"}
-              </button>
-            </form>
-          )}
-        </div>
-      )}
       {!state ? (
         <p role="status">{busy || "Settings unavailable. Reload to retry."}</p>
       ) : (
@@ -353,7 +273,7 @@ export default function DataControl({
           {state.isOwner && <details className="x2-inline-help">
             <summary>Nifty 500 constituent snapshot</summary>
             <form className="x1-form" onSubmit={(event) => void importUniverse(event)}>
-              <label>Approved snapshot JSON
+              <label>Approved snapshot JSON with the expiry of reuse rights
                 <input type="file" accept=".json,application/json" onChange={(event) => setUniverseFile(event.target.files?.[0] ?? null)} />
               </label>
               <label className="x1-check">
@@ -389,6 +309,12 @@ export default function DataControl({
               ))}
             </select>
           </label>
+          {selected === "INDIANAPI" && <label className="x1-check">
+            <input type="checkbox" checked={useNiftyUniverse} onChange={(event) => {
+              edit(); setUseNiftyUniverse(event.target.checked);
+            }} />
+            Map the current licensed Nifty 500 snapshot
+          </label>}
           <div className="x2-provider-status">
             <strong>{current?.health.state.replaceAll("_", " ")}</strong>
             <span>

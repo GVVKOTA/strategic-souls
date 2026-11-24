@@ -33,13 +33,7 @@ const cloudflareWorkerConfig = {
   compatibility_flags: ["nodejs_compat"],
   observability: { enabled: true },
   triggers: { crons: ["* * * * *", "*/2 * * * *"] },
-  vars: { ENABLE_PRIVATE_BROKER_DATA: "true" },
-  vpc_services: [
-    {
-      binding: "MARKET_DATA_ADAPTER",
-      service_id: "01a2095b-f466-7c90-a813-4fad03735504",
-    },
-  ],
+  vars: { INDIA_API_HOST: "stock.indianapi.in" },
   d1_databases: [
     {
       binding: CLOUDFLARE_D1_BINDING,

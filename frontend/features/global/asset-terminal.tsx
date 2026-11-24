@@ -30,8 +30,6 @@ import { getEconomicCalendarEvents } from "../../../backend/services/market-data
 import { computeEventWindowReturn } from "../../../backend/engines/analytics";
 import { getCompanyEcosystem } from "../../../backend/services/market-data/sectors-and-ecosystem";
 import type { PublishedSoulCard } from "../../../backend/services/community/research-network";
-import type { NormalizedMarketQuote } from "../../../backend/services/market-data/angelone/types";
-import { fetchMarketQuotes } from "./private-market-client";
 import type { EconomicEventChartContext } from "./economic-calendar";
 
 type Props = {
@@ -157,30 +155,8 @@ function formatShortDate(raw: string, intraday: boolean): string {
 
 function formatStatusSummary(
   asset: AssetResearch | null,
-  ownerQuote: NormalizedMarketQuote | null,
   latestDate: string | null,
 ): string {
-  if (ownerQuote) {
-    const timePart = ownerQuote.exchangeTimestampIST
-      ? formatShortDate(
-          ownerQuote.exchangeTimestampUTC ?? ownerQuote.retrievalTimestampUTC,
-          true,
-        ) + " IST"
-      : null;
-    if (ownerQuote.isLive && ownerQuote.quality === "VERIFIED_REAL_LIVE" && ownerQuote.marketState === "OPEN") {
-      return timePart ? `Live · ${timePart}` : "Live";
-    }
-    if (ownerQuote.quality === "MARKET_CLOSED_LAST" || ownerQuote.marketState === "HOLIDAY" || ownerQuote.marketState === "CLOSED") {
-      const prefix = ownerQuote.marketState === "HOLIDAY" ? "Holiday" : "Closed";
-      return timePart ? `${prefix} · ${timePart}` : prefix;
-    }
-    if (ownerQuote.quality === "VERIFIED_REAL_DELAYED") {
-      return timePart ? `Delayed · ${timePart}` : "Delayed";
-    }
-    if (ownerQuote.quality === "REAL_BUT_STALE") {
-      return timePart ? `Stale · ${timePart}` : "Stale";
-    }
-  }
   if (!asset) return "Checking market data…";
   if (asset.id.startsWith("ECB:") && latestDate) {
     return `Daily reference · ${formatShortDate(latestDate, false)}`;
@@ -200,7 +176,6 @@ function formatStatusSummary(
 function venueSubtitle(
   id: string,
   asset: AssetResearch | null,
-  ownerQuote: NormalizedMarketQuote | null,
 ): string {
   const venue = asset?.instrument?.market ?? id.split(":")[0] ?? "MARKET";
   const type = asset?.instrument?.type
@@ -220,7 +195,7 @@ function venueSubtitle(
         : isIndexInstrument(id, asset)
           ? "Index"
           : "Market";
-  const expiry = ownerQuote?.expiry ?? asset?.instrument?.expiry;
+  const expiry = asset?.instrument?.expiry;
   if (expiry) {
     const expLabel = formatShortDate(expiry, false);
     return `${venue} · ${type} · Exp ${expLabel}`;
@@ -255,7 +230,6 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
 export default function AssetTerminal({
   id,
   authenticated = true,
-  isOwner = false,
   inWatchlist = false,
   watchlistBusy = false,
   onToggleWatchlist,
@@ -270,7 +244,6 @@ export default function AssetTerminal({
     requestedId: string;
     data: AssetResearch;
   } | null>(null);
-  const [ownerQuote, setOwnerQuote] = useState<NormalizedMarketQuote | null>(null);
   const [layout, setLayout] = useState<ChartLayout>(emptyLayout);
   const [interval, setInterval] = useState<Interval>("1d");
   const [range, setRange] = useState<RangePreset>("3M");
@@ -392,28 +365,6 @@ export default function AssetTerminal({
       clearTimeout(timeout);
     };
   }, [authenticated, id, interval, reload]);
-
-  // Fetch owner quote snapshot when entitled on NSE/BSE/MCX
-  useEffect(() => {
-    if (!authenticated || !isOwner || !/^(NSE|BSE|MCX):/i.test(id)) {
-      queueMicrotask(() => setOwnerQuote(null));
-      return;
-    }
-    let alive = true;
-    const reqId = id;
-    fetchMarketQuotes([reqId])
-      .then((res) => {
-        if (alive && activeIdRef.current === reqId) {
-          setOwnerQuote(res.quotes[0] ?? null);
-        }
-      })
-      .catch(() => {
-        if (alive && activeIdRef.current === reqId) setOwnerQuote(null);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [authenticated, isOwner, id, reload]);
 
   // Fetch Ideas tab lazily
   useEffect(() => {
@@ -616,19 +567,10 @@ export default function AssetTerminal({
   const priorRow = rows.length >= 2 ? rows[rows.length - 2] : null;
   const latestCandle = latestRow ? candleMap.get(latestRow.date) ?? null : null;
 
-  const heroPrice = ownerQuote?.ltp ?? latestRow?.close ?? null;
-  const sessionChangeAbs =
-    ownerQuote?.change !== undefined && ownerQuote?.change !== null
-      ? ownerQuote.change
-      : latestRow && priorRow
-        ? latestRow.close - priorRow.close
-        : null;
-  const sessionChangePct =
-    ownerQuote?.changePct !== undefined && ownerQuote?.changePct !== null
-      ? ownerQuote.changePct
-      : latestRow && priorRow && priorRow.close > 0
-        ? ((latestRow.close - priorRow.close) / priorRow.close) * 100
-        : null;
+  const heroPrice = latestRow?.close ?? null;
+  const sessionChangeAbs = latestRow && priorRow ? latestRow.close - priorRow.close : null;
+  const sessionChangePct = sessionChangeAbs !== null && priorRow && priorRow.close > 0
+    ? (sessionChangeAbs / priorRow.close) * 100 : null;
   const sessionDir =
     sessionChangePct === null
       ? "flat"
@@ -857,7 +799,7 @@ export default function AssetTerminal({
 
       {/* Hero: White Asset Title + Quiet Venue + Tabular Price + Signed Move */}
       <div className="ss-v31-asset-hero">
-        <div className="ss-v31-asset-sub">{venueSubtitle(id, asset, ownerQuote)}</div>
+        <div className="ss-v31-asset-sub">{venueSubtitle(id, asset)}</div>
         <h1 className="ss-v31-asset-title">{displayTitle}</h1>
         <div className="ss-v31-asset-price-row">
           <strong className="ss-v31-asset-price">
@@ -875,7 +817,7 @@ export default function AssetTerminal({
           )}
         </div>
         <div className="ss-v31-asset-meta-line">
-          <span>{formatStatusSummary(asset, ownerQuote, latestRow?.date ?? null)}</span>
+          <span>{formatStatusSummary(asset, latestRow?.date ?? null)}</span>
           {rangeMetrics.pct !== null && (
             <span className={`ss-v31-range-chip is-${rangeMetrics.dir}`}>
               {range}: {rangeMetrics.pct >= 0 ? "+" : ""}
@@ -1539,7 +1481,7 @@ export default function AssetTerminal({
                 <span>Open</span>
                 <strong>
                   {formatDisplayPrice(
-                    ownerQuote?.open ?? latestCandle?.open ?? null,
+                    latestCandle?.open ?? null,
                     id,
                     asset,
                   )}
@@ -1549,7 +1491,7 @@ export default function AssetTerminal({
                 <span>Prev Close</span>
                 <strong>
                   {formatDisplayPrice(
-                    ownerQuote?.prevClose ?? priorRow?.close ?? null,
+                    priorRow?.close ?? null,
                     id,
                     asset,
                   )}
@@ -1559,7 +1501,7 @@ export default function AssetTerminal({
                 <span>Day High</span>
                 <strong>
                   {formatDisplayPrice(
-                    ownerQuote?.high ?? latestCandle?.high ?? null,
+                    latestCandle?.high ?? null,
                     id,
                     asset,
                   )}
@@ -1569,7 +1511,7 @@ export default function AssetTerminal({
                 <span>Day Low</span>
                 <strong>
                   {formatDisplayPrice(
-                    ownerQuote?.low ?? latestCandle?.low ?? null,
+                    latestCandle?.low ?? null,
                     id,
                     asset,
                   )}
@@ -1578,7 +1520,7 @@ export default function AssetTerminal({
               <div className="ss-v31-stat-box">
                 <span>Volume</span>
                 <strong>
-                  {num(ownerQuote?.volume ?? latestCandle?.volume ?? null, 0)}
+                  {num(latestCandle?.volume ?? null, 0)}
                 </strong>
               </div>
               <div className="ss-v31-stat-box">

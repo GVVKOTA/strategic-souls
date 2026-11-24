@@ -7,12 +7,17 @@ export const DEFAULT_EIGHT_CARD_IDS: readonly string[] = Object.freeze([
   "NSE:NIFTY",
   "BSE:SENSEX",
   "NSE:BANKNIFTY",
-  "NSE:NIFTYMIDCAP100",
   "MCX:GOLD",
   "MCX:SILVER",
-  "GLOBAL:CL",
-  "ECB:USDINR",
+  "MCX:CRUDEOIL",
+  "NSE:NIFTYMIDCAP100",
+  "FX:USDINR",
 ]);
+
+export const DASHBOARD_LABELS: Readonly<Record<string, string>> = {
+  "MCX:GOLD": "GOLD MCX",
+  "MCX:CRUDEOIL": "CRUDE OIL MCX",
+};
 
 export const ALLOWED_GLOBAL_MARKET_IDS: ReadonlySet<string> = new Set(
   DEFAULT_EIGHT_CARD_IDS,
@@ -30,12 +35,9 @@ export function reconcileGlobalMarketIds(raw: unknown): string[] {
       if (typeof item !== "string") continue;
       const upper = item.trim().toUpperCase();
       // Map dated MCX Gold/Silver contracts back to canonical Global tile IDs if stored previously.
-      const normalized =
-        upper.startsWith("MCX:GOLD") && upper !== "MCX:GOLD"
-          ? "MCX:GOLD"
-          : upper.startsWith("MCX:SILVER") && upper !== "MCX:SILVER"
-            ? "MCX:SILVER"
-            : upper;
+      const normalized = upper === "GLOBAL:CL" ? "MCX:CRUDEOIL"
+        : upper === "ECB:USDINR" ? "FX:USDINR"
+        : upper.replace(/^(MCX:(?:GOLD|SILVER|CRUDEOIL))\d.*$/, "$1");
       if (ALLOWED_GLOBAL_MARKET_IDS.has(normalized) && !seen.has(normalized)) {
         seen.add(normalized);
         kept.push(normalized);
@@ -92,7 +94,7 @@ export type MarketOverviewCard = {
   sourceUrl: string;
   sourceObservedAtUTC: string | null;
   sourceObservedPrecision?: "DATE_ONLY" | "TIMESTAMP" | "UNAVAILABLE";
-  ingestedAtUTC: string;
+  ingestedAtUTC: string | null;
   quality: QuoteQuality;
   marketSession: MarketSessionState;
   sessionLabel: string;

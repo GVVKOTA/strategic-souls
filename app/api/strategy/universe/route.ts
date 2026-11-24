@@ -26,7 +26,7 @@ async function handle(request: Request) {
     const active = await niftyUniverse();
     return Response.json({ active: active && {
       version: active.version, effectiveDate: active.effectiveDate, validatedAt: active.validatedAt,
-      provenance: active.provenance, count: active.constituents.length,
+      provenance: active.provenance, rightsExpiresAt: active.rightsExpiresAt, count: active.constituents.length,
     } }, { headers });
   } catch (err) {
     return Response.json(

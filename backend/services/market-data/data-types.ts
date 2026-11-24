@@ -1,7 +1,7 @@
 /** Versioned data contracts. Missing observations never become zero or synthetic candles. */
 export const SHARED_HISTORY_LABEL = "Licensed exchange history";
 export type Interval = "30m" | "1h" | "1d" | "1wk" | "1mo";
-export type ProviderId = "EODHD" | "TRUEDATA" | "INDIANAPI";
+export type ProviderId = "EODHD" | "TRUEDATA" | "INDIANAPI" | "BHARATSTOCK";
 export type Market = "NSE" | "BSE" | "MCX" | "GLOBAL";
 export type Instrument = {
   id: string;
@@ -78,7 +78,15 @@ export type Rights = {
   contractReference: string;
   expiresAt: string;
 };
+export type ProviderCreditWindow = {
+  startsAt: string;
+  endsAt: string;
+  availableCredits: number;
+  callsPerMinute: number;
+};
+
 export type SharedHistoryGrant = {
+  creditWindow?: ProviderCreditWindow;
   intervals: ("1d" | "30m" | "1h")[];
   lagMinutes: number;
   retentionHours: number;
@@ -90,6 +98,7 @@ export type SharedHistoryGrant = {
 };
 export type ProviderConfig = {
   provider: ProviderId;
+  constituentGrant?: { version: string; expiresAt: string };
   enabled: boolean;
   priority: number;
   version: number;

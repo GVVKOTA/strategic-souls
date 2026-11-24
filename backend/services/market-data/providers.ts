@@ -11,7 +11,22 @@ import type {
   ResearchEvent,
 } from "./data-types";
 const INDIAN_API_HOSTS = ["stock.indianapi.in", "dev.indianapi.in", "analyst.indianapi.in", "pro.indianapi.in"];
+export const BHARATSTOCK_ORIGIN = "https://bharatstockapi.com";
+export const BHARATSTOCK_INDEX_SYMBOLS: ReadonlyMap<string, {symbol: string; name: string}> = new Map([
+  ["NSE:NIFTY", { symbol: "NIFTY", name: "NIFTY 50" }],
+  ["NSE:BANKNIFTY", { symbol: "BANKNIFTY", name: "NIFTY BANK" }],
+  ["NSE:NIFTYMIDCAP100", { symbol: "NIFTYMIDCAP100", name: "NIFTY MIDCAP 100" }],
+]);
+
 export const PROVIDERS = {
+  BHARATSTOCK: {
+    label: "BharatStock · dashboard index closes",
+    secret: "BHARATSTOCK_API_KEY",
+    docs: BHARATSTOCK_ORIGIN + "/reference#indices",
+    rightsUrl: BHARATSTOCK_ORIGIN + "/terms",
+    markets: ["NSE"], datasets: ["candles"],
+    status: "Documented NSE index history. Exchange display licence required.",
+  },
   INDIANAPI: {
     label: "Indian API · NSE daily prices",
     secret: "INDIA_API_KEY",
@@ -58,7 +73,7 @@ const string = (v: unknown, min: number, max: number) => {
 };
 const finite = (v: unknown) => typeof v === "number" && Number.isFinite(v);
 export function providerId(v: unknown): ProviderId {
-  if (v !== "EODHD" && v !== "TRUEDATA" && v !== "INDIANAPI")
+  if (v !== "EODHD" && v !== "TRUEDATA" && v !== "INDIANAPI" && v !== "BHARATSTOCK")
     throw new Error("Choose an implemented provider.");
   return v;
 }
@@ -75,6 +90,10 @@ export function validateInstrument(
     throw new Error("Use exact source identifiers, not a URL or expression.");
   if (provider === "INDIANAPI" && (v.type !== "EQUITY" || id !== "NSE:" + symbol || v.mic !== "XNSE" || v.currency !== "INR" || v.timezone !== "Asia/Kolkata"))
     throw new Error("Map a verified NSE equity ticker in INR with its Indian exchange timezone.");
+  if (provider === "BHARATSTOCK" &&
+      (v.type !== "INDEX" || BHARATSTOCK_INDEX_SYMBOLS.get(id)?.symbol !== symbol ||
+        v.mic !== "XNSE" || v.currency !== "INR" || v.timezone !== "Asia/Kolkata"))
+    throw new Error("Map only BharatStock's documented NSE dashboard indices.");
   if (!(PROVIDERS[provider].markets as readonly string[]).includes(v.market))
     throw new Error("This adapter does not support the selected market.");
   if (
@@ -118,12 +137,25 @@ export function validateInstrument(
       : {}),
   };
 }
+export function requiresCreditWindow(provider: ProviderId) {
+  return provider === "INDIANAPI" || provider === "BHARATSTOCK";
+}
+
+export function verifiedCreditWindow(window: SharedHistoryGrant["creditWindow"]) {
+  if (!window || typeof window.startsAt !== "string" || typeof window.endsAt !== "string") return null;
+  const start = Date.parse(window.startsAt), end = Date.parse(window.endsAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 366 * 86_400_000 ||
+      !Number.isInteger(window.availableCredits) || window.availableCredits < 1 || window.availableCredits > 1_000_000 ||
+      !Number.isInteger(window.callsPerMinute) || window.callsPerMinute < 1 || window.callsPerMinute > 600) return null;
+  return { ...window, startsAt: new Date(start).toISOString(), endsAt: new Date(end).toISOString() };
+}
+
 function validateSharedHistory(value: unknown, provider: ProviderId): SharedHistoryGrant | undefined {
   if (value === undefined || value === null) return undefined;
   const v = value as SharedHistoryGrant;
   if (!Array.isArray(v?.intervals) || !v.intervals.length ||
       v.intervals.some((interval) => !["1d", "1h", "30m"].includes(interval)) ||
-      (provider === "INDIANAPI" && v.intervals.some((i) => i !== "1d")) ||
+      ((provider === "INDIANAPI" || provider === "BHARATSTOCK") && v.intervals.some((i) => i !== "1d")) ||
       (provider === "EODHD" && v.intervals.includes("30m")))
     throw new Error("Approve only supported native candle intervals.");
   const bounded = (value: number, min: number, max: number) =>
@@ -132,6 +164,11 @@ function validateSharedHistory(value: unknown, provider: ProviderId): SharedHist
       !bounded(v.dailyLookbackDays, 370, 2190) || !bounded(v.dailyRefreshMinutes, 480, 1440) ||
       !bounded(v.intradayRefreshMinutes, 60, 1440))
     throw new Error("Shared history needs explicit licensed lag, retention, lookback and refresh intervals.");
+  const window = verifiedCreditWindow(v.creditWindow);
+  if (requiresCreditWindow(provider) && !v.creditWindow)
+    throw new Error("Provide the confirmed account credit window and request limits.");
+  if (v.creditWindow && (!window || Date.parse(window.startsAt) > Date.now() || Date.parse(window.endsAt) <= Date.now()))
+    throw new Error("Enter the current plan window, remaining credits, and documented calls per minute.");
   const attribution = string(v.attribution, 3, 160);
   const url = new URL(string(v.attributionUrl, 12, 300));
   if (url.protocol !== "https:" || url.username || url.password || url.port)
@@ -139,7 +176,9 @@ function validateSharedHistory(value: unknown, provider: ProviderId): SharedHist
   return { intervals: [...new Set(v.intervals)], lagMinutes: v.lagMinutes,
     retentionHours: v.retentionHours, dailyLookbackDays: v.dailyLookbackDays,
     dailyRefreshMinutes: v.dailyRefreshMinutes, intradayRefreshMinutes: v.intradayRefreshMinutes,
-    attribution, attributionUrl: url.href };
+    attribution, attributionUrl: url.href,
+    ...(window && { creditWindow: window }),
+  };
 }
 export function validateConfig(value: unknown): ProviderConfig {
   const v = value as ProviderConfig;
@@ -192,6 +231,8 @@ export function validateConfig(value: unknown): ProviderConfig {
   )
     throw new Error("Use a 1–1000 daily call cap and priority 1–10.");
   const sharedHistory = validateSharedHistory(v.sharedHistory, p);
+  if ((p === "BHARATSTOCK" || p === "INDIANAPI") && v.enabled && !sharedHistory)
+    throw new Error("Record the licensed shared history settings before enabling this provider.");
   if (sharedHistory && (!r.display || !r.analysis || !r.storage || !r.redistribution || !r.derivedDisplay ||
       !r.verified || !v.datasets.includes(p === "INDIANAPI" ? "prices" : "candles")))
     throw new Error("Shared history needs verified display, analysis, derived display, storage and redistribution rights.");
@@ -227,6 +268,7 @@ export function rightsActive(
     config.enabled &&
     config.rights.verified &&
     config.rights[need] &&
+    (!config.constituentGrant || Date.parse(config.constituentGrant.expiresAt) > now) &&
     Date.parse(config.rights.expiresAt) > now
   );
 }
@@ -244,7 +286,7 @@ export function secretFrom(
 export class ProviderFailure extends Error {
   constructor(
     public code:
-      "AUTH_FAILED" | "RATE_LIMITED" | "PROVIDER_DOWN" | "INVALID_DATA",
+      "AUTH_FAILED" | "RATE_LIMITED" | "LOCAL_RATE_BUDGET" | "PROVIDER_DOWN" | "INVALID_DATA",
     message: string,
     public retryAfterMs?: number,
   ) {
@@ -257,7 +299,7 @@ export async function fetchProviderJson(
   fetcher: typeof fetch = fetch,
 ) {
   if (
-    !["eodhd.com", "history.truedata.in", ...INDIAN_API_HOSTS].includes(url.hostname) ||
+    !["eodhd.com", "history.truedata.in", new URL(BHARATSTOCK_ORIGIN).hostname, ...INDIAN_API_HOSTS].includes(url.hostname) ||
     url.protocol !== "https:" ||
     url.username ||
     url.password ||
@@ -462,6 +504,37 @@ export async function indianDailyPrices(symbol: string, secret: string, host: un
   return prices;
 }
 
+export async function bharatStockIndexCandles(
+  instrument: Instrument,
+  key: string,
+  fetcher: typeof fetch = fetch,
+  now = Date.now(),
+): Promise<Candle[]> {
+  const mapping = BHARATSTOCK_INDEX_SYMBOLS.get(instrument.id);
+  if (!mapping || mapping.symbol !== instrument.providerSymbol)
+    throw new ProviderFailure("INVALID_DATA", "This index has no confirmed BharatStock mapping.");
+  const url = new URL("/v1/indices/" + encodeURIComponent(mapping.name) + "/prices", BHARATSTOCK_ORIGIN);
+  url.searchParams.set("from", new Date(now - 50 * 86_400_000).toISOString().slice(0, 10));
+  const payload = await fetchProviderJson(url, { "X-API-Key": key }, fetcher) as {data?: unknown};
+  if (!Array.isArray(payload?.data) || payload.data.length === 0 || payload.data.length > 60)
+    throw new ProviderFailure("INVALID_DATA", "BharatStock index history is missing or exceeds the requested window.");
+  const dates = new Set<string>();
+  const knownAt = new Date(now).toISOString();
+  return payload.data.map((value: unknown): Candle => {
+    const row = value as Record<string, unknown> | null;
+    const day = date(row?.trade_date, now);
+    const {open, high, low, close} = row ?? {};
+    if (dates.has(day) || typeof open !== "number" || typeof high !== "number" ||
+        typeof low !== "number" || typeof close !== "number" ||
+        ![open, high, low, close].every((price) => Number.isFinite(price) && price > 0) ||
+        high < Math.max(open, low, close) || low > Math.min(open, high, close))
+      throw new ProviderFailure("INVALID_DATA", "Invalid or duplicate BharatStock observation.");
+    dates.add(day);
+    return {date: day, open, high, low, close, adjustedClose: null, volume: null,
+      openInterest: null, knownAt, adjustment: "RAW", provider: "BHARATSTOCK"};
+  }).sort((a, b) => a.date.localeCompare(b.date));
+}
+
 export async function providerCandles(
   config: ProviderConfig,
   instrument: Instrument,
@@ -472,6 +545,7 @@ export async function providerCandles(
 ) {
   if (config.provider === "INDIANAPI")
     throw new ProviderFailure("INVALID_DATA", "This dataset contains daily prices only.");
+  if (config.provider === "BHARATSTOCK") return bharatStockIndexCandles(instrument, secret, fetcher, now);
   if (instrument.expiry && Date.parse(instrument.expiry + "T23:59:59Z") < now)
     throw new ProviderFailure(
       "INVALID_DATA",
@@ -652,8 +726,8 @@ export async function providerIntradayCandles(
   fetcher: typeof fetch = fetch,
   now = Date.now(),
 ): Promise<Candle[]> {
-  if (config.provider === "INDIANAPI")
-    throw new ProviderFailure("INVALID_DATA", "This dataset contains daily prices only.");
+  if (config.provider === "INDIANAPI" || config.provider === "BHARATSTOCK")
+    throw new ProviderFailure("INVALID_DATA", "This provider integration supplies completed daily data.");
   if (instrument.expiry && Date.parse(instrument.expiry + "T23:59:59Z") < now) {
     throw new ProviderFailure(
       "INVALID_DATA",

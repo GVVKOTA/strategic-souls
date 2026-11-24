@@ -25,6 +25,10 @@
 
 Every item below was relocated using `git mv` to preserve full Git history after a full-repository dependency scan (`git grep`, AST/import check, `tsc --noEmit`, `eslint`, Node test runner, and production Vinext build).
 
+### X 1.0 retired market adapter
+
+The former owner-only adapter code, setup scripts and adapter-specific tests are under `retired-market-adapter/`. The archive preserves historical evidence of the old runtime. Current exchange-calendar, session-boundary, permission and data integrity checks live in the active suite.
+
 ### Batch B — X5.5 Documentation & Archive Consolidation (`2026-11-23 IST`)
 
 | Old Path | New Path | Reason | Dependency Scan Evidence | Relocation Date | Risk | Restore Command |

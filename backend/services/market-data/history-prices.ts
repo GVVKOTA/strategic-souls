@@ -1,6 +1,6 @@
 import type { PriceObservation } from "../../engines/analytics";
 import { assetResearch } from "./data-service";
-import { getIndianExchangeSession } from "./angelone/calendar";
+import { getIndianExchangeSession } from "./exchange-calendar";
 
 export async function completedResearchPrices(id: string, subject: string) {
   const asset = await assetResearch(id, subject, "1d", false);

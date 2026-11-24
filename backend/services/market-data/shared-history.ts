@@ -1,11 +1,12 @@
 import { calendarPeriodKey } from "../../engines/chart-analytics";
 import { env } from "cloudflare:workers";
-import { database, rate } from "../../../database/queries/repository";
+import { database } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import type { Candle, Instrument, Interval, ProviderConfig, ProviderId, SharedHistoryGrant } from "./data-types";
-import { indianDailyPrices, type IndianDailyPrice, providerCandles, providerIntradayCandles, ProviderFailure, rightsActive, secretFrom } from "./providers";
-import { getExchangeSessionWindowMinutes, getIstDateAndMinutes } from "./angelone/calendar";
-import { intradayBarCloseMs } from "./angelone/scan-history";
+import { reserveProviderCall } from "./provider-budget";
+import { indianDailyPrices, type IndianDailyPrice, providerCandles, providerIntradayCandles, ProviderFailure, requiresCreditWindow, rightsActive, secretFrom, verifiedCreditWindow } from "./providers";
+import { getExchangeSessionWindowMinutes, getIstDateAndMinutes } from "./exchange-calendar";
+import { intradayBarCloseMs } from "./candle-sessions";
 
 import { SHARED_HISTORY_LABEL } from "./data-types";
 export { SHARED_HISTORY_LABEL } from "./data-types";
@@ -33,16 +34,18 @@ export const nativeInterval = (interval: Interval): NativeHistoryInterval =>
 
 export function hasSharedRights(config: ProviderConfig, now = Date.now()): config is Grant {
   return !!config.sharedHistory && config.datasets.includes(config.provider === "INDIANAPI" ? "prices" : "candles") &&
+    (!requiresCreditWindow(config.provider) || !!verifiedCreditWindow(config.sharedHistory.creditWindow)) &&
     rightsActive(config, "display", now) && rightsActive(config, "analysis", now) &&
     rightsActive(config, "storage", now) && config.rights.derivedDisplay === true &&
     config.rights.redistribution === true;
 }
 
-export async function sharedHistoryGrants(now = Date.now()) {
+export async function sharedHistoryGrants(now = Date.now(), purpose: "research" | "dashboard" | "ingestion" = "research") {
   const rows = await database().prepare("SELECT payload FROM x2_providers ORDER BY provider")
     .all<{ payload: string }>();
   return rows.results.map(({ payload }) => JSON.parse(payload) as ProviderConfig)
     .filter((config): config is Grant => hasSharedRights(config, now) && !!secretFrom(config.provider, runtime()))
+    .filter(({ provider }) => purpose === "ingestion" || (provider === "BHARATSTOCK") === (purpose === "dashboard"))
     .sort((a, b) => a.priority - b.priority);
 }
 
@@ -240,7 +243,7 @@ export async function readSharedDailyQuotes(ids: readonly string[], grants: read
     attribution: { label: string; url: string }; instrument: Instrument;
   }>();
   for (const config of grants) {
-    if (config.provider === "INDIANAPI" || !hasSharedRights(config, now) || !config.sharedHistory.intervals.includes("1d")) continue;
+    if (!hasSharedRights(config, now) || !config.sharedHistory.intervals.includes("1d")) continue;
     const mappings = new Map(ids.flatMap((id) => {
       const instrument = resolveSharedInstrument(config, id, now);
       return instrument && !result.has(id) ? [[id, instrument] as const] : [];
@@ -321,11 +324,6 @@ async function acquire(config: Grant, now: number) {
   ).bind(token, now + LEASE_MS, config.provider, config.version, now, now, now, config.provider, now).first<Task>();
 }
 
-const consumeProviderBudget = async (config: Grant, now: number) => {
-  await rate("x2:provider-minute:" + config.provider, Math.min(config.dailyCallLimit, 30), MINUTE);
-  await rate("x2:provider:" + config.provider + ":" + new Date(now).toISOString().slice(0, 10), config.dailyCallLimit, DAY);
-};
-
 const providerHistory = (config: Grant, instrument: Instrument, secret: string, interval: NativeHistoryInterval, now: number) =>
   interval === "1d"
     ? providerCandles(config, instrument, secret, fetch, now, config.sharedHistory.dailyLookbackDays)
@@ -343,7 +341,7 @@ async function refresh(task: Task, config: Grant, fetchHistory: typeof providerH
       await db.prepare("DELETE FROM x8_shared_history_task WHERE " + condition).bind(...keys).run();
       return;
     }
-    await consumeProviderBudget(config, started);
+    await reserveProviderCall(config, started);
     const prices = config.provider === "INDIANAPI"
       ? await indianDailyPrices(instrument.providerSymbol, secret, runtime().INDIA_API_HOST) : null;
     const source = prices ? [] : await fetchHistory(config, instrument, secret, task.interval, started);
@@ -355,7 +353,8 @@ async function refresh(task: Task, config: Grant, fetchHistory: typeof providerH
     const payload = JSON.stringify(bars);
     if (!bars.length || new TextEncoder().encode(payload).byteLength > MAX_BYTES)
       throw new ProviderFailure("INVALID_DATA", "Shared history failed normalization or size checks.");
-    const expires = Math.min(now + config.sharedHistory.retentionHours * 60 * MINUTE, Date.parse(config.rights.expiresAt));
+    const expires = Math.min(now + config.sharedHistory.retentionHours * 60 * MINUTE,
+      Date.parse(config.rights.expiresAt), config.constituentGrant ? Date.parse(config.constituentGrant.expiresAt) : Infinity);
     const last = bars[bars.length - 1], prior = bars.at(-2);
     const latest = last.date;
     const next = now + (task.interval === "1d" ? config.sharedHistory.dailyRefreshMinutes : config.sharedHistory.intradayRefreshMinutes) * MINUTE;
@@ -382,7 +381,8 @@ async function refresh(task: Task, config: Grant, fetchHistory: typeof providerH
     const transient = kind === "PROVIDER_DOWN";
     const backoff = (transient ? Math.min(30, 2 ** Math.min(task.failures, 5)) : 30) * MINUTE + Math.floor(Math.random() * 15_000);
     const retryAfter = error instanceof ProviderFailure ? error.retryAfterMs ?? 0 : 0;
-    const wait = Math.max(backoff, retryAfter, kind === "AUTH_FAILED" ? Date.parse(config.rights.expiresAt) - now : 0);
+    const wait = kind === "LOCAL_RATE_BUDGET" ? Math.max(1000, retryAfter)
+      : Math.max(backoff, retryAfter, kind === "AUTH_FAILED" ? Date.parse(config.rights.expiresAt) - now : 0);
     await db.batch([
       db.prepare(
         "UPDATE x8_shared_history_task SET next_attempt=?,lease_token=NULL,lease_until=0,failures=failures+1,last_checked=?,last_error=? WHERE " + condition,
@@ -405,9 +405,10 @@ export async function hasReadySharedHistory(
   const now = Date.now();
   for (const grant of grants) {
     if (!grant.sharedHistory.intervals.includes(resolution)) continue;
-    const earliest = grant.provider === "INDIANAPI"
+    const needsCompletedSession = grant.provider === "INDIANAPI" || grant.provider === "BHARATSTOCK";
+    const earliest = needsCompletedSession
       ? expectedDailyDate(grant.instruments[0], now, grant.sharedHistory.lagMinutes) : null;
-    if (grant.provider === "INDIANAPI" && (!earliest || interval === "1h" || interval === "30m")) continue;
+    if (needsCompletedSession && (!earliest || interval === "1h" || interval === "30m")) continue;
     const ready = await database().prepare(
       `SELECT 1 AS ready FROM x8_shared_history_snapshot WHERE provider=? AND config_version=? AND interval=?
         AND expires_at>? AND received_at<=?
@@ -438,12 +439,15 @@ export async function refreshSharedHistory(fetchHistory = providerHistory) {
   await db.prepare(
     "DELETE FROM x8_shared_history_snapshot WHERE rowid IN (SELECT rowid FROM x8_shared_history_snapshot WHERE expires_at<=? LIMIT 1200)",
   ).bind(now).run();
-  const grants = await sharedHistoryGrants(now);
+  const grants = await sharedHistoryGrants(now, "ingestion");
   for (const config of grants) await configurePlan(config, now);
+  if (!grants.length) return;
+  const first = Math.trunc(now / (2 * MINUTE)) % grants.length;
   const stopAt = now + 25_000;
   for (let count = 0; count < 4 && Date.now() < stopAt; count++) {
     let task: Task | null = null;
-    for (const config of grants) {
+    for (let offset = 0; offset < grants.length; offset++) {
+      const config = grants[(first + count + offset) % grants.length];
       task = await acquire(config, Date.now());
       if (!task) continue;
       await refresh(task, config, fetchHistory);

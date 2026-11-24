@@ -1,11 +1,8 @@
 import { getAuthenticatedUser } from "../../../../backend/auth/session";
 import { HttpError } from "../../../../backend/middleware/security";
 import { account, rate } from "../../../../database/queries/repository";
-import { gatewayQuotes, MarketGatewayError } from "../../../../backend/services/market-data/angelone/gateway";
-import type { NormalizedMarketQuote } from "../../../../backend/services/market-data/angelone/types";
 import { completedResearchPrices } from "../../../../backend/services/market-data/history-prices";
 import { readSharedDailyQuotes, sharedHistoryGrants } from "../../../../backend/services/market-data/shared-history";
-import { isDataOwner } from "../../../../backend/services/market-data/data-service";
 import { approvedIndustryGroups } from "../../../../backend/services/market-data/industry-heatmap";
 import { NSE_SECTOR_INDICES } from "../../../../backend/services/market-data/sectors-and-ecosystem";
 
@@ -52,29 +49,7 @@ export async function GET(request: Request) {
     const ids = [...new Set([...standardIds, ...groups.flatMap((group) => group.constituents.map((stock) => stock.id))])];
     const grants = await sharedHistoryGrants();
     const shared = await readSharedDailyQuotes(ids, grants);
-    const result: NormalizedMarketQuote[] = [];
-    for (let offset = 0; isDataOwner(user.userId) && offset < standardIds.length; offset += 20) {
-      try {
-        const batch = await gatewayQuotes({
-          authenticated: true, isOwner: isDataOwner(user.userId), ids: standardIds.slice(offset, offset + 20),
-          requestUrl: request.url,
-        });
-        if (batch.sourceMode === "DEMO_SYNTHETIC") break;
-        result.push(...batch.quotes.filter((quote) => quote.sourceMode !== "DEMO_SYNTHETIC"));
-      } catch (error) {
-        if (error instanceof MarketGatewayError &&
-            ["PUBLIC_LICENSE_REQUIRED", "BROKER_AUTH_FAILED", "RATE_LIMITED"].includes(error.code)) break;
-        if (!result.length) break;
-      }
-    }
-    const privateQuotes = new Map(result.filter((quote) => quote.ltp !== null).map((quote) => [quote.id, {
-      id: quote.id, value: quote.ltp, pctChange: quote.changePct, unit: quote.unit,
-      provider: "Private exchange data", timestamp: quote.exchangeTimestampUTC, quality: quote.qualityLabel,
-      volume: quote.volume, change: quote.change,
-    }]));
     const quotes = ids.flatMap((id) => {
-      const privateQuote = privateQuotes.get(id);
-      if (privateQuote) return [privateQuote];
       const sharedQuote = shared.get(id);
       if (!sharedQuote) return [];
       const { instrument: internal, ...details } = sharedQuote;

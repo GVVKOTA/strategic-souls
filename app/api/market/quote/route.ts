@@ -1,86 +1,22 @@
-import { getAuthenticatedUser } from "../../../../backend/auth/session";
-import { HttpError, assertAdultConsent } from "../../../../backend/middleware/security";
-import {
-  MarketGatewayError,
-  gatewayQuotes,
-} from "../../../../backend/services/market-data/angelone/gateway";
-import { isDataOwner } from "../../../../backend/services/market-data/data-service";
-import { account, rate } from "../../../../database/queries/repository";
+import { HttpError } from "../../../../backend/middleware/security";
+import { requireMarketAccess } from "../../../../backend/services/market-data/market-access";
+import { readSharedDailyQuotes, sharedHistoryGrants } from "../../../../backend/services/market-data/shared-history";
 
 export const dynamic = "force-dynamic";
+const headers = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" };
 
-const HEADERS = {
-  "Cache-Control": "private, no-store",
-  "X-Content-Type-Options": "nosniff",
-};
-
-export async function GET(request: Request): Promise<Response> {
+export async function GET(request: Request) {
   try {
-    const user = await getAuthenticatedUser(request);
-    if (!user) {
-      throw new MarketGatewayError(
-        401,
-        "UNAUTHENTICATED",
-        "Sign in to access private broker market quotes.",
-        "Sign in with your Strategic Souls account.",
-      );
-    }
-    await rate(`${user.userId}:market-quote`, 45, 60_000);
-    const current = await account(user.userId);
-    assertAdultConsent(
-      !!current &&
-        current.adult_confirmed === 1 &&
-        current.consent_version === "2026-11-14-v4",
-    );
-
-    const params = new URL(request.url).searchParams;
-    const rawIds = params.get("ids") ?? "";
-    const ids = rawIds
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (ids.length > 20) {
-      throw new MarketGatewayError(
-        400,
-        "INVALID_SYMBOL",
-        "Request at most 20 instruments per quote query.",
-        "Pass 1 to 20 comma-separated instrument IDs.",
-      );
-    }
-
-    const result = await gatewayQuotes({
-      authenticated: true,
-      isOwner: isDataOwner(user.userId),
-      ids: ids.length > 0 ? ids : undefined,
-      requestUrl: request.url,
-    });
-    return Response.json(result, { status: 200, headers: HEADERS });
+    await requireMarketAccess(request, "market-quote", 45);
+    const raw = new URL(request.url).searchParams.get("ids") ?? "";
+    const ids = [...new Set(raw.split(",").map((id) => id.trim().toUpperCase()).filter(Boolean))];
+    if (!ids.length || ids.length > 20 || ids.some((id) => !/^[A-Z0-9]+:[A-Z0-9._&^-]{1,60}$/.test(id)))
+      throw new HttpError(400, "Choose one to 20 canonical instruments.");
+    const fields = await readSharedDailyQuotes(ids, await sharedHistoryGrants());
+    const quotes = Array.from(fields.values(), ({ instrument, ...quote }) => ({ ...quote, currency: instrument.currency }));
+    return Response.json({ quotes, unavailable: ids.filter((id) => !fields.has(id)) }, { headers });
   } catch (error) {
-    if (error instanceof MarketGatewayError) {
-      return Response.json(error.toResponseBody(), {
-        status: error.status,
-        headers: HEADERS,
-      });
-    }
-    if (error instanceof HttpError) {
-      return Response.json(
-        {
-          error: error.message,
-          errorCode: error.status === 429 ? "RATE_LIMITED" : "PUBLIC_LICENSE_REQUIRED",
-          actionHint: "Confirm workspace consent or wait before retrying.",
-          serverTimestampUTC: new Date().toISOString(),
-        },
-        { status: error.status, headers: HEADERS },
-      );
-    }
-    return Response.json(
-      {
-        error: "Market quote service temporarily unavailable.",
-        errorCode: "UPSTREAM_ERROR",
-        actionHint: "Retry shortly.",
-        serverTimestampUTC: new Date().toISOString(),
-      },
-      { status: 503, headers: HEADERS },
-    );
+    return Response.json({ error: error instanceof HttpError ? error.message : "Market observations are temporarily unavailable." },
+      { status: error instanceof HttpError ? error.status : 503, headers });
   }
 }

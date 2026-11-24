@@ -11,11 +11,14 @@ type UniverseRow = {
   validated_at: string;
   provenance: string;
   constituents: string;
+  expected_count: number;
+  rights_expires_at: string;
 };
 
-export function validateNifty500(input: unknown): NiftyConstituent[] {
-  if (!Array.isArray(input) || input.length !== NIFTY_500_COUNT)
-    throw new HttpError(400, "The snapshot must contain exactly 500 NSE equities.");
+export function validateNifty500(input: unknown, expectedCount = NIFTY_500_COUNT): NiftyConstituent[] {
+  if (!Number.isInteger(expectedCount) || expectedCount < 450 || expectedCount > 550 ||
+      !Array.isArray(input) || input.length !== expectedCount)
+    throw new HttpError(400, "The snapshot must match the documented official constituent count.");
   const ids = new Set<string>();
   const isins = new Set<string>();
   const constituents = input.map((row: Record<string, unknown> | null) => {
@@ -36,9 +39,13 @@ export function validateNifty500(input: unknown): NiftyConstituent[] {
 
 export async function niftyUniverse(version?: string) {
   const db = database();
+  const now = new Date().toISOString();
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(Date.now());
   const row = await (version
-    ? db.prepare("SELECT * FROM x78_market_universes WHERE version=?").bind(version)
-    : db.prepare("SELECT * FROM x78_market_universes WHERE version<>? AND effective_date<=? ORDER BY effective_date DESC,sequence DESC LIMIT 1").bind(EXPLICIT_SCOPE_VERSION, new Intl.DateTimeFormat("en-CA",{ timeZone: "Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit" }).format(Date.now()))
+    ? db.prepare("SELECT * FROM x78_market_universes WHERE version=? AND rights_expires_at>?").bind(version, now)
+    : db.prepare(`SELECT * FROM x78_market_universes
+      WHERE effective_date<=? AND rights_expires_at>?
+      ORDER BY effective_date DESC,sequence DESC LIMIT 1`).bind(today, now)
   ).first<UniverseRow>();
   if (!row) return null;
   return {
@@ -46,13 +53,17 @@ export async function niftyUniverse(version?: string) {
     effectiveDate: row.effective_date,
     validatedAt: row.validated_at,
     provenance: row.provenance,
-    constituents: validateNifty500(JSON.parse(row.constituents)),
+    rightsExpiresAt: row.rights_expires_at,
+    constituents: validateNifty500(JSON.parse(row.constituents), row.expected_count),
   };
 }
 
 export async function importNiftyUniverse(input: Record<string, unknown>) {
-  const constituents = validateNifty500(input.constituents);
-  const { effectiveDate, provenance } = input;
+  const expectedCount = input.expectedCount === undefined ? NIFTY_500_COUNT : input.expectedCount;
+  if (typeof expectedCount !== "number")
+    throw new HttpError(400, "Provide the official constituent count as a number.");
+  const constituents = validateNifty500(input.constituents, expectedCount);
+  const { effectiveDate, provenance, rightsExpiresAt } = input;
   if (typeof effectiveDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(effectiveDate) ||
       !Number.isFinite(Date.parse(effectiveDate)) ||
       new Date(effectiveDate).toISOString().slice(0, 10) !== effectiveDate ||
@@ -61,10 +72,17 @@ export async function importNiftyUniverse(input: Record<string, unknown>) {
   if (input.rightsConfirmed !== true || typeof provenance !== "string" ||
       provenance.trim().length < 12 || provenance.length > 280)
     throw new HttpError(400, "Record the approved source and confirm rights to use and display the constituent metadata.");
-  const version = await digest({ effectiveDate, constituents, provenance: provenance.trim() });
+  const expiry = typeof rightsExpiresAt === "string" ? Date.parse(rightsExpiresAt) : NaN;
+  if (!Number.isFinite(expiry) || expiry <= Date.now())
+    throw new HttpError(400, "Provide the future expiry of the licensed constituent delivery.");
+  const expiresAt = new Date(expiry).toISOString();
+  const version = await digest({ effectiveDate, constituents, provenance: provenance.trim(), expiresAt });
   await database().prepare(
-    "INSERT OR IGNORE INTO x78_market_universes (version,effective_date,validated_at,provenance,constituents) VALUES (?,?,?,?,?)",
-  ).bind(version, effectiveDate, new Date().toISOString(), provenance.trim(), JSON.stringify(constituents)).run();
+    `INSERT OR IGNORE INTO x78_market_universes
+      (version,effective_date,validated_at,provenance,constituents,expected_count,rights_expires_at)
+      VALUES (?,?,?,?,?,?,?)`,
+  ).bind(version, effectiveDate, new Date().toISOString(), provenance.trim(),
+    JSON.stringify(constituents), expectedCount, expiresAt).run();
   const active = await niftyUniverse();
   return { version, count: constituents.length, active: active?.version === version };
 }

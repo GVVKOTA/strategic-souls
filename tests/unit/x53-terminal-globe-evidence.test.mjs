@@ -286,7 +286,7 @@ test("X5.3 Data fidelity: no synthetic T16:00:00Z on date-only quotes; Marketaux
     { symbol: "USDINR" },
     { symbol: "FAKE_UNLISTED_TICKER_XYZ" },
   ]);
-  assert.deepEqual([...mapped], ["NSE:HDFCBANK", "ECB:USDINR"]);
+  assert.deepEqual([...mapped], ["NSE:HDFCBANK", "FX:USDINR"]);
   assert.deepEqual([...newsMod.extractRelatedAssetsFromEntities(null)], []);
 });
 

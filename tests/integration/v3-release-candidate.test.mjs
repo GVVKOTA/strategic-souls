@@ -93,6 +93,14 @@ async function mockFetch(url, init) {
     return Response.json({ datasets: [{ metric: "Price", label: "Price on NSE", meta: { is_weekly: false },
       values: [["2026-11-19", "99"], ["2026-11-20", "101"], ["2026-11-23", "105"]] }] });
   }
+  if (new URL(href).hostname === "bharatstockapi.com") {
+    assert.equal(decodeURIComponent(new URL(href).pathname), "/v1/indices/NIFTY 50/prices");
+    assert.equal(new Headers(init.headers).get("X-API-Key"), env.BHARATSTOCK_API_KEY);
+    return Response.json({data:[
+      {trade_date:"2026-11-23", open:120, high:128, low:115, close:125},
+      {trade_date:"2026-11-20", open:111, high:117, low:110, close:113},
+    ]});
+  }
   // Shared commercial TrueData intraday (60min) and daily (eod) across NSE, BSE & active MCX futures
   if (href.includes("history.truedata.in/getbars")) {
     const parsed = new URL(href);
@@ -327,7 +335,7 @@ const overviewRoute = await imp("app/api/markets/overview/route.ts");
 const networkRoute = await imp("app/api/community/network/route.ts");
 const workspaceMod = await imp("backend/services/research/workspace.ts");
 const profileMod = await imp("backend/services/profile/profile.ts");
-const scanHistoryMod = await imp("backend/services/market-data/angelone/scan-history.ts");
+const scanHistoryMod = await imp("backend/services/market-data/candle-sessions.ts");
 const scanEngineMod = await imp("backend/engines/scan.ts");
 const nineCardMod = await imp("backend/services/market-data/nine-card-markets.ts");
 const classicPresetsMod = await imp("backend/services/research/classic-presets.ts");
@@ -632,18 +640,22 @@ test("V3 S02/S03/S04/S06: Licensed shared commercial NSE+BSE+MCX provider serves
   assert.equal(await historyStore.readSharedHistory("NSE:RELIANCE", "1d", grants), null);
   const denied = await researchData.assetResearch("NSE:RELIANCE", bob.userId, "1d", false);
   assert.equal(denied.candles.length, 0);
-  assert.equal(await researchData.canScanExchange(bob.userId, "1d", ["NSE:RELIANCE"]), false);
+  assert.equal(await researchData.canScanExchange( "1d", ["NSE:RELIANCE"]), false);
   sql.prepare("DELETE FROM x2_providers WHERE provider = 'TRUEDATA'").run();
   const priceConfig = { ...sharedProviderPayload, provider: "INDIANAPI", datasets: ["prices"],
     instruments: [sharedProviderPayload.instruments[0]], dailyCallLimit: 20,
-    sharedHistory: { ...sharedProviderPayload.sharedHistory, intervals: ["1d"] } };
+    sharedHistory: { ...sharedProviderPayload.sharedHistory, intervals: ["1d"], creditWindow: {
+      startsAt: "2026-11-01T00:00:00.000Z", endsAt: "2026-12-01T00:00:00.000Z", availableCredits: 100, callsPerMinute: 10,
+    } } };
   env.INDIA_API_KEY = randomUUID();
   env.INDIA_API_HOST = "dev.indianapi.in";
   sql.prepare("INSERT INTO x2_providers (provider,version,payload,health,updated_by,updated_at,last_write) VALUES (?,?,?,?,?,?,?)")
     .run("INDIANAPI", 1, JSON.stringify(priceConfig), "{}", "owner_v3", now, "fixture-price-history");
+  assert.equal((await historyStore.sharedHistoryGrants()).some(({ provider }) => provider === "INDIANAPI"), true);
   await historyStore.refreshSharedHistory();
-  assert.equal(await researchData.canScanExchange(bob.userId, "1d", ["NSE:RELIANCE"], "INDIANAPI"), true);
-  assert.equal(await researchData.canScanExchange(bob.userId, "1h", ["NSE:RELIANCE"], "INDIANAPI"), false);
+  assert.equal(sql.prepare("SELECT count(*) n FROM x8_shared_history_snapshot WHERE provider='INDIANAPI'").get().n, 1);
+  assert.equal(await researchData.canScanExchange( "1d", ["NSE:RELIANCE"], "INDIANAPI"), true);
+  assert.equal(await researchData.canScanExchange( "1h", ["NSE:RELIANCE"], "INDIANAPI"), false);
   const requested = { provider: "INDIANAPI", instrumentIds: ["NSE:RELIANCE"], interval: "1d", eventCutoff: now };
   const snapshot = await researchData.researchUniverse(bob.userId, requested);
   assert.deepEqual(Array.from(snapshot.datasets[0].observations, (point) => point.close), [99, 101, 105]);
@@ -651,8 +663,30 @@ test("V3 S02/S03/S04/S06: Licensed shared commercial NSE+BSE+MCX provider serves
   assert.equal(snapshot.datasets[0].observations[0].volume, undefined);
   assert.equal(snapshot.lineage[0].provider, "INDIANAPI");
   delete env.INDIA_API_KEY;
-  assert.equal(await researchData.canScanExchange(bob.userId, "1d", ["NSE:RELIANCE"], "INDIANAPI"), false);
+  assert.equal(await researchData.canScanExchange( "1d", ["NSE:RELIANCE"], "INDIANAPI"), false);
   sql.prepare("DELETE FROM x2_providers WHERE provider='INDIANAPI'").run();
+  const indexConfig = { ...priceConfig, provider: "BHARATSTOCK", datasets: ["candles"],
+    instruments: [{ ...priceConfig.instruments[0], id:"NSE:NIFTY", type:"INDEX", name:"Nifty 50",
+      symbol:"NIFTY", providerSymbol:"NIFTY", unit:"index points" }] };
+  env.BHARATSTOCK_API_KEY = randomUUID();
+  sql.prepare("INSERT INTO x2_providers (provider,version,payload,health,updated_by,updated_at,last_write) VALUES (?,?,?,?,?,?,?)")
+    .run("BHARATSTOCK", 1, JSON.stringify(indexConfig), "{}", "owner_v3", now, "fixture-dashboard");
+  await historyStore.refreshSharedHistory();
+  const dashboard = await overviewRoute.GET(req("/api/markets/overview", "GET", undefined, bob.cookie));
+  const visible = (await dashboard.json()).cards;
+  assert.equal(visible[0].value,125);
+  assert.equal(visible[0].sourceObservedAtUTC,"2026-11-23");
+  assert.equal(visible[0].previousClose,113);
+  assert.deepEqual(Array.from(visible[0].sparkline), [113,125]);
+  assert.ok(visible.every((card)=>card.provider==="BharatStock"));
+  assert.equal(visible[7].canonicalId,"FX:USDINR");
+  assert.equal(visible[7].value,null);
+  const guest = await overviewRoute.GET(req("/api/markets/overview", "GET"));
+  assert.ok((await guest.json()).cards.every((card)=>card.value===null));
+  assert.equal((await researchData.assetResearch("NSE:NIFTY",bob.userId)).references.length,0);
+  delete env.BHARATSTOCK_API_KEY;
+  assert.equal((await nineCardMod.getMarketOverviewPayload(bob.userId)).cards[0].value,null);
+  sql.prepare("DELETE FROM x2_providers WHERE provider='BHARATSTOCK'").run();
   historyClock = null;
 });
 

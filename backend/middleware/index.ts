@@ -8,7 +8,7 @@ const worker = {
       await refreshSharedHistory();
       return;
     }
-    // One lease across events, up to two batches of 15 shared or five private instruments.
+    // One lease across events, up to two batches of up to 15 instruments.
     const deadline = Date.now() + 35_000;
     for (let batch = 0; batch < 2 && Date.now() < deadline; batch++)
       if (!await processMarketScanBatch(undefined, 15)) break;
