@@ -899,7 +899,7 @@ export default function Global({
          ===================================================================== */}
       {globalView === "HEATMAP" && (
         <div className="x53-focused-stack">
-          <SectorExplorer data={data} onOpenAsset={openAsset} />
+          <SectorExplorer key={authenticated ? "member" : "guest"} data={data} onOpenAsset={openAsset} />
         </div>
       )}
 

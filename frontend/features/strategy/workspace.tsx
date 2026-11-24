@@ -1367,7 +1367,7 @@ export default function Strategy({
         <Suspense
           fallback={<WorkspaceSkeleton label="Opening Formula Lab…" kind="panel" />}
         >
-          <FormulaLab notify={notify} />
+          <FormulaLab key={authenticated ? "member" : "guest"} notify={notify} />
         </Suspense>
       ) : (
         <>
