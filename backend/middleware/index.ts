@@ -27,7 +27,8 @@ const worker = {
 
     const durationMs = Math.max(0, Date.now() - startedAt);
     const secured = new Response(response.body, response);
-    secured.headers.set("X-Request-Id", requestId);
+    const correlationId = secured.headers.get("X-Scan-Trace-Id") ?? requestId;
+    secured.headers.set("X-Request-Id", correlationId);
     secured.headers.set("X-Content-Type-Options", "nosniff");
     secured.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
     secured.headers.set(
@@ -70,7 +71,7 @@ const worker = {
       console.warn(
         JSON.stringify({
           event: "ss_api_signal",
-          requestId,
+          requestId: correlationId,
           method: request.method,
           path: url.pathname,
           status: secured.status,

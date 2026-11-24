@@ -20,6 +20,7 @@ import {
 } from "./normalizer";
 import { BoundedRateLimiter, CircuitBreaker, retryTransient, SingleFlightCache } from "./rate-limiter";
 import { redactText } from "./redact";
+import { MAX_DAILY_CANDLE_DAYS } from "./types";
 import type {
   CandleInterval,
   ExchangeCode,
@@ -43,7 +44,7 @@ const INTERVAL_MAP: Readonly<Record<CandleInterval, string>> = {
 };
 
 const MAX_DAYS_BY_INTERVAL: Readonly<Record<CandleInterval, number>> = {
-  "1d": 365,
+  "1d": MAX_DAILY_CANDLE_DAYS,
   "1h": 60,
   "15m": 30,
   "5m": 15,
@@ -210,27 +211,11 @@ export class AngelOneReadOnlyProvider {
     return this.instruments.search(options);
   }
 
-  private async postAuthorizedJson(
-    path: string,
-    payload: Record<string, unknown>,
-    bucket: "quote" | "candle",
-    nowMs = Date.now(),
-  ): Promise<Record<string, unknown>> {
-    const cb = this.circuitBreaker.canAttempt(nowMs);
-    if (!cb.allowed) {
-      throw new ProviderRequestError(
-        "CIRCUIT_OPEN",
-        "Upstream broker circuit breaker is open. Retry after cooldown.",
-        503,
-        cb.retryAfterMs,
-        false,
-      );
-    }
-
+  private async paceRead(bucket: "quote" | "candle", nowMs: number) {
     // Respect documented Angel One per-second and per-minute quotas strictly.
-    // If a rapid UI tab switch hits the 1-second spacing window, pace smoothly once (<= 1.2s) instead of failing.
+    // Pace short bursts with bounded waiting. Every upstream retry passes through this guard.
     let effectiveNowMs = nowMs;
-    const perSecMax = bucket === "quote" ? 2 : 10;
+    const perSecMax = bucket === "quote" ? 1 : 3;
     let perSec = this.rateLimiter.consume(
       `angelone:${bucket}:sec`,
       perSecMax,
@@ -274,7 +259,26 @@ export class AngelOneReadOnlyProvider {
         false,
       );
     }
+  }
 
+  private async postAuthorizedJson(
+    path: string,
+    payload: Record<string, unknown>,
+    bucket: "quote" | "candle",
+    nowMs = Date.now(),
+  ): Promise<Record<string, unknown>> {
+    const cb = this.circuitBreaker.canAttempt(nowMs);
+    if (!cb.allowed) {
+      throw new ProviderRequestError(
+        "CIRCUIT_OPEN",
+        "Upstream broker circuit breaker is open. Retry after cooldown.",
+        503,
+        cb.retryAfterMs,
+        false,
+      );
+    }
+
+    let attempts = 0;
     const executeOnce = async (allowRefreshRetry: boolean): Promise<Record<string, unknown>> => {
       try {
         await this.auth.ensureSession(nowMs);
@@ -285,6 +289,7 @@ export class AngelOneReadOnlyProvider {
         throw err;
       }
 
+      await this.paceRead(bucket, attempts++ === 0 ? nowMs : Date.now());
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 10_000);
       try {

@@ -10,6 +10,7 @@ import { env } from "cloudflare:workers";
 import { formatIstTimestamp, getAllIndianExchangeSessions, qualityDisplayLabel } from "./calendar";
 import { InstrumentMaster, VERIFIED_SEED_INSTRUMENTS } from "./instrument-master";
 import { parseGatewayConfig, redactText, type WorkerGatewayConfig } from "./redact";
+import { MAX_DAILY_CANDLE_DAYS } from "./types";
 import type {
   CandleInterval,
   ExchangeCode,
@@ -192,6 +193,7 @@ async function callPrivateAdapter<T>(
     method?: "GET" | "POST";
     body?: Record<string, unknown>;
     timeoutMs?: number;
+    traceId?: string;
     fetcher?: typeof fetch;
   } = {},
 ): Promise<T> {
@@ -220,6 +222,7 @@ async function callPrivateAdapter<T>(
   if (options.body) {
     headers["Content-Type"] = "application/json";
   }
+  if (options.traceId) headers["X-SS-Scan-Trace"] = options.traceId;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 12_000);
@@ -538,6 +541,7 @@ export async function gatewayCandles(options: {
   id: string;
   interval?: CandleInterval;
   days?: number;
+  traceId?: string;
   runtimeEnv?: Record<string, unknown>;
   requestUrl?: string;
   fetcher?: typeof fetch;
@@ -562,13 +566,16 @@ export async function gatewayCandles(options: {
     options.interval && ["1d", "1h", "15m", "5m"].includes(options.interval)
       ? options.interval
       : "1d";
-  const days = Math.max(1, Math.min(365, Math.round(options.days ?? 90)));
+  const days = Math.max(1, Math.min(
+    interval === "1d" ? MAX_DAILY_CANDLE_DAYS : 365,
+    Math.round(options.days ?? 90),
+  ));
 
   const qs = new URLSearchParams({ id, interval, days: String(days) });
   return callPrivateAdapter<NormalizedCandleSeries>(
     config,
     `/internal/candles?${qs.toString()}`,
-    { fetcher: options.fetcher, timeoutMs: 14_000 },
+    { fetcher: options.fetcher, timeoutMs: 14_000, traceId: options.traceId },
   );
 }
 

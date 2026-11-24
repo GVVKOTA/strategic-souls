@@ -13,19 +13,20 @@ export function ScanCoverageChart({
   passed,
   failed,
   unknown,
-  sourceLabel,
+  candidateCount,
 }: {
   passed: number;
   failed: number;
   unknown: number;
-  sourceLabel?: string;
+  candidateCount?: number;
 }) {
   const safePass = Math.max(0, Math.floor(passed));
   const safeFail = Math.max(0, Math.floor(failed));
   const safeUnknown = Math.max(0, Math.floor(unknown));
   const eligible = safePass + safeFail;
   const total = eligible + safeUnknown;
-  const coveragePct = computeCoveragePct(eligible, total);
+  const candidates = Math.max(total, candidateCount ?? total);
+  const coveragePct = computeCoveragePct(eligible, candidates);
   const matchPct = computeMatchPct(safePass, eligible);
   const missingPct =
     total > 0 ? Math.round(((100 * safeUnknown) / total) * 10) / 10 : null;
@@ -50,17 +51,18 @@ export function ScanCoverageChart({
     <div className="x53-evidence-chart">
       <div className="x53-evidence-chart-head">
         <span>
-          Coverage <strong>{formatStatPct(coveragePct)}</strong> · Match rate{" "}
+          {candidateCount === undefined ? "Result coverage" : "Selected-scope coverage"}{" "}
+          <strong>{eligible}/{candidates} ({formatStatPct(coveragePct)})</strong> · Match rate{" "}
           <strong>{formatStatPct(matchPct)}</strong> · Unknown{" "}
           <strong>{formatStatPct(missingPct)}</strong>
         </span>
-        {sourceLabel && <span className="x1-caption">{sourceLabel}</span>}
+        {candidates > total && <span className="x1-caption">{candidates - total} excluded</span>}
       </div>
       <svg
         viewBox={`0 0 ${w} 14`}
         className="x53-stacked-svg"
         role="img"
-        aria-label={`Scan coverage: ${safePass} matched, ${safeFail} failed, ${safeUnknown} unknown out of ${total} examined`}
+        aria-label={`Scan results: ${safePass} matched, ${safeFail} did not match, ${safeUnknown} unknown; ${candidates} candidates`}
       >
         <rect x="0" y="2" width={w} height="10" rx="5" fill="#181c22" />
         {passW > 0 && (

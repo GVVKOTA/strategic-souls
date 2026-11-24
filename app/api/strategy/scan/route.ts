@@ -17,6 +17,9 @@ export const dynamic = "force-dynamic";
 const MAX_SCAN_BODY_BYTES = 524_288; // 512 KB for private CSV OHLCV / Draw payloads
 
 export async function POST(request: Request): Promise<Response> {
+  const traceId = crypto.randomUUID();
+  const started = Date.now();
+  const headers = { "Cache-Control": "private, no-store", "X-Scan-Trace-Id": traceId };
   try {
     const user = await getAuthenticatedUser(request);
     if (!user) {
@@ -38,22 +41,25 @@ export async function POST(request: Request): Promise<Response> {
     ) {
       throw new HttpError(400, "Unsupported strategy scan action.");
     }
-    const result = await mutateWorkspace(user.userId, input);
+    const result = await mutateWorkspace(user.userId, input, traceId);
+    console.info({ event: "soul_scan_request", traceId, action: input.action, status: 200, durationMs: Date.now() - started });
     return Response.json(
       { ok: true, ...result },
-      { headers: { "Cache-Control": "private, no-store" } },
+      { headers },
     );
   } catch (err) {
+    const status = err instanceof HttpError ? err.status : 503;
+    console.warn({ event: "soul_scan_request", traceId, status, durationMs: Date.now() - started });
     return Response.json(
       {
         error:
           err instanceof HttpError
             ? err.message
-            : "Strategy scan service unavailable. No quota was deducted.",
+            : "Strategy scan unavailable. Retry with the same request to confirm its result.",
       },
       {
-        status: err instanceof HttpError ? err.status : 503,
-        headers: { "Cache-Control": "private, no-store" },
+        status,
+        headers,
       },
     );
   }

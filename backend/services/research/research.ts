@@ -12,6 +12,60 @@ import {
 } from "../../engines/scan";
 
 export const RESEARCH_VERSION = "x2-research-1";
+export const SCAN_UNIVERSE_PRESETS = [
+  "INDIAN_EQUITIES", "MCX_FUTURES", "MY_WATCHLIST", "ECB_DAILY", "CUSTOM_CSV",
+] as const;
+export type ScanUniversePreset = (typeof SCAN_UNIVERSE_PRESETS)[number];
+export const SCAN_REQUEST_VERSION = 2;
+export const DEFAULT_SCAN_UNIVERSE_PRESET: ScanUniversePreset = "INDIAN_EQUITIES";
+export const SCAN_UNIVERSE_LABEL: Record<ScanUniversePreset, string> = {
+  INDIAN_EQUITIES: "NSE / BSE Equities",
+  MCX_FUTURES: "MCX Futures",
+  MY_WATCHLIST: "Watchlist",
+  ECB_DAILY: "ECB Reference FX",
+  CUSTOM_CSV: "Private Daily CSV",
+};
+
+export function scanUniverseForPreset(preset: ScanUniversePreset | undefined) {
+  return preset === "ECB_DAILY" ? "ECB_DAILY" as const : "CONNECTED_MARKETS" as const;
+}
+
+export function isScanUniversePreset(value: unknown): value is ScanUniversePreset {
+  return SCAN_UNIVERSE_PRESETS.some((preset) => preset === value);
+}
+
+export function validateScanRequestScope(input: Record<string, unknown>) {
+  // Legacy clients and previously persisted definitions predate this contract.
+  if (input.scanRequestVersion === undefined) return;
+  if (input.scanRequestVersion !== SCAN_REQUEST_VERSION)
+    throw new Error("Unsupported scan request version.");
+  if (!isScanUniversePreset(input.universePreset))
+    throw new Error("Choose a scan market before continuing.");
+  if (input.universe !== scanUniverseForPreset(input.universePreset))
+    throw new Error("The selected market and requested source do not agree.");
+  if (input.interval !== undefined && !["30m", "1h", "1d", "1wk", "1mo"].includes(String(input.interval)))
+    throw new Error("Choose a supported scan timeframe.");
+  if (input.universePreset !== "CUSTOM_CSV" && input.customCsv !== undefined)
+    throw new Error("Select Private CSV to submit imported bars.");
+  if (input.watchlistId !== undefined && (input.universePreset !== "MY_WATCHLIST" ||
+    typeof input.watchlistId !== "string" || !/^[A-Za-z0-9_-]{1,80}$/.test(input.watchlistId)))
+    throw new Error("Choose an active watchlist.");
+}
+
+export function matchesScanMarketPreset(
+  preset: ScanUniversePreset | undefined,
+  exchange: string,
+  assetClass: string,
+  expiry?: string | null,
+  now = Date.now(),
+) {
+  if (preset === "INDIAN_EQUITIES")
+    return (exchange === "NSE" || exchange === "BSE") && assetClass === "EQUITY";
+  if (preset === "MCX_FUTURES")
+    return exchange === "MCX" && assetClass === "FUTURE" &&
+      !!expiry && Date.parse(`${expiry}T23:59:59+05:30`) >= now;
+  return true;
+}
 export type OutcomeDefinition = {
   family: "POSITIVE_RETURN" | "FIRST_BARRIER";
   horizon: number;
@@ -26,6 +80,8 @@ export type ResearchDefinition = {
   formula: string;
   mode: "SIMPLE" | "ADVANCED";
   universe: "ECB_DAILY" | "CONNECTED_MARKETS";
+  universePreset?: ScanUniversePreset;
+  watchlistId?: string;
   interval: "30m" | "1h" | "1d" | "1wk" | "1mo";
   partialPolicy: "STRICT" | "ALLOW_UNKNOWN";
   outcome: OutcomeDefinition;
@@ -186,6 +242,9 @@ export function validateResearch(
     partialPolicy = input.partialPolicy ?? "STRICT";
   if (universe !== "ECB_DAILY" && universe !== "CONNECTED_MARKETS")
     throw new Error("Choose a supported universe.");
+  const universePreset = input.universePreset;
+  if (universePreset !== undefined && !isScanUniversePreset(universePreset))
+    throw new Error("Choose a supported scan universe preset.");
   if (!["30m", "1h", "1d", "1wk", "1mo"].includes(String(interval)))
     throw new Error("Choose a supported timeframe.");
   if (partialPolicy !== "STRICT" && partialPolicy !== "ALLOW_UNKNOWN")
@@ -224,6 +283,9 @@ export function validateResearch(
     formula,
     mode: input.mode,
     universe,
+    ...(universePreset === undefined ? {} : { universePreset }),
+    ...(universePreset === "MY_WATCHLIST" && typeof input.watchlistId === "string" &&
+      /^[A-Za-z0-9_-]{1,80}$/.test(input.watchlistId) ? { watchlistId: input.watchlistId } : {}),
     interval: interval as ResearchDefinition["interval"],
     partialPolicy,
     outcome,
@@ -292,6 +354,7 @@ export function treeFromFormula(formula: string): RuleTree | null {
   return convert(compileFormula(formula).ast);
 }
 export type ScanUniverseAccounting = {
+  requested: number;
   discovered: number;
   authorized: number;
   eligible: number;
@@ -300,9 +363,17 @@ export type ScanUniverseAccounting = {
   notMatched: number;
   unknown: number;
   excluded: number;
+  deferred: number;
+  denied: number;
   withheld: number;
   errors: number;
   coveragePct: number;
+};
+
+export type ScanSourceExclusion = {
+  id: string;
+  reason: string;
+  kind?: "scope" | "deferred" | "denied" | "unavailable" | "error";
 };
 
 export type ScanBatchPlan = {
@@ -491,17 +562,36 @@ export function preflightResearch(
   definition: ResearchDefinition,
   datasets: ScanDataset[],
   asOf: string,
-  sourceExclusions: { id: string; reason: string }[] = [],
+  sourceExclusions: ScanSourceExclusion[] = [],
+  minimumBars: number | null = null,
 ) {
   const rule = compileFormula(definition.formula),
     result = evaluateScan(rule, datasets, asOf);
+  const observationsById = new Map(datasets.map((d) => [d.instrumentId, d.observations]));
+  const cutoff = Date.parse(asOf);
+  const exclusions = result.results.filter((row) => row.status === "UNKNOWN").map((row) => {
+    const available = observationsById.get(row.instrumentId)?.filter(
+      (bar) => Date.parse(bar.eventAt) <= cutoff && Date.parse(bar.knownAt) <= cutoff,
+    ).length;
+    return {
+      id: row.instrumentId,
+      reasons: minimumBars !== null && available !== undefined && available < minimumBars
+        ? [`Rule requires ${minimumBars} bars · ${available} available.`, ...row.reasons]
+        : row.reasons,
+    };
+  });
   const blocked =
     !datasets.length ||
     result.eligible === 0 ||
     (definition.partialPolicy === "STRICT" && result.unknown > 0);
-  const discovered = datasets.length + sourceExclusions.length;
+  const candidates = new Set(datasets.map(({ instrumentId }) => instrumentId));
+  const excluded = [...new Map(sourceExclusions
+    .filter(({ id, kind }) => kind !== "scope" && !candidates.has(id))
+    .map((entry) => [entry.id, entry])).values()];
+  const discovered = datasets.length + excluded.length;
   const authorized = datasets.filter((d) => d.permitted !== false).length;
   const accounting: ScanUniverseAccounting = {
+    requested: definition.instrumentIds.length || discovered,
     discovered,
     authorized,
     eligible: result.eligible,
@@ -509,20 +599,22 @@ export function preflightResearch(
     matched: result.matches,
     notMatched: result.failed,
     unknown: result.unknown,
-    excluded: sourceExclusions.length,
+    excluded: excluded.length,
+    deferred: excluded.filter(({ kind }) => kind === "deferred").length,
+    denied: excluded.filter(({ kind }) => kind === "denied").length,
     withheld: 0,
-    errors: 0,
+    errors: excluded.filter(({ kind }) => kind === "error").length,
     coveragePct:
       discovered > 0
         ? Math.round((result.eligible / discovered) * 1000) / 10
         : 0,
   };
-  const batchSize = 25;
+  const batchSize = 24;
   const batchPlan: ScanBatchPlan = {
     totalCandidates: discovered,
     batchSize,
-    estimatedBatches: Math.max(1, Math.ceil(Math.max(1, discovered) / batchSize)),
-    executionMode: discovered > 50 ? "BOUNDED_CHUNKED" : "INLINE",
+    estimatedBatches: Math.ceil(discovered / batchSize),
+    executionMode: discovered > batchSize ? "BOUNDED_CHUNKED" : "INLINE",
   };
   return {
     version: RESEARCH_VERSION,
@@ -531,17 +623,16 @@ export function preflightResearch(
     total: result.total,
     unknown: result.unknown,
     requiredFields: rule.dependencies,
+    minimumBars,
     blocked,
     reason: !datasets.length
-      ? "Connect an entitled source for this universe and timeframe."
+      ? sourceExclusions[0]?.reason ?? "Connect an entitled source for this universe and timeframe."
       : !result.eligible
         ? "No instrument has all required fields/history. No scan will be saved."
         : blocked
           ? "Some instruments have missing inputs. Explicitly allow UNKNOWN results or narrow the universe."
           : null,
-    exclusions: result.results
-      .filter((r) => r.status === "UNKNOWN")
-      .map((r) => ({ id: r.instrumentId, reasons: r.reasons })),
+    exclusions,
     results: result,
     accounting,
     batchPlan,

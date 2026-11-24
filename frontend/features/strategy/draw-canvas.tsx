@@ -8,6 +8,7 @@ import {
   type DrawScanReport,
 } from "../../../backend/engines/pattern-draw";
 import type { SoulGenomeReport } from "../../../backend/engines/soul-genome";
+import { SCAN_REQUEST_VERSION, type ScanUniversePreset } from "../../../backend/services/research/research";
 import { api, type Notice } from "../../components/workspace/shared";
 
 type Props = {
@@ -16,6 +17,8 @@ type Props = {
   scanName?: string;
   onRequireName?: (message: string) => void;
   universe: "ECB_DAILY" | "CONNECTED_MARKETS";
+  universePreset?: ScanUniversePreset;
+  watchlistId?: string;
   interval: "30m" | "1h" | "1d" | "1wk" | "1mo";
   customCsv?: string;
   instrumentIds?: string[];
@@ -85,6 +88,8 @@ export default function PatternDrawCanvas({
   interval,
   customCsv,
   instrumentIds,
+  universePreset,
+  watchlistId,
   busy,
   onScanComplete,
   onOpenAsset,
@@ -106,6 +111,12 @@ export default function PatternDrawCanvas({
   const [minPatternFit, setMinPatternFit] = useState(60);
   const [submitting, setSubmitting] = useState(false);
   const [lastReport, setLastReport] = useState<DrawScanReport | null>(null);
+  const request = useRef<{ signature: string; id: string } | null>(null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const isControlledName = controlledName !== undefined;
   const effectiveName = isControlledName ? controlledName : localName;
@@ -271,6 +282,28 @@ export default function PatternDrawCanvas({
       return;
     }
     if (submitting || busy) return;
+    if (!universePreset) {
+      notify("Choose a market for this scan.", true);
+      return;
+    }
+    const input = {
+      action: "run-draw-scan",
+      scanRequestVersion: SCAN_REQUEST_VERSION,
+      name: trimmedName,
+      description: `Drawn pattern similarity search (${windowBars}-bar lookback, min fit ${minPatternFit}).`,
+      strokePoints: flatPoints.slice(0, 360),
+      windowBars,
+      minPatternFit,
+      universe,
+      universePreset,
+      watchlistId,
+      interval,
+      ...(customCsv?.trim() ? { customCsv } : {}),
+      ...(instrumentIds?.length ? { instrumentIds } : {}),
+    };
+    const signature = JSON.stringify(input);
+    if (request.current?.signature !== signature)
+      request.current = { signature, id: crypto.randomUUID() };
     setSubmitting(true);
     try {
       const res = await api<{
@@ -278,30 +311,22 @@ export default function PatternDrawCanvas({
         drawReport: DrawScanReport;
         soulGenome?: SoulGenomeReport;
       }>("/api/strategy/scan", {
-        action: "run-draw-scan",
-        requestId: crypto.randomUUID(),
-        name: trimmedName,
-        description: `Drawn pattern similarity search (${windowBars}-bar lookback, min fit ${minPatternFit}).`,
-        strokePoints: flatPoints.slice(0, 360),
-        windowBars,
-        minPatternFit,
-        universe,
-        interval,
-        ...(customCsv?.trim() ? { customCsv } : {}),
-        ...(instrumentIds?.length ? { instrumentIds } : {}),
+        ...input,
+        requestId: request.current.id,
       });
-      setLastReport(res.drawReport);
+      if (!mounted.current) return;
+      setLastReport(res.drawReport ?? null);
       await onScanComplete(res);
-      notify(
-        `Draw scan completed: ${res.drawReport.matches.length} matching instrument(s) found.`,
-      );
+      request.current = null;
+      if (mounted.current) notify("Draw scan saved to GRAVEYARD.");
     } catch (err) {
+      if (!mounted.current) return;
       notify(
         err instanceof Error ? err.message : "Draw pattern scan failed.",
         true,
       );
     } finally {
-      setSubmitting(false);
+      if (mounted.current) setSubmitting(false);
     }
   }
 

@@ -22,6 +22,8 @@ import ts from "typescript";
 const { startMarketAdapterServer } = await import(
   "../../backend/services/market-data/angelone/adapter-server.ts"
 );
+const { InstrumentMaster } = await import("../../backend/services/market-data/angelone/instrument-master.ts");
+const { normalizeAngelOneCandles } = await import("../../backend/services/market-data/angelone/normalizer.ts");
 
 const FAKE_API_KEY = "FAKE_ANGEL_API_KEY_99";
 const FAKE_CLIENT_ID = "FAKECLT999";
@@ -223,6 +225,184 @@ function buildWorkerHarness(env, getUser) {
   }
   return { load };
 }
+
+test("owner Classic coverage uses longer candle history and saves a daily scan only with eligible bars", async () => {
+  const master = new InstrumentMaster();
+  const requests = [];
+  const nowMs = Date.now();
+  const env = {
+    X2_OWNER_SUBJECT: "owner",
+    MARKET_DATA_PROVIDER: "angelone",
+    MARKET_DATA_MODE: "private",
+    ENABLE_PRIVATE_BROKER_DATA: "true",
+    ENABLE_PUBLIC_EXCHANGE_QUOTES: "false",
+    MARKET_ADAPTER_AUTH_TOKEN: FAKE_SERVICE_TOKEN,
+    MARKET_DATA_ADAPTER: {
+      async fetch(url) {
+        const { pathname, searchParams } = new URL(url);
+        if (pathname === "/internal/instruments") {
+          assert.equal(searchParams.get("exchange"), "MCX");
+          return Response.json({ instruments: master.search({ exchange: "MCX", segment: "FUTURE" }) });
+        }
+        assert.equal(pathname, "/internal/candles");
+        const id = searchParams.get("id");
+        const days = Number(searchParams.get("days"));
+        assert.equal(searchParams.get("interval"), "1d");
+        requests.push({ id, days });
+        if (id.startsWith("NSE:X7CAP"))
+          return Response.json({ errorCode: "INVALID_SYMBOL", actionHint: "Fixture symbol unavailable." }, { status: 404 });
+        if (id === "NSE:RELIANCE") {
+          return Response.json({
+            errorCode: "BROKER_TOTP_REQUIRED",
+            actionHint: "Reconnect the owner broker session.",
+          }, { status: 401 });
+        }
+        const count = id === "BSE:SBIN" ? 124 : 215;
+        const rows = [];
+        for (let offset = 1; offset <= days && rows.length < count; offset++) {
+          const date = new Date(nowMs - offset * 86_400_000);
+          if ([0, 6].includes(date.getUTCDay())) continue;
+          const close = 500 - rows.length;
+          rows.push([`${date.toISOString().slice(0, 10)}T00:00:00+05:30`, close, close + 1, close - 1, close, 100]);
+        }
+        return Response.json(normalizeAngelOneCandles(master.resolve(id, nowMs), "1d", rows, nowMs));
+      },
+    },
+  };
+  let activeUser = { userId: "owner" };
+  const harness = buildWorkerHarness(env, () => activeUser);
+  const route = await harness.load("app/api/strategy/scan/route.ts");
+  const base = "https://example.invalid";
+  const call = async (action, id, extra = {}) => {
+    const response = await route.POST(new Request(`${base}/api/strategy/scan`, {
+      method: "POST",
+      headers: { origin: base, "content-type": "application/json" },
+      body: JSON.stringify({
+        action,
+        name: "Golden Cross study",
+        description: "Daily Golden Cross fixture study.",
+        formula: "crossesAbove(sma(close, 50), sma(close, 200))",
+        mode: "SIMPLE",
+        universe: "CONNECTED_MARKETS",
+        instrumentIds: [id],
+        ...extra,
+      }),
+    }));
+    return { status: response.status, body: await response.json() };
+  };
+  const ready = await call("preflight-scan", "NSE:SBIN");
+  assert.equal(ready.status, 200);
+  assert.equal(ready.body.preflight.minimumBars, 201);
+  assert.equal(ready.body.preflight.eligible, 1);
+  assert.ok(requests[0].days > 300 && requests[0].days <= 365);
+
+  const beforeScopeChecks = requests.length;
+  const noScope = await call("preflight-scan", "NSE:SBIN", { scanRequestVersion: 2 });
+  assert.equal(noScope.status, 400);
+  const wrongSource = await call("preflight-scan", "NSE:SBIN", {
+    scanRequestVersion: 2, universePreset: "INDIAN_EQUITIES", universe: "ECB_DAILY",
+  });
+  assert.equal(wrongSource.status, 400);
+  const unsupportedRun = await call("run-scan", "NSE:SBIN", {
+    scanRequestVersion: 2, universePreset: "INDIAN_EQUITIES",
+    interval: "30m", requestId: webcrypto.randomUUID(),
+  });
+  assert.equal(unsupportedRun.status, 422);
+  assert.equal((await env.DB.prepare("SELECT count(*) AS count FROM x51_scan_reservations").first()).count, 0);
+  assert.equal(requests.length, beforeScopeChecks);
+
+  const short = await call("preflight-scan", "BSE:SBIN");
+  assert.equal(short.body.preflight.blocked, true);
+  assert.match(short.body.preflight.exclusions[0].reasons[0], /201 bars.*124 available/);
+  const unavailable = await call("preflight-scan", "NSE:RELIANCE");
+  assert.match(unavailable.body.preflight.reason, /BROKER_TOTP_REQUIRED/);
+
+  const requestCount = requests.length;
+  const intraday = await call("preflight-scan", "NSE:SBIN", { interval: "30m" });
+  assert.match(intraday.body.preflight.reason, /30m/);
+  const mislabeledCsv = await call("preflight-scan", "CSV:SBIN", {
+    interval: "1h",
+    customCsv: "symbol,date,close\nSBIN,2026-11-20,500",
+  });
+  assert.match(mislabeledCsv.body.preflight.reason, /Private CSV.*1h/);
+  activeUser = { userId: "alice" };
+  const member = await call("preflight-scan", "NSE:SBIN");
+  assert.equal(member.body.preflight.blocked, true);
+  assert.equal(requests.length, requestCount);
+
+  activeUser = { userId: "owner" };
+  const blocked = await call("run-scan", "BSE:SBIN", { requestId: webcrypto.randomUUID() });
+  assert.equal(blocked.status, 422);
+  assert.equal((await env.DB.prepare("SELECT count(*) AS count FROM x1_scans").first()).count, 0);
+  const requestId = webcrypto.randomUUID();
+  const saved = await call("run-scan", "NSE:SBIN", { requestId });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.results.eligible, 1);
+  assert.equal(saved.body.results.matches, 0);
+  const row = await env.DB.prepare("SELECT payload FROM x1_scans WHERE id=?").bind(saved.body.id).first();
+  assert.equal(JSON.parse(row.payload).datasets[0].observations.length, 215);
+  assert.equal(saved.body.scanQuota.classic.used, 1);
+  const replay = await call("run-scan", "NSE:SBIN", { requestId });
+  assert.equal(replay.body.id, saved.body.id);
+  assert.equal(replay.body.replayed, true);
+
+  const equities = await call("preflight-scan", "NSE:SBIN", {
+    scanRequestVersion: 2,
+    universePreset: "INDIAN_EQUITIES",
+    instrumentIds: ["NSE:SBIN", "NSE:NIFTY", "MCX:GOLD04DEC26FUT"],
+  });
+  assert.deepEqual(equities.body.preflight.results.results.map((row) => row.instrumentId), ["NSE:SBIN"]);
+  assert.deepEqual(new Set(equities.body.sourceExclusions.map(({ id }) => id)), new Set(["NSE:NIFTY", "MCX:GOLD04DEC26FUT"]));
+  assert.equal(equities.body.preflight.accounting.requested, 3);
+  assert.equal(equities.body.preflight.accounting.eligible, 1);
+  assert.equal(equities.body.preflight.accounting.excluded, 2);
+  assert.equal(equities.body.preflight.accounting.coveragePct, 33.3);
+
+  for (const size of [25, 51, 501, 1_000]) {
+    const start = requests.length;
+    const capped = await call("preflight-scan", "NSE:SBIN", {
+      scanRequestVersion: 2,
+      universePreset: "INDIAN_EQUITIES",
+      formula: "close > 0",
+      instrumentIds: Array.from({ length: size }, (_, index) => `NSE:X7CAP${index}`),
+    });
+    assert.equal(capped.status, 200);
+    assert.equal(requests.length - start, 24);
+    assert.equal(capped.body.preflight.accounting.requested, size);
+    assert.equal(capped.body.preflight.accounting.deferred, size - 24);
+    assert.equal(capped.body.preflight.accounting.excluded, size);
+    assert.equal(capped.body.preflight.accounting.coveragePct, 0);
+  }
+
+  const mcx = await call("preflight-scan", "NSE:SBIN", {
+    universePreset: "MCX_FUTURES",
+    instrumentIds: ["NSE:SBIN"],
+  });
+  assert.equal(mcx.body.preflight.blocked, true);
+  assert.equal(mcx.body.sourceExclusions[0].id, "NSE:SBIN");
+  const noCsv = await call("preflight-scan", "NSE:SBIN", { universePreset: "CUSTOM_CSV" });
+  assert.match(noCsv.body.preflight.reason, /Upload a dated daily CSV/);
+
+  await env.DB.prepare(`
+    INSERT INTO x1_records (id,subject,kind,name,payload,version,archived,last_write,created_at,updated_at)
+    VALUES ('wl-fixture','owner','watchlist','Watchlist',?,1,0,'fixture',?,?)
+  `).bind(JSON.stringify({ items: ["NSE:SBIN"] }), new Date(nowMs).toISOString(), new Date(nowMs).toISOString()).run();
+  const watchlist = await call("preflight-scan", "NSE:SBIN", {
+    universePreset: "MY_WATCHLIST",
+    instrumentIds: [],
+  });
+  assert.deepEqual(watchlist.body.preflight.results.results.map((row) => row.instrumentId), ["NSE:SBIN"]);
+  const outside = await call("preflight-scan", "BSE:SBIN", { universePreset: "MY_WATCHLIST" });
+  assert.match(outside.body.preflight.reason, /outside your active watchlist/);
+  activeUser = { userId: "alice" };
+  const other = await call("preflight-scan", "NSE:SBIN", { universePreset: "MY_WATCHLIST" });
+  assert.match(other.body.preflight.reason, /Add instruments to your active watchlist/);
+  const otherList = await call("preflight-scan", "NSE:SBIN", {
+    scanRequestVersion: 2, universePreset: "MY_WATCHLIST", watchlistId: "wl-fixture",
+  });
+  assert.match(otherList.body.preflight.reason, /selected watchlist is unavailable/);
+  assert.equal(otherList.body.preflight.accounting.discovered, 0);
+});
 
 test("full local loopback adapter + Cloudflare Worker route authorization, multi-exchange quotes, candles, offline degradation & zero leak", async () => {
   const adapter = await startMarketAdapterServer({

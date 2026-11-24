@@ -3,6 +3,7 @@ import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import { loadMarketData, type DataPoint } from "./market-data";
 import type { ScanDataset } from "../../engines/scan";
+import { matchesScanMarketPreset, type ScanSourceExclusion, type ScanUniversePreset } from "../research/research";
 import type {
   AssetResearch,
   ChartLayout,
@@ -12,7 +13,7 @@ import type {
   ProviderHealth,
   ProviderId,
 } from "./data-types";
-import { aggregateCandles, aggregateReferences } from "../../engines/chart-analytics";
+import { aggregateCandles, aggregateReferences, calendarPeriodKey } from "../../engines/chart-analytics";
 import {
   EMPTY_HEALTH,
   PROVIDERS,
@@ -29,8 +30,15 @@ import {
 import { X2_INSTRUMENTS, registryInstrument } from "./instrument-registry";
 import {
   gatewayCandles,
+  gatewaySearchInstruments,
+  MarketGatewayError,
   resolveGatewayConfig,
 } from "./angelone/gateway";
+import {
+  brokerScanFreshnessMs,
+  brokerScanLookbackDays,
+  completedBrokerObservations,
+} from "./angelone/scan-history";
 import {
   ANGEL_ONE_SOURCE_URL,
 } from "./angelone/normalizer";
@@ -761,7 +769,7 @@ export async function currentDisplayRights(
 }
 export type ResearchUniverse = {
   datasets: ScanDataset[];
-  excluded: { id: string; reason: string }[];
+  excluded: ScanSourceExclusion[];
   discoveredCount?: number;
   authorizedCount?: number;
   source: string;
@@ -783,6 +791,27 @@ export type ResearchUniverse = {
     periodPolicy?: string;
   }[];
 };
+
+function completedPublishedPeriods<T extends { date: string }>(
+  rows: T[],
+  interval: Interval,
+  currentDate: string,
+) {
+  if (interval === "1d" || !rows.length) return rows;
+  const first = calendarPeriodKey(rows[0].date, interval);
+  const current = calendarPeriodKey(currentDate, interval);
+  return rows.filter(({ date }) => {
+    const period = calendarPeriodKey(date, interval);
+    return period !== first && period < current;
+  });
+}
+
+function dateInZone(zone: string, now = new Date()) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(now);
+}
+
 export async function researchUniverse(
   subject: string,
   options: {
@@ -790,11 +819,15 @@ export async function researchUniverse(
     instrumentIds?: string[];
     interval?: Interval;
     limit?: number;
+    minimumBars?: number;
+    universePreset?: ScanUniversePreset;
+    traceId?: string;
   } = {},
 ): Promise<ResearchUniverse> {
   if (options.interval && !["1d", "1wk", "1mo"].includes(options.interval))
     throw new HttpError(400, "Use a supported scan interval.");
-  const maxLimit = Math.max(1, Math.min(1000, options.limit ?? 500));
+  const maxLimit = Math.max(1, Math.min(24, options.limit ?? 24));
+  const interval = options.interval ?? "1d";
   const out: ResearchUniverse = {
     datasets: [],
     excluded: [],
@@ -818,10 +851,14 @@ export async function researchUniverse(
     out.discoveredCount = matchedHistory.length;
     out.authorizedCount = matchedHistory.length;
     for (const h of matchedHistory) {
-      if (!h.canAnalyze) {
+      const history = aggregateReferences(
+        completedPublishedPeriods(h.points, interval, dateInZone("Europe/Brussels")),
+        interval,
+      );
+      if (!h.canAnalyze || !history.length) {
         out.excluded.push({
           id: h.id,
-          reason: "Daily reference history is unavailable or stale.",
+          reason: "Completed reference history is unavailable or stale for this timeframe.",
         });
         continue;
       }
@@ -831,11 +868,8 @@ export async function researchUniverse(
         source: h.provider,
         permitted: true,
         frequency: "DAILY_REFERENCE",
-        maxAgeMs: 5 * 86400000,
-        observations: aggregateReferences(
-          h.points,
-          options.interval ?? "1d",
-        ).map((p) => ({
+        maxAgeMs: brokerScanFreshnessMs(interval),
+        observations: history.map((p) => ({
           eventAt: p.date + "T00:00:00.000Z",
           knownAt: p.knownAt,
           close: p.close,
@@ -844,7 +878,7 @@ export async function researchUniverse(
       out.lineage.push({
         instrumentId: h.id,
         provider: h.provider,
-        eventAt: h.points.at(-1)?.date ?? null,
+        eventAt: history.at(-1)?.date ?? null,
         retrievedAt: h.retrievedAt,
         adjustment: "REFERENCE_ONLY",
         displayAllowed: true,
@@ -853,12 +887,17 @@ export async function researchUniverse(
         interval: options.interval ?? "1d",
         periodPolicy:
           options.interval && options.interval !== "1d"
-            ? "LAST_AVAILABLE_REFERENCE; LATEST_CALENDAR_GROUP_MAY_BE_PARTIAL"
+            ? "LAST_REFERENCE_IN_COMPLETED_CALENDAR_PERIOD"
             : "DAILY_SOURCE_OBSERVATIONS",
       });
     }
+    for (const id of options.instrumentIds ?? []) {
+      if (!matchedHistory.some((history) => history.id === id))
+        out.excluded.push({ id, reason: "No eligible ECB daily reference history for this instrument." });
+    }
     return out;
   }
+  const preset = options.universePreset;
   const configs = (await providerConfigs()).filter(
     (c) =>
       rightsActive(c, "analysis") &&
@@ -867,7 +906,9 @@ export async function researchUniverse(
         options.provider === c.provider),
   );
   const allCommercialIds = [
-    ...new Set(configs.flatMap((c) => c.instruments.map((i) => i.id))),
+    ...new Set(configs.flatMap((c) => c.instruments
+      .filter((i) => matchesScanMarketPreset(preset, i.market, i.type, i.expiry))
+      .map((i) => i.id))),
   ].filter(
     (id) =>
       !options.instrumentIds?.length || options.instrumentIds.includes(id),
@@ -876,27 +917,32 @@ export async function researchUniverse(
   for (const deferredId of allCommercialIds.slice(maxLimit)) {
     out.excluded.push({
       id: deferredId,
+      kind: "deferred",
       reason: `Deferred beyond single-batch scan cap (${maxLimit} instruments).`,
     });
   }
   const loadedIds = new Set<string>();
   for (const id of ids) {
     const selected = configs.find((c) =>
-      c.instruments.some((i) => i.id === id),
+      c.instruments.some((i) => i.id === id &&
+        matchesScanMarketPreset(preset, i.market, i.type, i.expiry)),
     )!;
     const a = await sourceResearch(
       id,
       subject,
-      options.interval ?? "1d",
+      "1d",
       false,
       "analysis",
       selected.provider,
     );
+    const rows = completedPublishedPeriods(a.candles, interval, dateInZone(a.instrument?.timezone ?? "UTC"));
+    const closes = aggregateReferences(rows, interval);
+    const candles = aggregateCandles(rows, interval);
     if (
       !a.capabilities.analysis ||
       !a.capabilities.storage ||
       a.state === "STALE" ||
-      !a.candles.length
+      !candles.length
     ) {
       out.excluded.push({
         id,
@@ -912,9 +958,9 @@ export async function researchUniverse(
       source: a.provider,
       permitted: true,
       frequency: "PUBLISHED_EOD",
-      maxAgeMs: 5 * 86400000,
-      observations: a.candles.map((c) => ({
-        eventAt: c.date + "T00:00:00.000Z",
+      maxAgeMs: brokerScanFreshnessMs(interval),
+      observations: candles.map((c, index) => ({
+        eventAt: closes[index].date + "T00:00:00.000Z",
         knownAt: c.knownAt,
         open: c.open,
         high: c.high,
@@ -927,7 +973,7 @@ export async function researchUniverse(
     out.lineage.push({
       instrumentId: id,
       provider: a.provider,
-      eventAt: a.candles.at(-1)?.date ?? null,
+      eventAt: closes.at(-1)?.date ?? null,
       retrievedAt: a.retrievedAt!,
       adjustment: "RAW",
       displayAllowed: rightsActive(selected, "display"),
@@ -939,101 +985,134 @@ export async function researchUniverse(
       interval: options.interval ?? "1d",
       periodPolicy:
         options.interval && options.interval !== "1d"
-          ? "GROUPED_DAILY_OHLC; LATEST_CALENDAR_GROUP_MAY_BE_PARTIAL"
+          ? "GROUPED_DAILY_OHLC_IN_COMPLETED_CALENDAR_PERIOD"
           : "DAILY_SOURCE_OBSERVATIONS",
     });
   }
-  // Owner-only private Angel One daily candles for Soul Scan (no hidden .slice(0, 5) truncation!)
+  // Prefer an eligible licensed series for the same identifier; add private
+  // broker series independently of whether unrelated licensed symbols loaded.
   if (
     isDataOwner(subject) &&
-    (options.provider === "ANGELONE" ||
-      (options.provider === "CONNECTED_MARKETS" && out.datasets.length === 0)) &&
+    (options.provider === "ANGELONE" || options.provider === "CONNECTED_MARKETS") &&
     resolveGatewayConfig(environment()).flags.enablePrivateBrokerData
   ) {
-    const rawBrokerCandidates = (
+    const brokerUniverse = !options.instrumentIds?.length && preset === "MCX_FUTURES"
+      ? (await gatewaySearchInstruments({
+          isOwner: true, exchange: "MCX", segment: "FUTURE", limit: 50, runtimeEnv: environment(),
+        })).instruments
+      : VERIFIED_SEED_INSTRUMENTS;
+    const rawBrokerCandidates = [...new Set(
       options.instrumentIds?.length
-        ? options.instrumentIds.filter((id) => /^(NSE|BSE|MCX):/i.test(id))
-        : VERIFIED_SEED_INSTRUMENTS.map((i) => i.id)
-    ).filter((id) => !loadedIds.has(id));
-    const remainingBudget = Math.max(0, maxLimit - out.datasets.length);
+        ? options.instrumentIds.filter((id) => {
+            if (preset === "INDIAN_EQUITIES" && !/^(NSE|BSE):/i.test(id)) return false;
+            if (preset === "MCX_FUTURES" && !/^MCX:/i.test(id)) return false;
+            return /^(NSE|BSE|MCX):/i.test(id);
+          })
+        : brokerUniverse.filter((i) => matchesScanMarketPreset(preset, i.exchange, i.segment, i.expiry)).map((i) => i.id)
+    )].filter((id) => !loadedIds.has(id));
+    const targetBars = Math.min(1_500, Math.max(100, (options.minimumBars ?? 0) + 60));
+    const remainingBudget = Math.min(
+      Math.floor(5_500 / targetBars),
+      Math.max(0, maxLimit - ids.length),
+    );
     const candidateIds = rawBrokerCandidates.slice(0, remainingBudget);
     for (const deferredId of rawBrokerCandidates.slice(remainingBudget)) {
       out.excluded.push({
         id: deferredId,
-        reason: `Deferred beyond single-batch scan cap (${maxLimit} instruments).`,
+        kind: "deferred",
+        reason: `Deferred beyond this run's broker request budget (${remainingBudget} instruments). Narrow the selection.`,
       });
     }
+    const maxAgeMs = brokerScanFreshnessMs(interval);
+    const days = brokerScanLookbackDays(interval, options.minimumBars);
+    const source = "Angel One SmartAPI (Private Owner)";
     const chunkSize = 6;
     for (let i = 0; i < candidateIds.length; i += chunkSize) {
       const batch = candidateIds.slice(i, i + chunkSize);
       const batchResults = await Promise.all(
-        batch.map(async (id) => ({
-          id,
-          asset: await sourceResearch(
-            id,
-            subject,
-            options.interval ?? "1d",
-            false,
-            "analysis",
-          ),
-        })),
+        batch.map(async (id) => {
+          try {
+            const series = await gatewayCandles({
+              authenticated: true,
+              isOwner: true,
+              id,
+              interval: "1d",
+              days,
+              traceId: options.traceId,
+              runtimeEnv: environment(),
+            });
+            const instrument = series.instrument;
+            if (!matchesScanMarketPreset(preset, instrument.exchange, instrument.segment, instrument.expiry))
+              return { id, reason: "Instrument is outside the selected universe or its contract has expired." };
+            const observations = series.sourceMode === "PRIVATE_OWNER_FEED"
+              ? completedBrokerObservations(series, interval).slice(-targetBars)
+              : [];
+            const latest = observations.at(-1);
+            if (!latest) return { id, reason: "No completed broker candles for the selected timeframe." };
+            if (Date.now() - Date.parse(latest.eventAt) > maxAgeMs)
+              return { id, reason: "Completed broker candles are stale for the selected timeframe." };
+            return { id, series, observations, latest };
+          } catch (error) {
+            return {
+              id,
+              kind: error instanceof MarketGatewayError &&
+                (error.code === "SEGMENT_NOT_ENTITLED" || error.code === "PUBLIC_LICENSE_REQUIRED")
+                ? "denied" as const : "error" as const,
+              reason: error instanceof MarketGatewayError
+                ? `${error.code}: ${error.actionHint}`
+                : "Broker historical candles could not be loaded. Retry the coverage check.",
+            };
+          }
+        }),
       );
-      for (const { id, asset: a } of batchResults) {
-        if (!a.candles.length || a.state === "REAL_BUT_STALE" || a.state === "NO_DATA") {
-          out.excluded.push({
-            id,
-            reason:
-              "Private broker historical candles unavailable or stale for this symbol.",
-          });
+      for (const result of batchResults) {
+        if (!result.series) {
+          out.excluded.push({ id: result.id, reason: result.reason, kind: result.kind });
           continue;
         }
-        loadedIds.add(a.id);
+        const { series, observations, latest } = result;
+        const { id, currency } = series.instrument;
+        const alreadyLoaded = loadedIds.has(id);
+        loadedIds.add(result.id);
+        loadedIds.add(id);
+        if (alreadyLoaded) continue;
         out.datasets.push({
-          instrumentId: a.id,
-          currency: a.currency,
-          source: a.provider,
+          instrumentId: id,
+          currency,
+          source,
           permitted: true,
           frequency: "PUBLISHED_EOD",
-          maxAgeMs: 5 * 86400000,
-          observations: a.candles.map((c) => ({
-            eventAt: c.date + "T00:00:00.000Z",
-            knownAt: c.knownAt,
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-            volume: c.volume,
-            fields: { openinterest: c.openInterest },
-          })),
+          maxAgeMs,
+          observations,
         });
         out.lineage.push({
-          instrumentId: a.id,
-          provider: a.provider,
-          eventAt: a.candles.at(-1)?.date ?? null,
-          retrievedAt: a.retrievedAt ?? new Date().toISOString(),
+          instrumentId: id,
+          provider: source,
+          eventAt: latest.eventAt,
+          retrievedAt: series.retrievalTimestampUTC,
           adjustment: "RAW",
           displayAllowed: true,
           derivedDisplayAllowed: true,
           rightsExpiresAt: null,
-          interval: options.interval ?? "1d",
-          periodPolicy:
-            options.interval && options.interval !== "1d"
-              ? "GROUPED_DAILY_OHLC; LATEST_CALENDAR_GROUP_MAY_BE_PARTIAL"
-              : "PRIVATE_OWNER_DAILY_SOURCE_OBSERVATIONS",
+          interval,
+          periodPolicy: interval === "1d"
+            ? "PRIVATE_OWNER_COMPLETED_DAILY_CANDLES"
+            : "PRIVATE_OWNER_DAILY_CANDLES_IN_COMPLETED_CALENDAR_PERIODS",
         });
       }
     }
-    if (out.datasets.length > 0 && options.provider === "ANGELONE") {
-      out.source = "Angel One SmartAPI (Private Owner)";
-      out.asOf = new Date().toISOString();
-    } else if (
-      out.datasets.length > 0 &&
-      out.datasets.every((d) => d.source === "Angel One SmartAPI (Private Owner)")
-    ) {
-      out.source = "Angel One SmartAPI (Private Owner)";
-      out.asOf = new Date().toISOString();
-    }
+    if (options.provider === "ANGELONE" ||
+      (out.datasets.length > 0 && out.datasets.every((d) => d.source === source)))
+      out.source = source;
   }
+  out.asOf = new Date().toISOString();
+  for (const id of options.instrumentIds ?? []) {
+    if (!loadedIds.has(id) && !out.excluded.some((entry) => entry.id === id))
+      out.excluded.push({ id, kind: "unavailable", reason: "No authorized historical source for this instrument in the selected universe." });
+  }
+  out.excluded = [...new Map(out.excluded
+    .filter(({ id }) => !loadedIds.has(id))
+    .map((entry) => [entry.id, entry])).values()];
   out.discoveredCount = out.datasets.length + out.excluded.length;
   out.authorizedCount = out.datasets.length;
   out.rights = {

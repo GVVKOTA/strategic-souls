@@ -1589,6 +1589,41 @@ test("X2 preflight blocks all missing sources and never manufactures a zero-matc
   assert.equal(connected.data.preflight.blocked, true);
 });
 
+test("scan persistence rolls back if completing the reservation fails", async () => {
+  const subject = "x7-atomic-scan";
+  seed(subject);
+  const input = {
+    action: "run-scan",
+    requestId: key("x7-atomic-request"),
+    mode: "SIMPLE",
+    name: "Atomic scan test",
+    description: "Synthetic fixture used for a database rollback assertion.",
+    formula: "close > 0",
+    universe: "ECB_DAILY",
+    universePreset: "ECB_DAILY",
+    scanRequestVersion: 2,
+  };
+  sql.exec(`
+    CREATE TEMP TRIGGER x7_reject_scan_completion BEFORE UPDATE ON x51_scan_reservations
+    WHEN new.subject='x7-atomic-scan' AND new.state='COMPLETED'
+    BEGIN SELECT RAISE(ABORT, 'test completion failure'); END;
+  `);
+  try {
+    assert.equal((await call(input, subject)).status, 503);
+    assert.equal(sql.prepare("SELECT count(*) n FROM x1_scans WHERE subject=?").get(subject).n, 0);
+    assert.equal(sql.prepare("SELECT state FROM x51_scan_reservations WHERE subject=?").get(subject).state, "FAILED");
+  } finally {
+    sql.exec("DROP TRIGGER x7_reject_scan_completion");
+  }
+  const saved = await call(input, subject);
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.scanQuota.classic.used, 1);
+  const replay = await call(input, subject);
+  assert.equal(replay.data.id, saved.data.id);
+  assert.equal(replay.data.replayed, true);
+  assert.equal((await call({ ...input, formula: "close < 1" }, subject)).status, 409);
+});
+
 test("X2 ten rapid draft retries save one exact version and private drafts survive reload", async () => {
   seed("x2-draft");
   const definition = {
