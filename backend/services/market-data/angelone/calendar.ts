@@ -124,6 +124,40 @@ function isUsWinterDstForMcx(dateIST: string): boolean {
   return false;
 }
 
+/**
+ * Returns IST session open/close windows (minutes since 00:00 IST) for a given exchange and IST calendar date.
+ * Returns null on full holidays and regular weekends so out-of-session bars are cleanly excluded.
+ */
+export function getExchangeSessionWindowMinutes(
+  exchange: ExchangeCode,
+  dateIST: string,
+): { openMinutes: number; closeMinutes: number } | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateIST)) return null;
+  const day = new Date(`${dateIST}T00:00:00Z`).getUTCDay();
+  if (day === 0 || day === 6) return null;
+  if (exchange === "NSE" || exchange === "BSE") {
+    if (NSE_BSE_HOLIDAYS_2026[dateIST]) return null;
+    return { openMinutes: 9 * 60 + 15, closeMinutes: 15 * 60 + 30 };
+  }
+  if (MCX_FULL_HOLIDAYS_2026[dateIST]) return null;
+  const closeMinutes = isUsWinterDstForMcx(dateIST) ? 23 * 60 + 55 : 23 * 60 + 30;
+  if (MCX_MORNING_CLOSED_EVENING_OPEN_2026[dateIST]) {
+    if (dateIST === "2026-01-01") {
+      return { openMinutes: 9 * 60, closeMinutes: 17 * 60 };
+    }
+    return { openMinutes: 17 * 60, closeMinutes };
+  }
+  return { openMinutes: 9 * 60, closeMinutes };
+}
+
+export function getIstDateAndMinutes(utcMs: number): {
+  dateIST: string;
+  minutesIST: number;
+} {
+  const p = istParts(utcMs);
+  return { dateIST: p.dateIST, minutesIST: p.minutes };
+}
+
 export function getIndianExchangeSession(
   exchange: ExchangeCode,
   nowMs = Date.now(),

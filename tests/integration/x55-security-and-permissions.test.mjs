@@ -312,10 +312,11 @@ test("guest gets 401 on private APIs; release reports X7 provenance without leak
   const relRes = await releaseRoute.GET(req("/api/release"));
   assert.equal(relRes.status, 200);
   const rel = await relRes.json();
-  assert.equal(rel.release, "X7");
-  assert.equal(rel.revisionMarker, "x7-scan-scope-2026-11-24");
+  assert.equal(rel.release, "V3.0 RC1");
+  assert.equal(rel.revisionMarker, "v3-rc1-2026-11-24");
   assert.equal(rel.buildCommit, null);
   assert.equal(rel.marketData.readOnlyOnly, true);
+  assert.doesNotMatch(JSON.stringify(rel), /angel\s*one|smartapi/i);
 
   // Guest can open discoverable researcher profile, with ZERO email/subject leak
   const pubProfRes = await networkRoute.GET(

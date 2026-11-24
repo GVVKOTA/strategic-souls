@@ -115,3 +115,4 @@ export * from "./x2-social";
 export * from "./x2-data";
 export * from "./x51-research-network";
 export * from "./x52-intelligence";
+export * from "./v3-release";

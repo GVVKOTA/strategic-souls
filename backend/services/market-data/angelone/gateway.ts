@@ -375,7 +375,7 @@ export async function gatewayHealth(options: {
   if (!config.flags.enablePrivateBrokerData) {
     return {
       ok: false,
-      provider: "Angel One SmartAPI (Read-Only)",
+      provider: "Exchange Market Feed (Read-Only)",
       mode: config.flags.mode,
       flags: {
         privateBrokerEnabled: false,
@@ -405,6 +405,7 @@ export async function gatewayHealth(options: {
     );
     return {
       ...adapterHealth,
+      provider: "Exchange Market Feed (Read-Only)",
       mode: config.flags.mode,
       flags: {
         privateBrokerEnabled: config.flags.enablePrivateBrokerData,
@@ -420,12 +421,12 @@ export async function gatewayHealth(options: {
         : new MarketGatewayError(
             503,
             "ADAPTER_OFFLINE",
-            "Private broker adapter unavailable.",
-            "Start the private adapter on the owner host.",
+            "Private market feed adapter unavailable.",
+            "Ensure the configured market feed adapter is reachable.",
           );
     return {
       ok: false,
-      provider: "Angel One SmartAPI (Read-Only)",
+      provider: "Exchange Market Feed (Read-Only)",
       mode: config.flags.mode,
       flags: {
         privateBrokerEnabled: config.flags.enablePrivateBrokerData,

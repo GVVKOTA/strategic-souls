@@ -19,6 +19,7 @@ import {
   PROVIDERS,
   ProviderFailure,
   providerCandles,
+  providerIntradayCandles,
   providerFundamentals,
   providerNews,
   providerId,
@@ -38,14 +39,15 @@ import {
   brokerScanFreshnessMs,
   brokerScanLookbackDays,
   completedBrokerObservations,
+  completedCommercialIntradayObservations,
 } from "./angelone/scan-history";
-import {
-  ANGEL_ONE_SOURCE_URL,
-} from "./angelone/normalizer";
 import {
   DEFAULT_OWNER_WATCH_IDS,
   VERIFIED_SEED_INSTRUMENTS,
 } from "./angelone/instrument-master";
+
+export const PRIVATE_EXCHANGE_FEED_LABEL = "Configured Exchange Feed (Private)";
+export const SHARED_EXCHANGE_FEED_LABEL = "Licensed Exchange Feed";
 type ConfigRow = {
   provider: ProviderId;
   version: number;
@@ -87,7 +89,7 @@ export async function instrumentRegistry(subject?: string) {
         expiry: i.expiry,
         lotSize: i.lotSize,
         tickSize: i.tickSize,
-        sourceUrl: ANGEL_ONE_SOURCE_URL,
+        sourceUrl: registryInstrument(i.id)?.sourceUrl ?? "",
         mappingStatus: "PRIVATE_OWNER_BROKER_SEED",
         availabilityState: "DATA_CONNECTED" as const,
       }))
@@ -408,7 +410,7 @@ async function sourceResearch(
   pinnedProvider?: ProviderId,
 ): Promise<AssetResearch> {
   if (
-    !["1d", "1wk", "1mo"].includes(interval) ||
+    !["1h", "1d", "1wk", "1mo"].includes(interval) ||
     typeof id !== "string" ||
     id.length > 80
   )
@@ -420,6 +422,14 @@ async function sourceResearch(
     id.startsWith("TREASURY:") ||
     id.startsWith("UST:")
   ) {
+    if (interval === "1h") {
+      return {
+        ...result,
+        limitations: [
+          "Official daily reference feed does not publish 1-hour intraday bars. Never synthesized from daily closes.",
+        ],
+      };
+    }
     const m = await loadMarketData(),
       q = [...m.quotes, ...m.yields].find((p) => p.id === id),
       h = m.fxHistory.find((p) => p.id === id);
@@ -519,9 +529,12 @@ async function sourceResearch(
         let raw: AssetResearch["candles"] = [];
         if (c.datasets.includes("candles")) {
           await quota(c);
-          raw = await providerCandles(c, instrument, secret);
+          raw =
+            interval === "1h"
+              ? await providerIntradayCandles(c, instrument, secret, "1h", 45)
+              : await providerCandles(c, instrument, secret);
         }
-        out.candles = aggregateCandles(raw, interval);
+        out.candles = interval === "1h" ? raw : aggregateCandles(raw, interval);
         out.references = out.candles.map((b) => ({
           date: b.date,
           close: b.close,
@@ -530,7 +543,9 @@ async function sourceResearch(
         const latest = raw.at(-1);
         out.state =
           latest && Date.now() - Date.parse(latest.date) < 5 * 86400000
-            ? "PUBLISHED_EOD"
+            ? interval === "1h"
+              ? "PUBLISHED_INTRADAY"
+              : "PUBLISHED_EOD"
             : latest
               ? "STALE"
               : "UNAVAILABLE";
@@ -630,25 +645,32 @@ async function sourceResearch(
     // Retry only a complete independently entitled series; never splice histories.
   }
 
-  // Private owner-only Angel One read-only broker feed (never accessible to non-owner/public readers).
+  // Private owner-only read-only exchange feed (never accessible to non-owner/public readers unless explicitly licensed).
+  const gwConfig = resolveGatewayConfig(environment());
+  const gatewayFeedAllowed =
+    (isDataOwner(subject) && gwConfig.flags.enablePrivateBrokerData) ||
+    (gwConfig.flags.mode === "public_licensed" && gwConfig.flags.enablePublicExchangeQuotes);
+  const feedLabel =
+    gwConfig.flags.mode === "public_licensed" && gwConfig.flags.enablePublicExchangeQuotes && !isDataOwner(subject)
+      ? SHARED_EXCHANGE_FEED_LABEL
+      : PRIVATE_EXCHANGE_FEED_LABEL;
   if (
     !pinnedProvider &&
-    isDataOwner(subject) &&
-    /^(NSE|BSE|MCX):/i.test(id) &&
-    resolveGatewayConfig(environment()).flags.enablePrivateBrokerData
+    gatewayFeedAllowed &&
+    /^(NSE|BSE|MCX):/i.test(id)
   ) {
     try {
       const series = await gatewayCandles({
         authenticated: true,
-        isOwner: true,
+        isOwner: isDataOwner(subject),
         id,
-        interval: "1d",
-        days: 180,
+        interval: interval === "1h" ? "1h" : "1d",
+        days: interval === "1h" ? 45 : 180,
         runtimeEnv: environment(),
       });
       if (series.candles.length > 0) {
         const rawBars = series.candles.map((b) => ({
-          date: b.dateIST,
+          date: interval === "1h" ? b.timestampUTC : b.dateIST,
           open: b.open,
           high: b.high,
           low: b.low,
@@ -658,9 +680,9 @@ async function sourceResearch(
           openInterest: b.openInterest,
           knownAt: series.retrievalTimestampUTC,
           adjustment: "RAW" as const,
-          provider: "Angel One SmartAPI (Private Owner)",
+          provider: feedLabel,
         }));
-        const aggregated = aggregateCandles(rawBars, interval);
+        const aggregated = interval === "1h" ? rawBars : aggregateCandles(rawBars, interval);
         return {
           ...result,
           id: series.instrument.id,
@@ -684,8 +706,8 @@ async function sourceResearch(
                 }
               : {}),
           },
-          provider: "Angel One SmartAPI (Private Owner)",
-          sourceUrl: ANGEL_ONE_SOURCE_URL,
+          provider: feedLabel,
+          sourceUrl: registryInstrument(series.instrument.id)?.sourceUrl ?? "",
           state: series.quality,
           asOf: series.retrievalTimestampUTC,
           retrievedAt: series.retrievalTimestampUTC,
@@ -708,7 +730,7 @@ async function sourceResearch(
           },
           limitations: [
             ...series.limitations,
-            ...(interval === "1d"
+            ...(interval === "1d" || interval === "1h"
               ? []
               : [
                   "Aggregated daily bars may include a developing latest calendar group, not a completed period.",
@@ -719,9 +741,9 @@ async function sourceResearch(
     } catch {
       return {
         ...result,
-        provider: "Angel One SmartAPI (Private Owner)",
+        provider: feedLabel,
         limitations: [
-          "Private broker adapter is offline, session expired, or symbol unavailable. Last-known values are never fabricated.",
+          "Exchange historical feed is currently unavailable for this symbol. Last-known values are never fabricated.",
         ],
       };
     }
@@ -747,8 +769,15 @@ export async function currentDisplayRights(
       derivedDisplayAllowed: true,
       rightsExpiresAt: null,
     };
-  if (provider === "Angel One SmartAPI (Private Owner)") {
-    const active = resolveGatewayConfig(environment()).flags.enablePrivateBrokerData;
+  if (
+    provider === PRIVATE_EXCHANGE_FEED_LABEL ||
+    provider === SHARED_EXCHANGE_FEED_LABEL ||
+    provider === "Angel One SmartAPI (Private Owner)"
+  ) {
+    const cfg = resolveGatewayConfig(environment());
+    const active =
+      cfg.flags.enablePrivateBrokerData ||
+      (cfg.flags.mode === "public_licensed" && cfg.flags.enablePublicExchangeQuotes);
     return {
       displayAllowed: active,
       derivedDisplayAllowed: active,
@@ -767,6 +796,21 @@ export async function currentDisplayRights(
     rightsExpiresAt: c?.rights.expiresAt ?? null,
   };
 }
+export type ResearchUniverseDiagnostics = {
+  traceId: string | null;
+  preset: ScanUniversePreset | null;
+  interval: Interval;
+  catalogCount: number;
+  authorizedCount: number;
+  historyFetchedCount: number;
+  excludedCount: number;
+  failureCategory:
+    | "OK"
+    | "SHARED_MARKET_DATA_UNCONFIGURED"
+    | "INTRADAY_UNSUPPORTED_FOR_SOURCE"
+    | "UPSTREAM_UNAVAILABLE"
+    | "NO_ELIGIBLE_HISTORY";
+};
 export type ResearchUniverse = {
   datasets: ScanDataset[];
   excluded: ScanSourceExclusion[];
@@ -777,6 +821,7 @@ export type ResearchUniverse = {
   adjusted: boolean;
   rights: { analysis: boolean; storage: boolean };
   asOf: string;
+  diagnostics?: ResearchUniverseDiagnostics;
   lineage: {
     instrumentId: string;
     provider: string;
@@ -797,7 +842,7 @@ function completedPublishedPeriods<T extends { date: string }>(
   interval: Interval,
   currentDate: string,
 ) {
-  if (interval === "1d" || !rows.length) return rows;
+  if (interval === "1d" || interval === "1h" || !rows.length) return rows;
   const first = calendarPeriodKey(rows[0].date, interval);
   const current = calendarPeriodKey(currentDate, interval);
   return rows.filter(({ date }) => {
@@ -824,7 +869,7 @@ export async function researchUniverse(
     traceId?: string;
   } = {},
 ): Promise<ResearchUniverse> {
-  if (options.interval && !["1d", "1wk", "1mo"].includes(options.interval))
+  if (options.interval && !["1h", "1d", "1wk", "1mo"].includes(options.interval))
     throw new HttpError(400, "Use a supported scan interval.");
   const maxLimit = Math.max(1, Math.min(24, options.limit ?? 24));
   const interval = options.interval ?? "1d";
@@ -849,7 +894,29 @@ export async function researchUniverse(
         !options.instrumentIds?.length || options.instrumentIds.includes(h.id),
     );
     out.discoveredCount = matchedHistory.length;
-    out.authorizedCount = matchedHistory.length;
+    out.authorizedCount = interval === "1h" ? 0 : matchedHistory.length;
+    if (interval === "1h") {
+      for (const h of matchedHistory) {
+        out.excluded.push({
+          id: h.id,
+          kind: "scope",
+          reason:
+            "Daily reference FX does not publish genuine 1-hour candles; daily bars are never fabricated into hourly bars.",
+        });
+      }
+      out.rights = { analysis: false, storage: false };
+      out.diagnostics = {
+        traceId: options.traceId ?? null,
+        preset: options.universePreset ?? null,
+        interval,
+        catalogCount: matchedHistory.length,
+        authorizedCount: 0,
+        historyFetchedCount: 0,
+        excludedCount: out.excluded.length,
+        failureCategory: "INTRADAY_UNSUPPORTED_FOR_SOURCE",
+      };
+      return out;
+    }
     for (const h of matchedHistory) {
       const history = aggregateReferences(
         completedPublishedPeriods(h.points, interval, dateInZone("Europe/Brussels")),
@@ -927,14 +994,62 @@ export async function researchUniverse(
       c.instruments.some((i) => i.id === id &&
         matchesScanMarketPreset(preset, i.market, i.type, i.expiry)),
     )!;
+    const mappedInst = selected.instruments.find((i) => i.id === id);
     const a = await sourceResearch(
       id,
       subject,
-      "1d",
+      interval === "1h" ? "1h" : "1d",
       false,
       "analysis",
       selected.provider,
     );
+    if (interval === "1h") {
+      const observations = completedCommercialIntradayObservations(
+        a.candles,
+        mappedInst?.market ?? "GLOBAL",
+        a.retrievedAt ?? out.asOf,
+      );
+      const latest = observations.at(-1);
+      if (
+        !a.capabilities.analysis ||
+        !a.capabilities.storage ||
+        a.state === "STALE" ||
+        !latest
+      ) {
+        out.excluded.push({
+          id,
+          reason:
+            "Genuine completed 1-hour candles or analysis rights are unavailable for this instrument.",
+        });
+        continue;
+      }
+      loadedIds.add(id);
+      out.datasets.push({
+        instrumentId: id,
+        currency: a.currency,
+        source: a.provider,
+        permitted: true,
+        frequency: "INTRADAY_1H",
+        maxAgeMs: brokerScanFreshnessMs("1h"),
+        observations,
+      });
+      out.lineage.push({
+        instrumentId: id,
+        provider: a.provider,
+        eventAt: latest.eventAt,
+        retrievedAt: a.retrievedAt ?? out.asOf,
+        adjustment: "RAW",
+        displayAllowed: rightsActive(selected, "display"),
+        derivedDisplayAllowed:
+          rightsActive(selected, "analysis") &&
+          selected.rights.derivedDisplay === true,
+        rightsExpiresAt: selected.rights.expiresAt,
+        configVersion: selected.version,
+        interval: "1h",
+        periodPolicy: "COMPLETED_1H_SESSION_BARS_WITH_TERMINAL_CLOSE",
+      });
+      continue;
+    }
     const rows = completedPublishedPeriods(a.candles, interval, dateInZone(a.instrument?.timezone ?? "UTC"));
     const closes = aggregateReferences(rows, interval);
     const candles = aggregateCandles(rows, interval);
@@ -989,18 +1104,41 @@ export async function researchUniverse(
           : "DAILY_SOURCE_OBSERVATIONS",
     });
   }
-  // Prefer an eligible licensed series for the same identifier; add private
-  // broker series independently of whether unrelated licensed symbols loaded.
+  // Prefer an eligible licensed series for the same identifier; add exchange gateway
+  // series strictly when either owner-private OR explicitly licensed public redistribution is enabled.
+  const gw = resolveGatewayConfig(environment());
+  const ownerFeedAllowed = isDataOwner(subject) && gw.flags.enablePrivateBrokerData;
+  const sharedLicensedGatewayAllowed =
+    gw.flags.mode === "public_licensed" && gw.flags.enablePublicExchangeQuotes;
   if (
-    isDataOwner(subject) &&
-    (options.provider === "ANGELONE" || options.provider === "CONNECTED_MARKETS") &&
-    resolveGatewayConfig(environment()).flags.enablePrivateBrokerData
+    (ownerFeedAllowed || sharedLicensedGatewayAllowed) &&
+    (options.provider === "ANGELONE" || options.provider === "CONNECTED_MARKETS")
   ) {
-    const brokerUniverse = !options.instrumentIds?.length && preset === "MCX_FUTURES"
-      ? (await gatewaySearchInstruments({
-          isOwner: true, exchange: "MCX", segment: "FUTURE", limit: 50, runtimeEnv: environment(),
-        })).instruments
-      : VERIFIED_SEED_INSTRUMENTS;
+    let brokerUniverse = [...VERIFIED_SEED_INSTRUMENTS];
+    if (!options.instrumentIds?.length && (preset === "MCX_FUTURES" || preset === "MARKET")) {
+      try {
+        const mcxFound = (await gatewaySearchInstruments({
+          isOwner: isDataOwner(subject),
+          exchange: "MCX",
+          segment: "FUTURE",
+          limit: preset === "MARKET" ? 16 : 50,
+          runtimeEnv: environment(),
+        })).instruments;
+        if (preset === "MCX_FUTURES") {
+          brokerUniverse = mcxFound;
+        } else {
+          const seenIds = new Set(brokerUniverse.map((x) => x.id));
+          for (const item of mcxFound) {
+            if (!seenIds.has(item.id)) {
+              seenIds.add(item.id);
+              brokerUniverse.push(item);
+            }
+          }
+        }
+      } catch {
+        // Retain verified seed catalog when live search is unavailable.
+      }
+    }
     const rawBrokerCandidates = [...new Set(
       options.instrumentIds?.length
         ? options.instrumentIds.filter((id) => {
@@ -1008,7 +1146,9 @@ export async function researchUniverse(
             if (preset === "MCX_FUTURES" && !/^MCX:/i.test(id)) return false;
             return /^(NSE|BSE|MCX):/i.test(id);
           })
-        : brokerUniverse.filter((i) => matchesScanMarketPreset(preset, i.exchange, i.segment, i.expiry)).map((i) => i.id)
+        : brokerUniverse
+            .filter((i) => matchesScanMarketPreset(preset, i.exchange, i.segment, i.expiry))
+            .map((i) => i.id)
     )].filter((id) => !loadedIds.has(id));
     const targetBars = Math.min(1_500, Math.max(100, (options.minimumBars ?? 0) + 60));
     const remainingBudget = Math.min(
@@ -1020,12 +1160,15 @@ export async function researchUniverse(
       out.excluded.push({
         id: deferredId,
         kind: "deferred",
-        reason: `Deferred beyond this run's broker request budget (${remainingBudget} instruments). Narrow the selection.`,
+        reason: `Deferred beyond this run's scan batch cap (${remainingBudget} instruments).`,
       });
     }
     const maxAgeMs = brokerScanFreshnessMs(interval);
     const days = brokerScanLookbackDays(interval, options.minimumBars);
-    const source = "Angel One SmartAPI (Private Owner)";
+    const source =
+      sharedLicensedGatewayAllowed && !ownerFeedAllowed
+        ? SHARED_EXCHANGE_FEED_LABEL
+        : PRIVATE_EXCHANGE_FEED_LABEL;
     const chunkSize = 6;
     for (let i = 0; i < candidateIds.length; i += chunkSize) {
       const batch = candidateIds.slice(i, i + chunkSize);
@@ -1034,9 +1177,9 @@ export async function researchUniverse(
           try {
             const series = await gatewayCandles({
               authenticated: true,
-              isOwner: true,
+              isOwner: isDataOwner(subject),
               id,
-              interval: "1d",
+              interval: interval === "1h" ? "1h" : "1d",
               days,
               traceId: options.traceId,
               runtimeEnv: environment(),
@@ -1044,13 +1187,14 @@ export async function researchUniverse(
             const instrument = series.instrument;
             if (!matchesScanMarketPreset(preset, instrument.exchange, instrument.segment, instrument.expiry))
               return { id, reason: "Instrument is outside the selected universe or its contract has expired." };
-            const observations = series.sourceMode === "PRIVATE_OWNER_FEED"
-              ? completedBrokerObservations(series, interval).slice(-targetBars)
-              : [];
+            const observations =
+              series.sourceMode === "PRIVATE_OWNER_FEED"
+                ? completedBrokerObservations(series, interval).slice(-targetBars)
+                : [];
             const latest = observations.at(-1);
-            if (!latest) return { id, reason: "No completed broker candles for the selected timeframe." };
+            if (!latest) return { id, reason: "No completed candles are available for the selected timeframe." };
             if (Date.now() - Date.parse(latest.eventAt) > maxAgeMs)
-              return { id, reason: "Completed broker candles are stale for the selected timeframe." };
+              return { id, reason: "Completed historical candles are stale for the selected timeframe." };
             return { id, series, observations, latest };
           } catch (error) {
             return {
@@ -1059,8 +1203,8 @@ export async function researchUniverse(
                 (error.code === "SEGMENT_NOT_ENTITLED" || error.code === "PUBLIC_LICENSE_REQUIRED")
                 ? "denied" as const : "error" as const,
               reason: error instanceof MarketGatewayError
-                ? `${error.code}: ${error.actionHint}`
-                : "Broker historical candles could not be loaded. Retry the coverage check.",
+                ? `${error.code}: ${error.actionHint}`.replace(/angel\s*one|smartapi/gi, "exchange feed")
+                : "Exchange historical candles could not be loaded. Retry shortly.",
             };
           }
         }),
@@ -1081,7 +1225,7 @@ export async function researchUniverse(
           currency,
           source,
           permitted: true,
-          frequency: "PUBLISHED_EOD",
+          frequency: interval === "1h" ? "INTRADAY_1H" : "PUBLISHED_EOD",
           maxAgeMs,
           observations,
         });
@@ -1095,9 +1239,12 @@ export async function researchUniverse(
           derivedDisplayAllowed: true,
           rightsExpiresAt: null,
           interval,
-          periodPolicy: interval === "1d"
-            ? "PRIVATE_OWNER_COMPLETED_DAILY_CANDLES"
-            : "PRIVATE_OWNER_DAILY_CANDLES_IN_COMPLETED_CALENDAR_PERIODS",
+          periodPolicy:
+            interval === "1h"
+              ? "COMPLETED_1H_SESSION_BARS_WITH_TERMINAL_CLOSE"
+              : interval === "1d"
+                ? "PRIVATE_OWNER_COMPLETED_DAILY_CANDLES"
+                : "PRIVATE_OWNER_DAILY_CANDLES_IN_COMPLETED_CALENDAR_PERIODS",
         });
       }
     }
@@ -1108,13 +1255,52 @@ export async function researchUniverse(
   out.asOf = new Date().toISOString();
   for (const id of options.instrumentIds ?? []) {
     if (!loadedIds.has(id) && !out.excluded.some((entry) => entry.id === id))
-      out.excluded.push({ id, kind: "unavailable", reason: "No authorized historical source for this instrument in the selected universe." });
+      out.excluded.push({
+        id,
+        kind: "unavailable",
+        reason: "Historical market data is not active for this instrument yet.",
+      });
   }
   out.excluded = [...new Map(out.excluded
     .filter(({ id }) => !loadedIds.has(id))
     .map((entry) => [entry.id, entry])).values()];
   out.discoveredCount = out.datasets.length + out.excluded.length;
   out.authorizedCount = out.datasets.length;
+  const failureCategory: ResearchUniverseDiagnostics["failureCategory"] =
+    out.datasets.length > 0
+      ? "OK"
+      : configs.length === 0 && !ownerFeedAllowed && !sharedLicensedGatewayAllowed
+        ? "SHARED_MARKET_DATA_UNCONFIGURED"
+        : out.excluded.some((e) => e.kind === "error")
+          ? "UPSTREAM_UNAVAILABLE"
+          : "NO_ELIGIBLE_HISTORY";
+  out.diagnostics = {
+    traceId: options.traceId ?? null,
+    preset: preset ?? null,
+    interval,
+    catalogCount: out.discoveredCount,
+    authorizedCount: out.authorizedCount,
+    historyFetchedCount: out.datasets.length,
+    excludedCount: out.excluded.length,
+    failureCategory,
+  };
+  if (failureCategory !== "OK") {
+    console.info(
+      JSON.stringify({
+        event: "soulscan_universe_diagnostic",
+        traceId: options.traceId ?? null,
+        preset: preset ?? null,
+        interval,
+        isOwner: isDataOwner(subject),
+        sharedCommercialConfigs: configs.length,
+        gatewayMode: gw.flags.mode,
+        catalogCount: out.discoveredCount,
+        authorizedCount: out.authorizedCount,
+        excludedCount: out.excluded.length,
+        failureCategory,
+      }),
+    );
+  }
   out.rights = {
     analysis: out.datasets.length > 0,
     storage: out.datasets.length > 0,

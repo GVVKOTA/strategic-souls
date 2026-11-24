@@ -124,7 +124,7 @@ export default function DataControl({
       setTotpCode("");
       setBrokerHealth(await fetchMarketHealth());
       window.dispatchEvent(new Event("x2-data-updated"));
-      notify?.("Angel One read-only session authenticated in adapter memory.");
+      notify?.("Exchange read-only feed session authenticated in memory.");
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -262,9 +262,9 @@ export default function DataControl({
         </p>
       )}
       {brokerHealth && (
-        <div className="x2-provider-status" aria-label="Angel One Private Read-Only Adapter">
+        <div className="x2-provider-status" aria-label="Configured Exchange Feed Adapter">
           <strong>
-            Angel One SmartAPI Read-Only Adapter ·{" "}
+            Configured Exchange Read-Only Feed ·{" "}
             {brokerHealth.adapterReachable ? "REACHABLE" : "OFFLINE / UNCONFIGURED"}
           </strong>
           <span>Mode: {brokerHealth.mode} ({brokerHealth.accessScope})</span>

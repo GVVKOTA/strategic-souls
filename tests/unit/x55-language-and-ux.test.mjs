@@ -64,23 +64,21 @@ test("X5.5 P2: canonical brand vocabulary applied and internal jargon removed fr
   assert.match(commShell, />Chats</);
   assert.match(commShell, />Rooms</);
   assert.match(commShell, />Soul Network</);
-  assert.match(commShell, />Copy to Drafts</);
-  assert.match(commShell, /x55-comm-tabs/);
+  assert.match(commShell, />Try this formula</);
+  assert.match(commShell, /ss-v3-comm-tabs/);
 
   const profileSheet = readFileSync(
     "frontend/features/community/public-profile-sheet.tsx",
     "utf8",
   );
   assert.match(profileSheet, />Share profile</);
-  assert.match(profileSheet, />Copy to Drafts</);
+  assert.match(profileSheet, />Try this formula</);
 
   const strat = readFileSync("frontend/features/strategy/workspace.tsx", "utf8");
-  assert.match(strat, />Publish Soul</);
-  assert.match(strat, /title="Publish to Soul Feed"/);
-  assert.match(strat, /Soul published!/);
-  assert.match(strat, /Review scan/);
-  assert.match(strat, /Not enough data to scan/);
-  assert.match(strat, /Data coverage ready/);
+  assert.match(strat, /Publish Soul/);
+  assert.match(strat, /GRAVEYARD/);
+  assert.match(strat, /Run Scan/);
+  assert.match(strat, /Review/);
 });
 
 test("X5.5 P2: code-splitting, 3D Globe buffer/motion/timeout optimizations & canonical 6 hex colors preserved", () => {

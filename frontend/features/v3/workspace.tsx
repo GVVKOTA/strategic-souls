@@ -2111,7 +2111,7 @@ function SoulDetail({
                   maxLength={160}
                 />
               </Field>
-              <Field label="Assignee Body ID (optional)">
+              <Field label="Assignee Body ID">
                 <input
                   value={assignee}
                   onChange={(e) => setAssignee(e.target.value)}
@@ -2406,7 +2406,7 @@ function TeamView({
                       ))}
                     </select>
                   </Field>
-                  <Field label="Restrict to @handle (optional)">
+                  <Field label="Restrict to @handle">
                     <input
                       value={handle}
                       onChange={(e) => setHandle(e.target.value)}
@@ -3317,7 +3317,7 @@ function ProfileView({
                 required
               />
             </Field>
-            <Field label="Bio (optional)">
+            <Field label="Bio">
               <textarea
                 value={bio}
                 maxLength={300}
@@ -3404,7 +3404,7 @@ function ProfileView({
                   unoptimized
                 />
               )}
-              <Field label="Optional private avatar (PNG, JPEG or WebP, up to 128 KiB)">
+              <Field label="Private avatar (PNG, JPEG or WebP, up to 128 KiB)">
                 <input
                   type="file"
                   accept="image/png,image/jpeg,image/webp"

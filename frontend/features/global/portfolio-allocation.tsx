@@ -1,8 +1,8 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Plus, Table2, PieChart } from "lucide-react";
+import { Table2, PieChart } from "lucide-react";
 import { computePortfolioAllocation } from "../../../backend/engines/analytics";
-import { number } from "../../components/workspace/shared";
+import { formatCurrency } from "../../components/workspace/shared";
 
 const SLICE_PALETTE = [
   "#76C0FF",
@@ -26,14 +26,14 @@ type Props = {
 };
 
 /**
- * [12] Portfolio Allocation — Interactive Cost-Basis SVG Donut + Accessible Table Fallback.
- * Zero-denominator renders N/A cleanly; negative manual cash is disclosed truthfully without inventing funding.
+ * Portfolio Cost-Basis Allocation — Interactive Vivid SVG Donut + Accessible Table Fallback.
+ * Ensures 100% single-slice rings render full palette color (never grayscaled or hairline-gapped)
+ * and keeps legend rows keyboard-accessible.
  */
 export default function PortfolioAllocation({
   currency,
   cash,
   holdings,
-  onRecordDeposit,
 }: Props) {
   const [groupBy, setGroupBy] = useState<"assetClass" | "sector" | "position">(
     "assetClass",
@@ -71,19 +71,24 @@ export default function PortfolioAllocation({
         weightPct: number | null;
         holdingCount: number;
         color: string;
-        dashArray: string;
+        isFullCircle: boolean;
+        dashArray: string | undefined;
         dashOffset: number;
         _nextOffset: number;
       }[]
     >((acc, s, idx) => {
       const offset = acc.length > 0 ? acc[acc.length - 1]._nextOffset : 0;
-      const frac = s.weightPct !== null ? Math.max(0, s.weightPct) / 100 : 0;
+      const frac = s.weightPct !== null ? Math.max(0, Math.min(1, s.weightPct / 100)) : 0;
+      const isFullCircle = slices.length === 1 && frac >= 0.999;
       const len = frac * circumference;
       acc.push({
         ...s,
         color: SLICE_PALETTE[idx % SLICE_PALETTE.length],
-        dashArray: `${len.toFixed(2)} ${Math.max(0, circumference - len).toFixed(2)}`,
-        dashOffset: -offset,
+        isFullCircle,
+        dashArray: isFullCircle
+          ? undefined
+          : `${len.toFixed(2)} ${Math.max(0, circumference - len).toFixed(2)}`,
+        dashOffset: isFullCircle ? 0 : -offset,
         _nextOffset: offset + len,
       });
       return acc;
@@ -105,8 +110,10 @@ export default function PortfolioAllocation({
         }}
       >
         <div>
-          <strong style={{ fontSize: "0.94rem" }}>Allocation</strong>{" "}
-          <span className="x51-pill">Cost basis only</span>
+          <strong style={{ fontSize: "0.96rem", color: "var(--x1-title-blue)" }}>
+            Allocation
+          </strong>{" "}
+          <span className="x51-pill">Cost basis</span>
         </div>
         <div className="x51-chip-row">
           {(
@@ -140,8 +147,8 @@ export default function PortfolioAllocation({
 
       {report.status !== "OK" || !segments.length ? (
         <p className="x1-caption" style={{ margin: 0 }}>
-          Allocation weight: <strong>N/A</strong> — record a purchase or positive
-          cash deposit to inspect cost-basis weights.
+          Record a holding purchase or cash deposit to view cost-basis
+          allocation.
         </p>
       ) : tableView ? (
         <div style={{ overflowX: "auto" }}>
@@ -149,7 +156,7 @@ export default function PortfolioAllocation({
             <thead>
               <tr>
                 <th>Bucket</th>
-                <th>Cost Basis ({currency})</th>
+                <th>Cost Basis</th>
                 <th>Weight</th>
               </tr>
             </thead>
@@ -157,7 +164,7 @@ export default function PortfolioAllocation({
               {segments.map((s) => (
                 <tr key={s.key}>
                   <td>{s.label}</td>
-                  <td>{number(s.amount)}</td>
+                  <td>{formatCurrency(s.amount, currency)}</td>
                   <td>{s.weightPct !== null ? `${s.weightPct.toFixed(1)}%` : "N/A"}</td>
                 </tr>
               ))}
@@ -167,9 +174,10 @@ export default function PortfolioAllocation({
       ) : (
         <div className="x52-alloc-body">
           <svg
+            className="ss-v3-colored-svg"
             viewBox="0 0 160 160"
-            width="152"
-            height="152"
+            width="156"
+            height="156"
             role="img"
             aria-label="Cost-basis allocation donut chart"
           >
@@ -227,9 +235,13 @@ export default function PortfolioAllocation({
               <div
                 key={seg.key}
                 role="listitem"
+                tabIndex={0}
                 className="x52-alloc-row"
+                style={{ cursor: "pointer" }}
                 onMouseEnter={() => setHoveredKey(seg.key)}
                 onMouseLeave={() => setHoveredKey(null)}
+                onFocus={() => setHoveredKey(seg.key)}
+                onBlur={() => setHoveredKey(null)}
               >
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 7, minWidth: 0 }}>
                   <span
@@ -244,41 +256,12 @@ export default function PortfolioAllocation({
                 <span style={{ flexShrink: 0 }}>
                   <strong>{seg.weightPct !== null ? `${seg.weightPct.toFixed(1)}%` : "N/A"}</strong>{" "}
                   <span className="x1-caption">
-                    ({currency} {number(seg.amount)})
+                    ({formatCurrency(seg.amount, currency)})
                   </span>
                 </span>
               </div>
             ))}
           </div>
-        </div>
-      )}
-
-      {report.value?.cashIsNegative && report.value.cashNote && (
-        <div
-          className="x1-callout"
-          style={{
-            margin: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          <span className="x1-caption" style={{ margin: 0, flex: "1 1 240px" }}>
-            {report.value.cashNote}
-          </span>
-          {onRecordDeposit && (
-            <button
-              type="button"
-              className="x1-secondary"
-              style={{ minHeight: 34, fontSize: "0.8rem" }}
-              onClick={onRecordDeposit}
-            >
-              <Plus size={13} />
-              <span>Record cash deposit</span>
-            </button>
-          )}
         </div>
       )}
     </div>

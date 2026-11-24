@@ -4,19 +4,20 @@ import {
   ArrowLeft,
   ArrowRight,
   Plus,
-  Star,
   Search,
   Trash2,
   MoveUp,
   MoveDown,
-  Wallet,
   RefreshCw,
   Image as ImageIcon,
   SlidersHorizontal,
+  Star,
+  Info,
+  X,
 } from "lucide-react";
 import {
-  BANNER_PRESETS,
-  resolveBannerPreset,
+  PORTFOLIO_BACKDROP_PRESETS,
+  resolvePortfolioBackdropPreset,
 } from "../../../backend/services/profile/banners";
 import type {
   PortfolioBackdropSettings,
@@ -38,15 +39,18 @@ import {
   WorkspaceSkeleton,
   api,
   number,
+  formatQuantity,
+  formatCurrency,
   moment,
   type WorkspaceState,
   type Notice,
 } from "../../components/workspace/shared";
+import { IconPortfolio, IconWatchlist } from "../../components/workspace/ss-icons";
+import { triggerGoFeedback } from "../../components/workspace/go-feedback";
 import type {
   GlobalView,
   IntelligenceSubView,
 } from "../../components/workspace/global-menu";
-import PrivateMarketPanel from "./private-market-panel";
 import MarketOverviewGrid from "./market-grid";
 import EconomicCalendar, {
   type EconomicEventChartContext,
@@ -267,7 +271,11 @@ export default function Global({
       );
       onProfileSynced?.(res.profile);
       setBackdropEditorOpen(false);
-      notify("Portfolio backdrop saved.");
+      triggerGoFeedback(
+        "Portfolio banner saved",
+        `portfolio-banner-${backdropDraft.presetId}-${Date.now()}`,
+      );
+      notify("Portfolio banner saved.");
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not save backdrop.", true);
     } finally {
@@ -376,12 +384,24 @@ export default function Global({
     () => searchCanonicalInstruments(search, registry, { limit: 40 }),
     [registry, search],
   );
+  const [txDefaultKind, setTxDefaultKind] = useState<string>("BUY");
+  const [welcomeDismissed, setWelcomeDismissed] = useState<boolean>(() => {
+    try {
+      return typeof window !== "undefined" && window.localStorage.getItem("ss-v3-welcome-dismissed") === "1";
+    } catch {
+      return false;
+    }
+  });
   const pendingWrite = useRef<{ signature: string; id: string } | null>(null);
-  const openEditor = (kind: "list" | "portfolio" | "transaction" | "rename") => {
+  const openEditor = (
+    kind: "list" | "portfolio" | "transaction" | "rename",
+    defaultTxKind = "BUY",
+  ) => {
     if (!authenticated) {
       onRequireAuth?.();
       return;
     }
+    if (kind === "transaction") setTxDefaultKind(defaultTxKind);
     setEdit(kind);
   };
   async function mutate(input: Record<string, unknown>) {
@@ -400,6 +420,22 @@ export default function Global({
       await api("/api/x1/workspace", input);
       await reload();
       pendingWrite.current = null;
+      const action = String(input.action ?? "");
+      const goLabel =
+        action === "transaction"
+          ? "Transaction saved"
+          : action === "create-portfolio"
+            ? "Portfolio created"
+            : action === "list-items"
+              ? "Watchlist updated"
+              : action === "create-list"
+                ? "Watchlist created"
+                : "Workspace updated";
+      triggerGoFeedback(
+        goLabel,
+        `workspace-${action}-${crypto.randomUUID()}`,
+        action === "list-items",
+      );
       notify("Saved to your private workspace.");
       setEdit(null);
     } catch (e) {
@@ -477,39 +513,127 @@ export default function Global({
          ===================================================================== */}
       {globalView === "DASHBOARD" && (
         <div className="x53-dashboard-stack" data-global-layout="x53-4-blocks">
-          {/* BLOCK A: Centered "Strategic Dashboard" + 9 Market Cards */}
+          {/* BLOCK A: Centered "Strategic Dashboard" + 8 Market Tiles */}
           <MarketOverviewGrid
             authenticated={authenticated}
             onOpenAsset={openAsset}
             onRequireAuth={onRequireAuth}
+            onCelebration={(label, mutationId) =>
+              triggerGoFeedback(label, mutationId)
+            }
             notify={notify}
           />
 
-          {/* BLOCK B: My Portfolio + Watchlist Compact Overview */}
+          {/* Lightweight Dismissible First-Use Welcome Checklist (Sec 18.1) */}
+          {authenticated &&
+            !welcomeDismissed &&
+            ((workspace?.scans.length ?? 0) === 0 ||
+              totalWatchlistItems === 0 ||
+              !portfolio) && (
+              <section
+                className="ss-v3-welcome-card"
+                aria-label="Getting started checklist"
+              >
+                <div className="ss-v3-welcome-head">
+                  <div>
+                    <h2>Start with Strategic Souls</h2>
+                    <p className="x1-caption" style={{ margin: 0 }}>
+                      Three quick steps to set up your private research workspace.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="x1-icon-button"
+                    aria-label="Dismiss getting started checklist"
+                    onClick={() => {
+                      setWelcomeDismissed(true);
+                      try {
+                        window.localStorage.setItem("ss-v3-welcome-dismissed", "1");
+                      } catch {
+                        /* Ignore storage failure */
+                      }
+                    }}
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </div>
+                <div className="ss-v3-welcome-steps">
+                  <button
+                    type="button"
+                    className={
+                      "ss-v3-welcome-step" +
+                      (totalWatchlistItems > 0 ? " is-done" : "")
+                    }
+                    onClick={() => onGlobalViewChange("WATCHLISTS")}
+                  >
+                    <small>{totalWatchlistItems > 0 ? "Done" : "Step 1"}</small>
+                    <strong>Build a Watchlist</strong>
+                    <span className="x1-caption">
+                      Track NIFTY, SENSEX, Gold, or equities you study.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      "ss-v3-welcome-step" +
+                      ((workspace?.scans.length ?? 0) > 0 ? " is-done" : "")
+                    }
+                    onClick={() => onNavigate?.("Strategy")}
+                  >
+                    <small>
+                      {(workspace?.scans.length ?? 0) > 0 ? "Done" : "Step 2"}
+                    </small>
+                    <strong>Run Your First Soul Scan</strong>
+                    <span className="x1-caption">
+                      Classic mode is ready in one tap on Strategy.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      "ss-v3-welcome-step" + (portfolio ? " is-done" : "")
+                    }
+                    onClick={() => onGlobalViewChange("PORTFOLIO")}
+                  >
+                    <small>{portfolio ? "Done" : "Step 3"}</small>
+                    <strong>Set Up My Portfolio</strong>
+                    <span className="x1-caption">
+                      Private manual ledger with cost-basis allocation.
+                    </span>
+                  </button>
+                </div>
+              </section>
+            )}
+
+          {/* BLOCK B: Highlighted My Portfolio + Watchlist Compact Overview */}
           <section
             className="x53-pw-section"
             aria-labelledby="x53-portfolio-heading"
           >
             <div className="x53-pw-grid">
-              <article className="x53-pw-card">
+              <article className="x53-pw-card ss-v3-pw-card-featured">
                 <div className="x53-pw-card-head">
-                  <div>
-                    <h2 id="x53-portfolio-heading">My Portfolio</h2>
-                    <span className="x1-caption">
-                      Private manual ledger · Cost basis only
+                  <div className="ss-v3-pw-title-row">
+                    <span className="ss-v3-icon-badge" aria-hidden="true">
+                      <IconPortfolio size={20} />
                     </span>
+                    <div>
+                      <h2 id="x53-portfolio-heading">My Portfolio</h2>
+                      <span className="x1-caption">
+                        Private manual ledger · Cost basis &amp; cash flows
+                      </span>
+                    </div>
                   </div>
                   <button
                     type="button"
                     className="x51-accent-btn"
-                    style={{ minHeight: 38, padding: "0 12px", fontSize: "0.82rem" }}
+                    style={{ minHeight: 40, padding: "0 13px", fontSize: "0.84rem" }}
                     onClick={() =>
                       authenticated
                         ? onGlobalViewChange("PORTFOLIO")
                         : onRequireAuth?.()
                     }
                   >
-                    <Wallet size={14} aria-hidden="true" />
                     <span>{authenticated ? "Open" : "Sign in"}</span>
                     <ArrowRight size={14} aria-hidden="true" />
                   </button>
@@ -522,16 +646,28 @@ export default function Global({
                       <strong>{portfolio.summary.holdings.length}</strong>
                     </div>
                     <div>
-                      <small>Cost basis ({portfolio.payload.currency})</small>
-                      <strong>{number(portfolio.summary.investedCost)}</strong>
+                      <small>Cost basis</small>
+                      <strong>
+                        {formatCurrency(
+                          portfolio.summary.investedCost,
+                          portfolio.payload.currency,
+                        )}
+                      </strong>
                     </div>
                     <div>
                       <small>
                         {portfolio.summary.cash < 0
-                          ? "Cash (unfunded ledger)"
-                          : `Cash (${portfolio.payload.currency})`}
+                          ? "Funding"
+                          : "Recorded cash"}
                       </small>
-                      <strong>{number(portfolio.summary.cash)}</strong>
+                      <strong>
+                        {portfolio.summary.cash < 0
+                          ? "Not recorded"
+                          : formatCurrency(
+                              portfolio.summary.cash,
+                              portfolio.payload.currency,
+                            )}
+                      </strong>
                     </div>
                   </div>
                 ) : authenticated ? (
@@ -566,25 +702,29 @@ export default function Global({
                 )}
               </article>
 
-              <article className="x53-pw-card">
+              <article className="x53-pw-card ss-v3-pw-card-watchlist">
                 <div className="x53-pw-card-head">
-                  <div>
-                    <h2>Watchlist</h2>
-                    <span className="x1-caption">
-                      Saved instruments &amp; quick asset terminal
+                  <div className="ss-v3-pw-title-row">
+                    <span className="ss-v3-icon-badge" aria-hidden="true">
+                      <IconWatchlist size={20} />
                     </span>
+                    <div>
+                      <h2>Watchlist</h2>
+                      <span className="x1-caption">
+                        Saved instruments &amp; quick Soul Scan source
+                      </span>
+                    </div>
                   </div>
                   <button
                     type="button"
                     className="x1-secondary"
-                    style={{ minHeight: 38, padding: "0 12px", fontSize: "0.82rem" }}
+                    style={{ minHeight: 40, padding: "0 13px", fontSize: "0.84rem" }}
                     onClick={() =>
                       authenticated
                         ? onGlobalViewChange("WATCHLISTS")
                         : onRequireAuth?.()
                     }
                   >
-                    <Star size={14} aria-hidden="true" />
                     <span>{authenticated ? "Manage" : "Sign in"}</span>
                     <ArrowRight size={14} aria-hidden="true" />
                   </button>
@@ -933,7 +1073,7 @@ export default function Global({
       {globalView === "PORTFOLIO" && (
         <>
           {(() => {
-            const activePreset = resolveBannerPreset(backdropDraft.presetId);
+            const activePreset = resolvePortfolioBackdropPreset(backdropDraft.presetId);
             return (
               <div className="x51-portfolio-hero">
                 <div
@@ -967,35 +1107,35 @@ export default function Global({
                   >
                     <div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                        <h2 style={{ margin: 0 }}>My Private Portfolio</h2>
-                        <span className="x51-pill x51-pill-green">Manual Ledger</span>
-                        <span className="x51-pill">Linked Broker: Not Connected</span>
+                        <h2 style={{ margin: 0, color: "var(--x1-title-blue)" }}>
+                          My Portfolio
+                        </h2>
+                        <span className="x51-pill x51-pill-green">Private Manual Ledger</span>
                       </div>
                       <p className="x1-caption" style={{ margin: "4px 0 0" }}>
-                        Private to your account · Never exposed on public profiles ·
-                        Cost basis &amp; cash flows only
+                        Private to your account · Cost basis &amp; cash flows only
                       </p>
                     </div>
-                    <div className="x1-actions" style={{ gap: 8 }}>
+                    <div className="x1-actions" style={{ gap: 8, flexWrap: "wrap" }}>
                       <button
                         type="button"
                         className="x1-secondary"
-                        style={{ minHeight: 38, fontSize: "0.82rem" }}
-                        onClick={() => setBackdropEditorOpen((v) => !v)}
+                        style={{ minHeight: 40, fontSize: "0.84rem" }}
+                        onClick={() => setBackdropEditorOpen(true)}
                       >
-                        <ImageIcon size={14} />
-                        <span>{backdropEditorOpen ? "Close Backdrop" : "Customize Backdrop"}</span>
+                        <ImageIcon size={14} aria-hidden="true" />
+                        <span>Change Banner</span>
                       </button>
                       <button
                         type="button"
                         className="x1-secondary"
-                        style={{ minHeight: 38, fontSize: "0.82rem" }}
+                        style={{ minHeight: 40, fontSize: "0.84rem" }}
                         disabled={busy}
                         onClick={() =>
                           void toggleTickerSetting(!privateTickerEnabled)
                         }
                       >
-                        <SlidersHorizontal size={14} />
+                        <SlidersHorizontal size={14} aria-hidden="true" />
                         <span>
                           {privateTickerEnabled
                             ? "Hide Private Ticker"
@@ -1004,149 +1144,14 @@ export default function Global({
                       </button>
                       <button
                         className="x1-secondary x1-motion-button"
+                        style={{ minHeight: 40, fontSize: "0.84rem" }}
                         onClick={() => openEditor("portfolio")}
                       >
-                        <Plus size={16} />
-                        New portfolio
+                        <Plus size={15} aria-hidden="true" />
+                        <span>New portfolio</span>
                       </button>
                     </div>
                   </div>
-
-                  {backdropEditorOpen && (
-                    <div
-                      style={{
-                        border: "1px solid var(--x51-hairline-strong)",
-                        borderRadius: 12,
-                        padding: 14,
-                        background: "rgba(16, 18, 21, 0.94)",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 12,
-                      }}
-                    >
-                      <strong style={{ fontSize: "0.9rem" }}>
-                        Obsidian Portfolio Backdrop (contrast-guarded)
-                      </strong>
-                      <div className="x51-backdrop-swatches">
-                        {BANNER_PRESETS.map((preset) => (
-                          <button
-                            key={preset.id}
-                            type="button"
-                            className={
-                              "x51-backdrop-swatch" +
-                              (backdropDraft.presetId === preset.id
-                                ? " is-active"
-                                : "")
-                            }
-                            style={{ background: preset.gradient }}
-                            onClick={() =>
-                              setBackdropDraft((d) => ({
-                                ...d,
-                                presetId: preset.id,
-                              }))
-                            }
-                          >
-                            {preset.name}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="x1-form-grid">
-                        <label>
-                          Crop alignment
-                          <select
-                            value={backdropDraft.position}
-                            onChange={(e) =>
-                              setBackdropDraft((d) => ({
-                                ...d,
-                                position: e.target.value as
-                                  | "top"
-                                  | "center"
-                                  | "bottom",
-                              }))
-                            }
-                          >
-                            <option value="top">Top</option>
-                            <option value="center">Center</option>
-                            <option value="bottom">Bottom</option>
-                          </select>
-                        </label>
-                        <label>
-                          Dark overlay ({Math.round(backdropDraft.overlay * 100)}%)
-                          <input
-                            type="range"
-                            min={0.45}
-                            max={0.92}
-                            step={0.02}
-                            value={backdropDraft.overlay}
-                            onChange={(e) =>
-                              setBackdropDraft((d) => ({
-                                ...d,
-                                overlay: Number(e.target.value),
-                              }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          Subtle blur ({backdropDraft.blur}px)
-                          <input
-                            type="range"
-                            min={0}
-                            max={14}
-                            step={1}
-                            value={backdropDraft.blur}
-                            onChange={(e) =>
-                              setBackdropDraft((d) => ({
-                                ...d,
-                                blur: Number(e.target.value),
-                              }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          Custom image upload
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp"
-                            onChange={(e) =>
-                              void handleBackdropFileUpload(
-                                e.target.files?.[0] ?? null,
-                              )
-                            }
-                          />
-                        </label>
-                      </div>
-                      {uploadMessage && (
-                        <p className="x1-caption" role="status" style={{ margin: 0 }}>
-                          {uploadMessage}
-                        </p>
-                      )}
-                      <div className="x1-actions" style={{ justifyContent: "space-between", flexWrap: "wrap" }}>
-                        <label className="x1-caption" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                          Ticker stream:
-                          <select
-                            value={privateTickerMode}
-                            onChange={(e) =>
-                              void toggleTickerSetting(
-                                true,
-                                e.target.value as "HOLDINGS" | "WATCHLIST",
-                              )
-                            }
-                          >
-                            <option value="HOLDINGS">My Holdings</option>
-                            <option value="WATCHLIST">My Watchlists</option>
-                          </select>
-                        </label>
-                        <button
-                          type="button"
-                          className="x1-primary"
-                          disabled={busy}
-                          onClick={() => void saveBackdropSettings()}
-                        >
-                          {busy ? "Saving…" : "Save Backdrop"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
 
                   <div className="x1-list-tabs">
                     {portfolios.map((p) => (
@@ -1163,25 +1168,237 @@ export default function Global({
               </div>
             );
           })()}
+
+          {backdropEditorOpen && (
+            <Modal
+              title="Change Portfolio Banner"
+              onClose={() => setBackdropEditorOpen(false)}
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <p className="x1-caption" style={{ margin: 0 }}>
+                  Curated Portfolio backdrops — saved independently from your public Profile banner.
+                </p>
+
+                {/* Live Preview Strip */}
+                {(() => {
+                  const previewPreset = resolvePortfolioBackdropPreset(
+                    backdropDraft.presetId,
+                  );
+                  return (
+                    <div
+                      className="x51-portfolio-hero"
+                      style={{ marginBottom: 0, minHeight: 86, padding: 14 }}
+                    >
+                      <div
+                        className="x51-portfolio-backdrop-layer"
+                        style={{
+                          background: previewPreset.gradient,
+                          backgroundPosition: backdropDraft.position,
+                          filter:
+                            backdropDraft.blur > 0
+                              ? `blur(${backdropDraft.blur}px)`
+                              : undefined,
+                        }}
+                        aria-hidden="true"
+                      />
+                      <div
+                        className="x51-portfolio-scrim"
+                        style={{
+                          background: `rgba(7, 8, 9, ${backdropDraft.overlay})`,
+                        }}
+                        aria-hidden="true"
+                      />
+                      <div className="x51-portfolio-hero-inner">
+                        <strong style={{ color: "var(--x1-title-blue)" }}>
+                          {previewPreset.name}
+                        </strong>
+                        <span className="x1-caption">
+                          {previewPreset.description}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="ss-v3-banner-modal-grid">
+                  {PORTFOLIO_BACKDROP_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className={
+                        "ss-v3-banner-tile" +
+                        (backdropDraft.presetId === preset.id
+                          ? " is-active"
+                          : "")
+                      }
+                      style={{ backgroundImage: preset.gradient }}
+                      onClick={() =>
+                        setBackdropDraft((d) => ({
+                          ...d,
+                          presetId: preset.id,
+                        }))
+                      }
+                    >
+                      <span>{preset.name}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span className="x1-caption">Upload custom portfolio image</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={(e) =>
+                      void handleBackdropFileUpload(e.target.files?.[0] ?? null)
+                    }
+                  />
+                </label>
+                {uploadMessage && (
+                  <p className="x1-caption" role="status" style={{ margin: 0 }}>
+                    {uploadMessage}
+                  </p>
+                )}
+
+                <details className="x54-compact-details">
+                  <summary style={{ cursor: "pointer", fontSize: "0.84rem", color: "var(--x1-title-blue)" }}>
+                    Fine-tune framing &amp; contrast
+                  </summary>
+                  <div className="x1-form-grid" style={{ marginTop: 10 }}>
+                    <label>
+                      Crop alignment
+                      <select
+                        value={backdropDraft.position}
+                        onChange={(e) =>
+                          setBackdropDraft((d) => ({
+                            ...d,
+                            position: e.target.value as "top" | "center" | "bottom",
+                          }))
+                        }
+                      >
+                        <option value="top">Top</option>
+                        <option value="center">Center</option>
+                        <option value="bottom">Bottom</option>
+                      </select>
+                    </label>
+                    <label>
+                      Contrast scrim ({Math.round(backdropDraft.overlay * 100)}%)
+                      <input
+                        type="range"
+                        min={0.45}
+                        max={0.92}
+                        step={0.02}
+                        value={backdropDraft.overlay}
+                        onChange={(e) =>
+                          setBackdropDraft((d) => ({
+                            ...d,
+                            overlay: Number(e.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Soft blur ({backdropDraft.blur}px)
+                      <input
+                        type="range"
+                        min={0}
+                        max={14}
+                        step={1}
+                        value={backdropDraft.blur}
+                        onChange={(e) =>
+                          setBackdropDraft((d) => ({
+                            ...d,
+                            blur: Number(e.target.value),
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                </details>
+
+                <div className="x1-actions" style={{ justifyContent: "flex-end", gap: 8 }}>
+                  <button
+                    type="button"
+                    className="x1-secondary"
+                    onClick={() => setBackdropEditorOpen(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="x1-primary"
+                    disabled={busy}
+                    onClick={() => void saveBackdropSettings()}
+                  >
+                    {busy ? "Saving…" : "Save Banner"}
+                  </button>
+                </div>
+              </div>
+            </Modal>
+          )}
           {portfolio ? (
             <>
               <div className="x1-metrics x1-ledger-metrics">
-                {[
-                  ["Acquisition cost", portfolio.summary.investedCost],
-                  ["Recorded cash", portfolio.summary.cash],
-                  ["Realized P/L", portfolio.summary.realized],
-                ].map(([k, v]) => (
-                  <div className="x1-data-card" key={k}>
+                <div className="x1-data-card">
+                  <span>Acquisition cost</span>
+                  <strong>
+                    {formatCurrency(
+                      portfolio.summary.investedCost,
+                      portfolio.payload.currency,
+                    )}
+                  </strong>
+                  <span className="x1-caption">Moving-average cost basis</span>
+                </div>
+                <div className="x1-data-card">
+                  <span>Recorded cash</span>
+                  <strong>
+                    {portfolio.summary.cash < 0
+                      ? "Funding not recorded"
+                      : formatCurrency(
+                          portfolio.summary.cash,
+                          portfolio.payload.currency,
+                        )}
+                  </strong>
+                  <span className="x1-caption">
+                    {portfolio.summary.cash < 0
+                      ? `Unfunded buys: ${formatCurrency(Math.abs(portfolio.summary.cash), portfolio.payload.currency)}`
+                      : "Net manual cash ledger"}
+                  </span>
+                </div>
+                <div className="x1-data-card">
+                  <span>Realized P/L</span>
+                  <strong>
+                    {formatCurrency(
+                      portfolio.summary.realized,
+                      portfolio.payload.currency,
+                    )}
+                  </strong>
+                  <span className="x1-caption">Closed positions only</span>
+                </div>
+              </div>
+
+              {portfolio.summary.cash < 0 && (
+                <div className="ss-v3-portfolio-funding-bar" role="note">
+                  <div className="ss-v3-portfolio-funding-copy">
+                    <Info size={16} aria-hidden="true" />
                     <span>
-                      {k} · {portfolio.payload.currency}
-                    </span>
-                    <strong>{number(v as number)}</strong>
-                    <span className="x1-caption">
-                      Manual ledger · moving average cost
+                      <strong>Funding not recorded</strong> — buys were logged
+                      without a matching cash deposit. Allocation reflects 100%
+                      of invested cost basis.
                     </span>
                   </div>
-                ))}
-              </div>
+                  <button
+                    type="button"
+                    className="x51-accent-btn"
+                    style={{ minHeight: 38, padding: "0 12px", fontSize: "0.82rem" }}
+                    onClick={() => openEditor("transaction", "DEPOSIT")}
+                  >
+                    <Plus size={14} aria-hidden="true" />
+                    <span>Record deposit</span>
+                  </button>
+                </div>
+              )}
+
               <PortfolioAllocation
                 currency={portfolio.payload.currency || "INR"}
                 cash={portfolio.summary.cash}
@@ -1190,14 +1407,14 @@ export default function Global({
                   quantity: h.quantity,
                   basis: h.basis,
                 }))}
-                onRecordDeposit={() => openEditor("transaction")}
+                onRecordDeposit={() => openEditor("transaction", "DEPOSIT")}
               />
               <Panel
                 title="Holdings at recorded cost"
                 action={
                   <button
                     className="x1-primary x1-motion-button"
-                    onClick={() => setEdit("transaction")}
+                    onClick={() => openEditor("transaction", "BUY")}
                   >
                     <Plus size={16} />
                     Add transaction
@@ -1220,32 +1437,28 @@ export default function Global({
                             Tap for Chart &amp; Analysis
                           </div>
                         </div>
-                        <span>Qty {number(h.quantity, 4)}</span>
+                        <span>Qty {formatQuantity(h.quantity, 4)}</span>
                         <span>
-                          Avg {portfolio.payload.currency} {number(h.averageCost)}
+                          Avg {formatCurrency(h.averageCost, portfolio.payload.currency)}
                         </span>
                         <div>
                           <strong>
-                            {portfolio.payload.currency} {number(h.basis)}
+                            {formatCurrency(h.basis, portfolio.payload.currency)}
                           </strong>
-                          <div className="x1-caption">Live MTM: Not connected</div>
+                          <div className="x1-caption">Recorded cost basis</div>
                         </div>
                       </button>
                     ))}
                   </div>
                 ) : (
                   <Empty title="Begin with your first transaction">
-                    Record a cash deposit, holding purchase or dividend. This is
-                    a manual record.
+                    Record a cash deposit, holding purchase, or dividend. This is
+                    your private manual ledger.
                   </Empty>
                 )}
                 <p className="x1-caption">
-                  No automatic currency conversion. Missing prices do not become
-                  zero. This ledger is not a tax statement.
+                  No automatic currency conversion. Manual cost-basis records only — not a tax statement.
                 </p>
-                {portfolio.summary.cashNotice && (
-                  <p className="x1-callout">{portfolio.summary.cashNotice}</p>
-                )}
               </Panel>
               <Panel title="Transaction history" kicker="Append-only records">
                 <div className="x1-table-wrap">
@@ -1268,9 +1481,9 @@ export default function Global({
                             <td>{t.payload.date}</td>
                             <td>{t.payload.kind}</td>
                             <td>{t.payload.symbol || "Cash"}</td>
-                            <td>{number(t.payload.quantity, 4)}</td>
-                            <td>{number(t.payload.price)}</td>
-                            <td>{number(t.payload.fees)}</td>
+                            <td>{formatQuantity(t.payload.quantity, 4)}</td>
+                            <td>{formatCurrency(t.payload.price, portfolio.payload.currency)}</td>
+                            <td>{formatCurrency(t.payload.fees, portfolio.payload.currency)}</td>
                           </tr>
                         ))}
                     </tbody>
@@ -1396,7 +1609,7 @@ export default function Global({
                 </p>
                 <label>
                   Transaction type
-                  <select name="kind">
+                  <select name="kind" defaultValue={txDefaultKind}>
                     {["BUY", "SELL", "DIVIDEND", "DEPOSIT", "WITHDRAWAL"].map(
                       (k) => (
                         <option key={k}>{k}</option>
@@ -1518,12 +1731,8 @@ const gaps: Record<string, { reason: string; source: string }> = {
 };
 function MarketExplorer({
   data,
-  authenticated = false,
-  isOwner = false,
-  onRequireAuth,
   openAsset,
   analyze,
-  notify,
 }: {
   data: MarketSnapshot | null;
   authenticated?: boolean;
@@ -1533,38 +1742,16 @@ function MarketExplorer({
   analyze: (formula?: string, instrumentId?: string) => void;
   notify?: Notice;
 }) {
-  const [tab, setTab] = useState(isOwner ? "Markets" : "FX");
+  const [tab, setTab] = useState("FX");
   return (
     <>
       <div className="x1-chip-row" aria-label="Market categories">
-        {[
-          "Markets",
-          "Sectors",
-          "Bonds",
-          "Capital",
-          "Flows",
-          "FX",
-          "Commodities",
-          "Crypto",
-          "Macro",
-        ].map((t) => (
+        {["FX", "Bonds", "Markets", "Commodities", "Macro"].map((t) => (
           <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)}>
             {t}
           </button>
         ))}
       </div>
-      {tab === "Markets" || tab === "Commodities" ? (
-        <PrivateMarketPanel
-          key={"private-" + tab}
-          isOwner={isOwner}
-          authenticated={authenticated}
-          exchangeFilter={tab === "Commodities" ? "MCX" : "EQUITIES"}
-          openAsset={openAsset}
-          analyze={analyze}
-          onRequireAuth={onRequireAuth}
-          notify={notify}
-        />
-      ) : (
       <Panel
         title={
           tab === "FX"
@@ -1573,7 +1760,7 @@ function MarketExplorer({
               ? "US Treasury daily par yields"
               : tab
         }
-        kicker="Market Explorer"
+        kicker="Data Coverage"
       >
         {tab === "FX" || tab === "Bonds" ? (
           <>
@@ -1617,16 +1804,17 @@ function MarketExplorer({
             )}
           </>
         ) : (
-          <Empty title="Coverage to connect">
-            <p>{gaps[tab].reason}</p>
-            <SourceLink href={gaps[tab].source}>
-              Official source and methodology
-            </SourceLink>
+          <Empty title="Data coverage note">
+            <p>{gaps[tab]?.reason ?? "Official reference data is shown where available."}</p>
+            {gaps[tab]?.source && (
+              <SourceLink href={gaps[tab].source}>
+                Official source and methodology
+              </SourceLink>
+            )}
           </Empty>
         )}
       </Panel>
-      )}
-      <Panel title="Source health" kicker="Connected does not mean live">
+      <Panel title="Official public feeds" kicker="Reference provenance">
         <div className="x1-provider-list">
           {data?.providers.map((p) => (
             <div key={p.id}>

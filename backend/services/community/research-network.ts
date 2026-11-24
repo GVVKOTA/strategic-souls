@@ -50,11 +50,35 @@ export type PublishedSoulCard = {
   createdAt: string;
   saveCount: number;
   commentCount: number;
+  likeCount: number;
+  likedByMe: boolean;
+  viewCount: number;
+  shareCount: number;
   savedByMe: boolean;
   isMine: boolean;
 };
 
+export type PostInsightsSnapshot = {
+  postId: string;
+  views: number;
+  likes: number;
+  comments: number;
+  saves: number;
+  shares: number;
+  engagementRatePct: number | null;
+  createdAt: string;
+};
+
 const nowIso = () => new Date().toISOString();
+
+async function sha256HexShort(raw: string): Promise<string> {
+  const bytes = new TextEncoder().encode(raw);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 32);
+}
 
 function requestKey(value: unknown): string {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{12,80}$/.test(value)) {
@@ -323,10 +347,14 @@ export function buildShareSafeSoulSummary(
     ? (payload.sourceLineage as Record<string, unknown>[])
     : [];
 
-  // Hard gate: owner-only retail broker prices (Angel One SmartAPI) cannot be redistributed publicly on Web
+  // Hard gate: owner-only retail broker prices cannot be redistributed publicly on Community
   const usesPrivateBroker =
-    /angel\s*one|angelone|smartapi/i.test(sourceStr) ||
-    lineage.some((l) => /angel\s*one|angelone|smartapi/i.test(String(l.provider ?? "")));
+    /angel\s*one|angelone|smartapi|configured exchange feed \(private\)/i.test(sourceStr) ||
+    lineage.some((l) =>
+      /angel\s*one|angelone|smartapi|configured exchange feed \(private\)/i.test(
+        String(l.provider ?? ""),
+      ),
+    );
 
   const hasNonDisplayLineage = lineage.some(
     (l) => l.displayAllowed === false || l.derivedDisplayAllowed === false,
@@ -336,14 +364,14 @@ export function buildShareSafeSoulSummary(
     return {
       allowed: false,
       blockReason:
-        "This scan used owner-only retail broker market data (Angel One SmartAPI), which cannot be publicly redistributed on Web. Run on official reference data or private CSV methodology to share publicly.",
+        "This scan used private non-redistributable market data, which cannot be published publicly. Run on licensed shared market data to publish.",
       mode: "CLASSIC",
       formula: "",
       timeframe: "1d",
       universeLabel: "",
       matchedSymbols: [],
       evidenceStatus: "RESTRICTED",
-      sourceAttribution: sourceStr,
+      sourceAttribution: "Private Exchange Feed",
       riskNote: "",
       blueprintJson: "{}",
     };
@@ -736,7 +764,16 @@ export async function listWebSouls(
   const whereSaved = options.savedOnly
     ? " AND EXISTS(SELECT 1 FROM x51_web_soul_saves sv WHERE sv.post_id = p.id AND sv.subject = ?)"
     : "";
-  const bindParams: unknown[] = [viewer, viewer, viewer, viewer, viewer, viewer, viewer];
+  const bindParams: unknown[] = [
+    viewer,
+    viewer,
+    viewer,
+    viewer,
+    viewer,
+    viewer,
+    viewer,
+    viewer,
+  ];
   if (authorQ) bindParams.push(authorQ);
   if (options.savedOnly) bindParams.push(viewer);
 
@@ -752,7 +789,11 @@ export async function listWebSouls(
          b.avatar AS author_avatar,
          (SELECT count(*) FROM x51_web_soul_saves s WHERE s.post_id = p.id) AS save_count,
          (SELECT count(*) FROM x51_web_soul_comments c WHERE c.post_id = p.id AND c.deleted_at IS NULL) AS comment_count,
+         (SELECT count(*) FROM v3_post_likes lk WHERE lk.post_id = p.id) AS like_count,
+         (SELECT count(*) FROM v3_post_views vw WHERE vw.post_id = p.id) AS view_count,
+         (SELECT count(*) FROM v3_post_shares sh WHERE sh.post_id = p.id) AS share_count,
          EXISTS(SELECT 1 FROM x51_web_soul_saves s WHERE s.post_id = p.id AND s.subject = ?) AS saved_by_me,
+         EXISTS(SELECT 1 FROM v3_post_likes lk WHERE lk.post_id = p.id AND lk.subject = ?) AS liked_by_me,
          EXISTS(SELECT 1 FROM x51_follows f WHERE f.follower_subject = ? AND f.target_subject = p.author_subject AND f.state = 'ACTIVE') AS following_author
        FROM x51_web_souls p
        JOIN x1_bodies b ON b.subject = p.author_subject
@@ -800,7 +841,11 @@ export async function listWebSouls(
         created_at: string;
         save_count: number;
         comment_count: number;
+        like_count: number;
+        view_count: number;
+        share_count: number;
         saved_by_me: number;
+        liked_by_me: number;
         following_author: number;
       }
     >();
@@ -870,6 +915,10 @@ export async function listWebSouls(
       createdAt: r.created_at,
       saveCount: Number(r.save_count ?? 0),
       commentCount: Number(r.comment_count ?? 0),
+      likeCount: Number(r.like_count ?? 0),
+      likedByMe: !!r.liked_by_me,
+      viewCount: Number(r.view_count ?? 0),
+      shareCount: Number(r.share_count ?? 0),
       savedByMe: !!r.saved_by_me,
       isMine: r.author_subject === viewerSubject,
       _following: !!r.following_author,
@@ -997,6 +1046,161 @@ export async function getPostComments(
       authorAvatar: normalizeAvatarId(c.authorAvatar),
       isMine: !!c.isMine,
     })),
+  };
+}
+
+/**
+ * Author-only Post Insights (V3 Sec 17.3).
+ * Never exposes viewer identities or raw hashes; returns 403 for non-authors.
+ */
+export async function getPostInsights(
+  viewerSubject: string | null,
+  postId: string,
+): Promise<{ insights: PostInsightsSnapshot }> {
+  if (!viewerSubject) {
+    throw new HttpError(401, "Sign in to view Post Insights.");
+  }
+  const pid = id(postId, "Post");
+  const db = database();
+  const post = await db
+    .prepare(
+      "SELECT id, author_subject, created_at FROM x51_web_souls WHERE id=? AND deleted_at IS NULL LIMIT 1",
+    )
+    .bind(pid)
+    .first<{ id: string; author_subject: string; created_at: string }>();
+  if (!post) {
+    throw new HttpError(404, "Published Soul not found.");
+  }
+  if (post.author_subject !== viewerSubject) {
+    throw new HttpError(
+      403,
+      "Post Insights are visible only to the author of this Soul.",
+    );
+  }
+  const counts = await db
+    .prepare(
+      `SELECT
+         (SELECT count(*) FROM v3_post_views WHERE post_id = ?) AS views,
+         (SELECT count(*) FROM v3_post_likes WHERE post_id = ?) AS likes,
+         (SELECT count(*) FROM x51_web_soul_comments WHERE post_id = ? AND deleted_at IS NULL) AS comments,
+         (SELECT count(*) FROM x51_web_soul_saves WHERE post_id = ?) AS saves,
+         (SELECT count(*) FROM v3_post_shares WHERE post_id = ?) AS shares`,
+    )
+    .bind(pid, pid, pid, pid, pid)
+    .first<{
+      views: number;
+      likes: number;
+      comments: number;
+      saves: number;
+      shares: number;
+    }>();
+  const views = Number(counts?.views ?? 0);
+  const likes = Number(counts?.likes ?? 0);
+  const comments = Number(counts?.comments ?? 0);
+  const saves = Number(counts?.saves ?? 0);
+  const shares = Number(counts?.shares ?? 0);
+  const engagements = likes + comments + saves + shares;
+  const engagementRatePct =
+    views > 0 ? Math.round((engagements / views) * 1000) / 10 : null;
+  return {
+    insights: {
+      postId: pid,
+      views,
+      likes,
+      comments,
+      saves,
+      shares,
+      engagementRatePct,
+      createdAt: post.created_at,
+    },
+  };
+}
+
+/**
+ * Records a deduplicated daily view for a visible Soul Post (V3 Sec 17.2).
+ * Excludes the post's own author so self-views never inflate reach.
+ */
+export async function recordPostView(
+  viewerSubject: string | null,
+  postId: string,
+  clientFingerprint = "guest",
+): Promise<{ postId: string; recorded: boolean; viewCount: number }> {
+  const pid = id(postId, "Post");
+  const post = await getAuthorizedWebSoulById(viewerSubject, pid);
+  if (!post) {
+    throw new HttpError(404, "Published Soul not found or access restricted.");
+  }
+  const db = database();
+  if (viewerSubject && post.authorSubject === viewerSubject) {
+    const row = await db
+      .prepare("SELECT count(*) AS n FROM v3_post_views WHERE post_id = ?")
+      .bind(pid)
+      .first<{ n: number }>();
+    return { postId: pid, recorded: false, viewCount: Number(row?.n ?? 0) };
+  }
+  const actorRateKey = viewerSubject ?? clientFingerprint.slice(0, 48) ?? "guest";
+  await rate(actorRateKey + ":v3-post-view", 120, 60_000);
+  const viewerKey = await sha256HexShort(
+    viewerSubject ? `u:${viewerSubject}` : `g:${clientFingerprint}`,
+  );
+  const dayBucket = new Date().toISOString().slice(0, 10);
+  const inserted = await db
+    .prepare(
+      `INSERT OR IGNORE INTO v3_post_views (post_id, viewer_key, day_bucket, created_at)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .bind(pid, viewerKey, dayBucket, nowIso())
+    .run();
+  const row = await db
+    .prepare("SELECT count(*) AS n FROM v3_post_views WHERE post_id = ?")
+    .bind(pid)
+    .first<{ n: number }>();
+  return {
+    postId: pid,
+    recorded: Number(inserted.meta.changes ?? 0) > 0,
+    viewCount: Number(row?.n ?? 0),
+  };
+}
+
+/**
+ * Records a confirmed Share action for a visible Soul Post (V3 Sec 17.2).
+ */
+export async function recordPostShare(
+  viewerSubject: string | null,
+  postId: string,
+  rawChannel: unknown,
+  clientFingerprint = "guest",
+): Promise<{ postId: string; shared: boolean; shareCount: number }> {
+  const pid = id(postId, "Post");
+  const post = await getAuthorizedWebSoulById(viewerSubject, pid);
+  if (!post) {
+    throw new HttpError(404, "Published Soul not found or access restricted.");
+  }
+  const actorRateKey = viewerSubject ?? clientFingerprint.slice(0, 48) ?? "guest";
+  await rate(actorRateKey + ":v3-post-share", 30, 60_000);
+  const channelUpper = String(rawChannel ?? "LINK").toUpperCase();
+  const channel = ["LINK", "NATIVE", "COPY", "DM", "ROOM"].includes(channelUpper)
+    ? channelUpper
+    : "LINK";
+  const actorKey = await sha256HexShort(
+    viewerSubject ? `u:${viewerSubject}` : `g:${clientFingerprint}`,
+  );
+  const db = database();
+  await db
+    .prepare(
+      `INSERT INTO v3_post_shares (id, post_id, actor_key, channel, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .bind(crypto.randomUUID(), pid, actorKey, channel, nowIso())
+    .run();
+  const row = await db
+    .prepare("SELECT count(*) AS n FROM v3_post_shares WHERE post_id = ?")
+    .bind(pid)
+    .first<{ n: number }>();
+  return {
+    postId: pid,
+    shared: true,
+    shareCount: Number(row?.n ?? 0),
   };
 }
 
@@ -1346,6 +1550,43 @@ export async function mutateResearchNetwork(
     return publishSoulFromScan(subject, input);
   }
 
+  if (action === "like-post") {
+    await rate(subject + ":x51-network-write", 60, 60_000);
+    const postId = id(input.postId, "Post");
+    const post = await getAuthorizedWebSoulById(subject, postId);
+    if (!post) {
+      throw new HttpError(404, "Published Soul not found.");
+    }
+    const existing = await db
+      .prepare("SELECT 1 AS yes FROM v3_post_likes WHERE post_id=? AND subject=?")
+      .bind(postId, subject)
+      .first<{ yes: number }>();
+    const wantLiked =
+      input.active === undefined ? !existing : Boolean(input.active);
+    if (wantLiked) {
+      await db
+        .prepare(
+          "INSERT OR IGNORE INTO v3_post_likes (post_id, subject, created_at) VALUES (?, ?, ?)",
+        )
+        .bind(postId, subject, now)
+        .run();
+    } else {
+      await db
+        .prepare("DELETE FROM v3_post_likes WHERE post_id=? AND subject=?")
+        .bind(postId, subject)
+        .run();
+    }
+    const countRow = await db
+      .prepare("SELECT count(*) AS n FROM v3_post_likes WHERE post_id=?")
+      .bind(postId)
+      .first<{ n: number }>();
+    return {
+      postId,
+      liked: wantLiked,
+      likeCount: Number(countRow?.n ?? 0),
+    };
+  }
+
   await rate(subject + ":x51-network-write", 60, 60_000);
   const bodyRow = await requireBodyForNetwork(subject);
 
@@ -1454,8 +1695,8 @@ export async function mutateResearchNetwork(
       description: `Private copy attributed to @${post.authorHandle} (Soul v${post.soulVersion}, original scan ${post.scanId}). Verify independently on your own entitled data.`,
       formula: post.formula,
       mode: post.mode === "ADVANCED" ? "ADVANCED" : "SIMPLE",
-      universe: "ECB_DAILY",
-      interval: ["30m", "1h", "1d", "1wk", "1mo"].includes(post.timeframe)
+      universe: "MARKET",
+      interval: ["1h", "1d", "1wk", "1mo"].includes(post.timeframe)
         ? post.timeframe
         : "1d",
       partialPolicy: "ALLOW_UNKNOWN",

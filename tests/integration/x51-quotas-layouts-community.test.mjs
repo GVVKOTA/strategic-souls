@@ -194,9 +194,10 @@ function load(path) {
     }
     if (normalized.endsWith("/backend/services/market-data/data-service.ts")) {
       return new vm.SyntheticModule(
-        ["researchUniverse", "currentDisplayRights", "isDataOwner"],
+        ["researchUniverse", "currentDisplayRights", "isDataOwner", "PRIVATE_EXCHANGE_FEED_LABEL"],
         function () {
           this.setExport("isDataOwner", () => false);
+          this.setExport("PRIVATE_EXCHANGE_FEED_LABEL", "Configured Exchange Feed (Private)");
           this.setExport("currentDisplayRights", async () => ({
             displayAllowed: true,
             derivedDisplayAllowed: true,
@@ -339,17 +340,17 @@ function makeReq(path, method = "GET", jsonBody = undefined, origin = "https://s
   });
 }
 
-test("9-Card Market Grid persists per user, enforces 409 optimistic concurrency, validates 9 unique IDs, and resists IDOR", async () => {
+test("8-Tile Global Market Grid persists per user, enforces 409 optimistic concurrency, validates strict 8-tile allowlist, and resists IDOR", async () => {
   currentUser = { userId: "user-a", displayName: "Alice Quant", email: "a@test.local", authProvider: "email" };
 
-  // Default 9 cards
+  // Default 8 cards strictly matching the V3 allowlist
   const r0 = await overviewRoute.GET(makeReq("/api/markets/overview"));
   assert.equal(r0.status, 200);
   const d0 = await r0.json();
-  assert.equal(d0.cards.length, 9);
+  assert.equal(d0.cards.length, 8);
   assert.equal(d0.layout.version, 0);
 
-  // Reject < 9 cards or duplicates or unknown IDs
+  // Reject < 8 cards or duplicates or non-allowlisted IDs (including retired SPX/NDX/N225/BRENT)
   const badLen = await overviewRoute.POST(
     makeReq("/api/markets/overview", "POST", { expectedVersion: 0, ids: ["NSE:NIFTY", "BSE:SENSEX"] }),
   );
@@ -358,30 +359,29 @@ test("9-Card Market Grid persists per user, enforces 409 optimistic concurrency,
   const badDup = await overviewRoute.POST(
     makeReq("/api/markets/overview", "POST", {
       expectedVersion: 0,
-      ids: ["NSE:NIFTY", "NSE:NIFTY", "GLOBAL:SPX", "GLOBAL:NDX", "GLOBAL:N225", "GLOBAL:XAUUSD", "GLOBAL:XAGUSD", "GLOBAL:BRENT", "ECB:USDINR"],
+      ids: ["NSE:NIFTY", "NSE:NIFTY", "NSE:BANKNIFTY", "NSE:NIFTYMIDCAP100", "MCX:GOLD", "MCX:SILVER", "GLOBAL:CL", "ECB:USDINR"],
     }),
   );
   assert.equal(badDup.status, 400);
 
-  const badUnknown = await overviewRoute.POST(
+  const badRetired = await overviewRoute.POST(
     makeReq("/api/markets/overview", "POST", {
       expectedVersion: 0,
-      ids: ["FAKE:SCAM", "BSE:SENSEX", "GLOBAL:SPX", "GLOBAL:NDX", "GLOBAL:N225", "GLOBAL:XAUUSD", "GLOBAL:XAGUSD", "GLOBAL:BRENT", "ECB:USDINR"],
+      ids: ["GLOBAL:SPX", "BSE:SENSEX", "NSE:BANKNIFTY", "NSE:NIFTYMIDCAP100", "MCX:GOLD", "MCX:SILVER", "GLOBAL:CL", "ECB:USDINR"],
     }),
   );
-  assert.equal(badUnknown.status, 400);
+  assert.equal(badRetired.status, 400);
 
-  // Valid custom save for User A
+  // Valid reordered 8-tile save for User A
   const customIds = [
     "ECB:USDINR",
-    "UST:10Y",
-    "NSE:HDFCBANK",
-    "NSE:NIFTY",
+    "GLOBAL:CL",
+    "MCX:SILVER",
+    "MCX:GOLD",
+    "NSE:NIFTYMIDCAP100",
+    "NSE:BANKNIFTY",
     "BSE:SENSEX",
-    "GLOBAL:SPX",
-    "GLOBAL:NDX",
-    "GLOBAL:XAUUSD",
-    "GLOBAL:BRENT",
+    "NSE:NIFTY",
   ];
   const rSave = await overviewRoute.POST(
     makeReq("/api/markets/overview", "POST", { expectedVersion: 0, ids: customIds }),

@@ -9,8 +9,10 @@ import {
 } from "./avatars";
 import {
   DEFAULT_BANNER_ID,
+  DEFAULT_PORTFOLIO_BACKDROP_ID,
   isValidBannerPresetId,
   resolveBannerPreset,
+  resolvePortfolioBackdropPreset,
 } from "./banners";
 import {
   getIndianStateByCode,
@@ -148,7 +150,7 @@ export type UserProfileSnapshot = {
 };
 
 export const DEFAULT_PORTFOLIO_BACKDROP: PortfolioBackdropSettings = {
-  presetId: DEFAULT_BANNER_ID,
+  presetId: DEFAULT_PORTFOLIO_BACKDROP_ID,
   position: "center",
   overlay: 0.72,
   blur: 4,
@@ -268,7 +270,7 @@ function parsePortfolioBackdrop(raw: unknown): PortfolioBackdropSettings {
       ? Math.max(0, Math.min(16, Math.round(o.blur)))
       : DEFAULT_PORTFOLIO_BACKDROP.blur;
   return {
-    presetId: resolveBannerPreset(
+    presetId: resolvePortfolioBackdropPreset(
       typeof o.presetId === "string" ? o.presetId : null,
     ).id,
     position: parseBannerPosition(o.position),

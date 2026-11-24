@@ -1820,7 +1820,7 @@ export default function Community({
                   </label>
                   {createDiscoverable && (
                     <label>
-                      Directory handle (optional)
+                      Directory handle
                       <input
                         value={createHandle}
                         onChange={(e) =>

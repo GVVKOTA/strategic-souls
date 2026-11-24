@@ -1,22 +1,26 @@
 /**
- * Strategic Souls X5.1 — Nine-Card 3x3 Market Overview & D1 Layout Persistence.
- * Separates quote-data quality (REAL_TIME | DELAYED | PUBLISHED_EOD | REFERENCE | STALE | NOT_CONNECTED | RESTRICTED | UNAVAILABLE)
- * from exchange market session (OPEN | CLOSED | PREMARKET | POSTMARKET | UNKNOWN).
+ * Strategic Souls V3 — Eight-Tile Global Market Overview & D1 Layout Persistence.
+ * Enforces the strict 8-instrument Global allowlist:
+ *   NIFTY 50, SENSEX, BANK NIFTY, NIFTY MIDCAP, GOLD, SILVER MCX, CL, USD/INR.
+ * Reconciles legacy 9-card stored layouts without destroying user watchlists/holdings/history.
  */
 import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import { EXCHANGES, exchangeSession } from "./exchanges";
 import { X2_INSTRUMENTS, registryInstrument } from "./instrument-registry";
 import { marketSnapshot, type MarketSnapshot } from "./market-data";
-import { isDataOwner } from "./data-service";
-import { gatewayQuotes } from "./angelone/gateway";
+import { isDataOwner, PRIVATE_EXCHANGE_FEED_LABEL } from "./data-service";
+import { gatewayQuotes, gatewaySearchInstruments, resolveGatewayConfig } from "./angelone/gateway";
 import type {
   DataQualityState,
   ExchangeSessionState,
   NormalizedMarketQuote,
 } from "./angelone/types";
 import {
+  ALLOWED_GLOBAL_MARKET_IDS,
+  DEFAULT_EIGHT_CARD_IDS,
   DEFAULT_NINE_CARD_IDS,
+  reconcileGlobalMarketIds,
   type MarketLayoutRecord,
   type MarketOverviewCard,
   type MarketSessionState,
@@ -24,7 +28,10 @@ import {
 } from "./nine-card-types";
 
 export {
+  ALLOWED_GLOBAL_MARKET_IDS,
+  DEFAULT_EIGHT_CARD_IDS,
   DEFAULT_NINE_CARD_IDS,
+  reconcileGlobalMarketIds,
   type MarketLayoutRecord,
   type MarketOverviewCard,
   type MarketSessionState,
@@ -51,23 +58,15 @@ const BROKER_SESSIONS: Record<
   CLOSED: { state: "CLOSED", label: "Market closed" },
   HOLIDAY: { state: "CLOSED", label: "Exchange holiday" },
   PRE_OPEN: { state: "PREMARKET", label: "Pre-open" },
-  SCHEDULE_UNKNOWN: { state: "UNKNOWN", label: "Schedule unknown" },
+  SCHEDULE_UNKNOWN: { state: "UNKNOWN", label: "Market hours" },
 };
 
 const VENUE_EXCHANGE_MAP: Record<string, string> = {
   NSE: "XNSE",
   BSE: "XBOM",
   MCX: "XNSE",
-  "GLOBAL:SPX": "XNYS",
-  "GLOBAL:NDX": "XNAS",
-  "GLOBAL:IXIC": "XNAS",
-  "GLOBAL:DJI": "XNYS",
-  "GLOBAL:FTSE": "XLON",
-  "GLOBAL:DAX": "XETR",
-  "GLOBAL:N225": "XTKS",
-  "GLOBAL:HSI": "XHKG",
-  "GLOBAL:SSE": "XSHG",
-  UST: "XNYS",
+  NYMEX: "XNYS",
+  "GLOBAL:CL": "XNYS",
   ECB: "XETR",
 };
 
@@ -78,14 +77,14 @@ function resolveSession(
 ): { state: MarketSessionState; label: string } {
   const exId = VENUE_EXCHANGE_MAP[canonicalId] ?? VENUE_EXCHANGE_MAP[market];
   if (!exId) {
-    return { state: "UNKNOWN", label: "24h / OTC" };
+    return { state: "UNKNOWN", label: "Market hours" };
   }
   const ex = EXCHANGES.find((e) => e.id === exId);
-  if (!ex) return { state: "UNKNOWN", label: "Schedule unknown" };
+  if (!ex) return { state: "UNKNOWN", label: "Market hours" };
   const s = exchangeSession(ex, asOfIso);
   if (s.state === "OPEN") return { state: "OPEN", label: "Session open" };
   if (s.state === "CLOSED") return { state: "CLOSED", label: "Market closed" };
-  return { state: "UNKNOWN", label: s.label };
+  return { state: "UNKNOWN", label: "Market hours" };
 }
 
 function layoutRecordId(subject: string): string {
@@ -93,10 +92,10 @@ function layoutRecordId(subject: string): string {
 }
 
 export function validateNineCardIds(raw: unknown): string[] {
-  if (!Array.isArray(raw) || raw.length !== 9) {
+  if (!Array.isArray(raw) || raw.length !== DEFAULT_EIGHT_CARD_IDS.length) {
     throw new HttpError(
       400,
-      "Market grid must contain exactly 9 unique canonical instruments.",
+      `Market grid must contain all ${DEFAULT_EIGHT_CARD_IDS.length} unique Global dashboard instruments.`,
     );
   }
   const normalized: string[] = [];
@@ -106,16 +105,16 @@ export function validateNineCardIds(raw: unknown): string[] {
       throw new HttpError(400, "Each market slot must be a canonical instrument ID.");
     }
     const entry = registryInstrument(item);
-    if (!entry) {
+    if (!entry || !ALLOWED_GLOBAL_MARKET_IDS.has(entry.id)) {
       throw new HttpError(
         400,
-        `Unsupported instrument "${item}". Choose from the authorized canonical catalog.`,
+        `Instrument "${item}" is not part of the Global dashboard allowlist.`,
       );
     }
     if (seen.has(entry.id)) {
       throw new HttpError(
         400,
-        `Duplicate instrument "${entry.id}". All 9 slots must be unique.`,
+        `Duplicate instrument "${entry.id}". All ${DEFAULT_EIGHT_CARD_IDS.length} tiles must be unique.`,
       );
     }
     seen.add(entry.id);
@@ -124,12 +123,14 @@ export function validateNineCardIds(raw: unknown): string[] {
   return normalized;
 }
 
+export const validateMarketGridIds = validateNineCardIds;
+
 export async function getUserMarketLayout(
   subject: string | null,
 ): Promise<MarketLayoutRecord> {
   if (!subject) {
     return {
-      ids: [...DEFAULT_NINE_CARD_IDS],
+      ids: [...DEFAULT_EIGHT_CARD_IDS],
       version: 0,
       updatedAt: null,
       isDefault: true,
@@ -144,23 +145,24 @@ export async function getUserMarketLayout(
       .first<{ payload: string; version: number; updated_at: string }>();
     if (!row) {
       return {
-        ids: [...DEFAULT_NINE_CARD_IDS],
+        ids: [...DEFAULT_EIGHT_CARD_IDS],
         version: 0,
         updatedAt: null,
         isDefault: true,
       };
     }
     const parsed = JSON.parse(row.payload) as { ids?: unknown };
-    const ids = validateNineCardIds(parsed.ids);
+    // Automatically reconcile legacy 9-card or superseded layouts onto the strict 8-tile allowlist.
+    const ids = reconcileGlobalMarketIds(parsed.ids);
     return {
       ids,
       version: row.version,
       updatedAt: row.updated_at,
-      isDefault: ids.every((id, i) => id === DEFAULT_NINE_CARD_IDS[i]),
+      isDefault: ids.every((id, i) => id === DEFAULT_EIGHT_CARD_IDS[i]),
     };
   } catch {
     return {
-      ids: [...DEFAULT_NINE_CARD_IDS],
+      ids: [...DEFAULT_EIGHT_CARD_IDS],
       version: 0,
       updatedAt: null,
       isDefault: true,
@@ -201,7 +203,7 @@ export async function saveUserMarketLayout(
     await db
       .prepare(
         `INSERT OR IGNORE INTO x1_records (id, subject, kind, name, payload, version, archived, last_write, created_at, updated_at)
-         VALUES (?, ?, ?, 'Nine-Card Market Grid', ?, 1, 0, ?, ?, ?)`,
+         VALUES (?, ?, ?, 'Global Market Grid', ?, 1, 0, ?, ?, ?)`,
       )
       .bind(
         id,
@@ -227,7 +229,7 @@ export async function saveUserMarketLayout(
       ids,
       version: inserted.version,
       updatedAt: inserted.updated_at,
-      isDefault: ids.every((x, i) => x === DEFAULT_NINE_CARD_IDS[i]),
+      isDefault: ids.every((x, i) => x === DEFAULT_EIGHT_CARD_IDS[i]),
     };
   }
 
@@ -256,7 +258,7 @@ export async function saveUserMarketLayout(
     ids,
     version: expectedVersion + 1,
     updatedAt: now,
-    isDefault: ids.every((x, i) => x === DEFAULT_NINE_CARD_IDS[i]),
+    isDefault: ids.every((x, i) => x === DEFAULT_EIGHT_CARD_IDS[i]),
   };
 }
 
@@ -264,15 +266,19 @@ export function buildMarketOverviewCards(
   ids: readonly string[],
   snapshot: MarketSnapshot,
   privateQuotes: readonly NormalizedMarketQuote[] = [],
+  mcxAliasMap: ReadonlyMap<string, string> = new Map(),
 ): MarketOverviewCard[] {
+  const reconciled = reconcileGlobalMarketIds(ids);
   const allPoints = [...snapshot.quotes, ...snapshot.yields];
   const pointMap = new Map(allPoints.map((p) => [p.id.toUpperCase(), p]));
   const histMap = new Map(snapshot.fxHistory.map((h) => [h.id.toUpperCase(), h]));
   const privateQuoteMap = new Map(privateQuotes.map((quote) => [quote.id, quote]));
 
-  return ids.map((canonicalId) => {
+  return reconciled.map((canonicalId) => {
     const entry = registryInstrument(canonicalId);
-    const privateQuote = privateQuoteMap.get(canonicalId);
+    const resolvedQuoteId = mcxAliasMap.get(canonicalId) ?? canonicalId;
+    const privateQuote =
+      privateQuoteMap.get(canonicalId) ?? privateQuoteMap.get(resolvedQuoteId);
     if (privateQuote?.sourceMode === "PRIVATE_OWNER_FEED" && privateQuote.ltp !== null) {
       const quality = BROKER_QUOTE_QUALITY[privateQuote.quality];
       if (quality) {
@@ -291,15 +297,15 @@ export function buildMarketOverviewCards(
           previousClose: privateQuote.prevClose,
           changeUnit: "%",
           sparkline: null,
-          provider: privateQuote.provider,
-          sourceUrl: privateQuote.sourceUrl,
+          provider: PRIVATE_EXCHANGE_FEED_LABEL,
+          sourceUrl: entry?.sourceUrl ?? "",
           sourceObservedAtUTC: privateQuote.exchangeTimestampUTC,
           sourceObservedPrecision: privateQuote.exchangeTimestampUTC ? "TIMESTAMP" : "UNAVAILABLE",
           ingestedAtUTC: privateQuote.retrievalTimestampUTC,
           quality,
           marketSession: session.state,
           sessionLabel: session.label,
-          reasonCode: privateQuote.freshnessReason,
+          reasonCode: privateQuote.freshnessReason.replace(/broker|angel\s*one|smartapi/gi, "exchange"),
           redistributable: false,
         };
       }
@@ -348,7 +354,6 @@ export function buildMarketOverviewCards(
         sparkline: pts && pts.length >= 10 ? pts.slice(-30) : null,
         provider: point.provider,
         sourceUrl: point.sourceUrl,
-        // Preserve provider timestamp precision without synthesizing artificial wall-clock times on date-only observations.
         sourceObservedAtUTC: point.sourceDate ? point.sourceDate : null,
         sourceObservedPrecision: !point.sourceDate
           ? "UNAVAILABLE"
@@ -364,13 +369,11 @@ export function buildMarketOverviewCards(
       };
     }
 
-    const isRestrictedExchange = ["NSE", "BSE", "MCX"].includes(market);
     const resolvedUnit = (() => {
       const upper = (entry?.id ?? canonicalId).toUpperCase();
       if (entry?.assetClass === "INDEX") return "pts";
-      if (upper === "GLOBAL:XAUUSD" || upper === "GLOBAL:XAGUSD") return "USD/oz";
-      if (upper === "GLOBAL:BRENT") return "USD/bbl";
-      if (entry?.assetClass === "BOND_YIELD") return "% yield";
+      if (upper === "GLOBAL:CL") return "USD/bbl";
+      if (upper === "MCX:GOLD" || upper === "MCX:SILVER") return "INR";
       return entry?.currency ?? "pts";
     })();
     return {
@@ -387,19 +390,15 @@ export function buildMarketOverviewCards(
       previousClose: null,
       changeUnit: "%",
       sparkline: null,
-      provider: isRestrictedExchange
-        ? "Licensed Exchange Feed Required"
-        : "Commercial Feed Not Connected",
+      provider: "Market data unavailable",
       sourceUrl: entry?.sourceUrl ?? "",
       sourceObservedAtUTC: null,
       sourceObservedPrecision: "UNAVAILABLE",
       ingestedAtUTC: snapshot.asOf,
-      quality: isRestrictedExchange ? "RESTRICTED" : "NOT_CONNECTED",
+      quality: "UNAVAILABLE",
       marketSession: session.state,
       sessionLabel: session.label,
-      reasonCode: isRestrictedExchange
-        ? "Public exchange redistribution requires commercial licence; no simulated quote shown."
-        : "Reference feed not connected on this deployment; no simulated price shown.",
+      reasonCode: "Live quote feed is currently unavailable for this instrument.",
       redistributable: false,
     };
   });
@@ -410,26 +409,62 @@ export async function getMarketOverviewPayload(
   overrideSnapshot?: MarketSnapshot,
 ) {
   const layoutPromise = getUserMarketLayout(subject);
-  const ownerQuotes = layoutPromise.then(async ({ ids }) => {
-    if (!subject || !isDataOwner(subject)) return [];
-    const brokerIds = ids.filter((id) => /^(NSE|BSE|MCX):/.test(id));
-    if (brokerIds.length === 0) return [];
+  const ownerQuotesPromise = layoutPromise.then(async ({ ids }) => {
+    const gw = resolveGatewayConfig();
+    const ownerAllowed = !!subject && isDataOwner(subject) && gw.flags.enablePrivateBrokerData;
+    const publicAllowed = gw.flags.mode === "public_licensed" && gw.flags.enablePublicExchangeQuotes;
+    if (!ownerAllowed && !publicAllowed) {
+      return { quotes: [] as NormalizedMarketQuote[], mcxAliasMap: new Map<string, string>() };
+    }
+    const mcxAliasMap = new Map<string, string>();
+    const fetchIds: string[] = [];
+    for (const id of ids) {
+      if (id === "MCX:GOLD" || id === "MCX:SILVER") {
+        try {
+          const root = id.slice(4);
+          const found = await gatewaySearchInstruments({
+            isOwner: !!subject && isDataOwner(subject),
+            q: root,
+            exchange: "MCX",
+            segment: "FUTURE",
+            limit: 6,
+          });
+          const nearest = found.instruments
+            .filter((i) => i.symbol.toUpperCase().startsWith(root) && i.expiry)
+            .sort((a, b) => (a.expiry ?? "").localeCompare(b.expiry ?? ""))[0];
+          if (nearest) {
+            mcxAliasMap.set(id, nearest.id);
+            fetchIds.push(nearest.id);
+          }
+        } catch {
+          // Leave MCX contract unmapped if live search fails; never fabricate.
+        }
+      } else if (/^(NSE|BSE|MCX):/.test(id)) {
+        fetchIds.push(id);
+      }
+    }
+    if (fetchIds.length === 0) {
+      return { quotes: [] as NormalizedMarketQuote[], mcxAliasMap };
+    }
     try {
-      return (await gatewayQuotes({ authenticated: true, isOwner: true, ids: brokerIds })).quotes;
+      const res = await gatewayQuotes({
+        authenticated: !!subject,
+        isOwner: !!subject && isDataOwner(subject),
+        ids: [...new Set(fetchIds)],
+      });
+      return { quotes: res.quotes, mcxAliasMap };
     } catch {
-      return [];
+      return { quotes: [] as NormalizedMarketQuote[], mcxAliasMap };
     }
   });
-  const [layout, snapshot, privateQuotes] = await Promise.all([
+  const [layout, snapshot, ownerData] = await Promise.all([
     layoutPromise,
     overrideSnapshot ? Promise.resolve(overrideSnapshot) : marketSnapshot(),
-    ownerQuotes,
+    ownerQuotesPromise,
   ]);
-  return {
-    asOf: snapshot.asOf,
-    layout,
-    cards: buildMarketOverviewCards(layout.ids, snapshot, privateQuotes),
-    catalog: X2_INSTRUMENTS.map((i) => ({
+  const allowedCatalog = DEFAULT_EIGHT_CARD_IDS.map((id) => registryInstrument(id))
+    .filter((i): i is NonNullable<typeof i> => !!i)
+    .map((i) => ({
       id: i.id,
       label: i.label,
       name: i.name,
@@ -437,8 +472,18 @@ export async function getMarketOverviewPayload(
       assetClass: i.assetClass,
       currency: i.currency ?? "",
       mappingStatus: i.mappingStatus,
-    })),
+    }));
+  return {
+    asOf: snapshot.asOf,
+    layout,
+    cards: buildMarketOverviewCards(
+      layout.ids,
+      snapshot,
+      ownerData.quotes,
+      ownerData.mcxAliasMap,
+    ),
+    catalog: allowedCatalog,
     disclosure:
-      "Market session status and quote-feed quality are tracked independently. Unavailable or restricted exchange feeds render em-dashes with explicit provenance — never simulated prices or sparklines.",
+      "Market session status and quote availability are shown independently. Unavailable instruments render em-dashes honestly — never simulated prices or sparklines.",
   };
 }

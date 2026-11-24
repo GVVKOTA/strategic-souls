@@ -188,7 +188,7 @@ export default function PrivateMarketPanel({
     try {
       await submitManualTotpUnlock(totp.trim());
       setTotp("");
-      notify?.("Private Angel One read-only session unlocked in memory.");
+      notify?.("Private exchange read-only session unlocked in memory.");
       await loadFeed(trackedIds, true);
     } catch (err) {
       notify?.((err as Error).message, true);
@@ -386,7 +386,7 @@ export default function PrivateMarketPanel({
             ? "NSE & BSE Read-Only Quotes (Private Owner Feed)"
             : "Indian Exchange Quotes · NSE / BSE / MCX (Private Owner)"
       }
-      kicker="Read-only Angel One SmartAPI · Never redistributed publicly"
+      kicker="Read-only configured exchange feed · Private workspace only"
       action={
         <button
           type="button"
@@ -498,7 +498,7 @@ export default function PrivateMarketPanel({
             error.code === "BROKER_SESSION_EXPIRED") && (
             <form className="x31-totp-form" onSubmit={(e) => void handleTotpUnlock(e)}>
               <label>
-                Enter 6-digit Angel One TOTP (never stored)
+                Enter 6-digit verification code (never stored)
                 <input
                   type="text"
                   inputMode="numeric"

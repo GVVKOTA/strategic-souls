@@ -298,9 +298,10 @@ test("X5.3 UI contracts: Strategy matches collapsed by default, bold GRAVEYARD, 
     /<details key=\{r\.instrumentId\} open>/,
     "Matching stocks in Strategy Results must be collapsed by default",
   );
-  assert.match(stratSrc, /<ScanCoverageChart/);
+  assert.match(stratSrc, /Scan Results/);
   assert.match(stratSrc, /x53-graveyard-shell/);
   assert.match(stratSrc, /GRAVEYARD/);
+  assert.doesNotMatch(stratSrc, />Replay<|>Backtest<|>Probability</);
 
   const controlsSrc = readFileSync("frontend/features/strategy/controls.tsx", "utf8");
   assert.match(controlsSrc, /<EmpiricalProbabilityChart/);

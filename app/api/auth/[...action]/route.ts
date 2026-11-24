@@ -1,15 +1,25 @@
 import {
   authenticateEmailUser,
+  changeUserPassword,
   clearSessionCookie,
+  completePasswordReset,
+  confirmEmailChange,
   createSession,
   findOrCreateGoogleUser,
   formatCookie,
   getAuthenticatedUser,
+  getEmailVerificationStatus,
   getGoogleOAuthConfig,
+  getSessionTokenHashFromRequest,
   isGoogleOAuthConfigured,
+  listActiveSessions,
   parseCookieHeader,
   randomToken,
   registerEmailUser,
+  requestEmailChange,
+  requestPasswordReset,
+  revokeOtherUserSessions,
+  revokeSessionBySafeId,
   revokeSessionFromRequest,
   safeRelativeReturnPath,
   sha256Base64Url,
@@ -209,6 +219,118 @@ async function handle(request: Request): Promise<Response> {
       const headers = new Headers();
       headers.append("Set-Cookie", clearSessionCookie(request));
       return json({ signedOut: true }, 200, headers);
+    }
+
+    if (action === "change-password" && method === "POST") {
+      protectMutation(request, 4096);
+      const user = await getAuthenticatedUser(request);
+      if (!user) throw new HttpError(401, "Sign in to change your password.");
+      const ipKey = await sha256Hex("cp:" + clientBucket(request));
+      await rate("auth:cp:" + user.userId + ":" + ipKey.slice(0, 12), 10, 900_000);
+      const input = await body(request, 4096);
+      const { cookie } = await changeUserPassword(
+        user.userId,
+        input.currentPassword,
+        input.newPassword,
+        request,
+      );
+      const headers = new Headers();
+      headers.append("Set-Cookie", cookie);
+      return json(
+        {
+          ok: true,
+          message: "Password updated and other active sessions signed out.",
+        },
+        200,
+        headers,
+      );
+    }
+
+    if (action === "forgot-password" && method === "POST") {
+      protectMutation(request, 2048);
+      const input = await body(request, 2048);
+      const ipKey = await sha256Hex("fp:" + clientBucket(request));
+      await rate("auth:fp:ip:" + ipKey.slice(0, 24), 10, 900_000);
+      if (typeof input.email === "string") {
+        const emKey = await sha256Hex("fp-em:" + input.email.trim().toLowerCase());
+        await rate("auth:fp:em:" + emKey.slice(0, 24), 5, 900_000);
+      }
+      const result = await requestPasswordReset(input.email, url.origin);
+      return json(result, 200);
+    }
+
+    if (action === "reset-password" && method === "POST") {
+      protectMutation(request, 4096);
+      const ipKey = await sha256Hex("rp:" + clientBucket(request));
+      await rate("auth:rp:ip:" + ipKey.slice(0, 24), 15, 900_000);
+      const input = await body(request, 4096);
+      const result = await completePasswordReset(input.token, input.newPassword);
+      const headers = new Headers();
+      headers.append("Set-Cookie", clearSessionCookie(request));
+      return json(
+        {
+          ok: true,
+          ...result,
+          message: "Password reset complete. Sign in with your new password.",
+        },
+        200,
+        headers,
+      );
+    }
+
+    if (action === "request-email-change" && method === "POST") {
+      protectMutation(request, 4096);
+      const user = await getAuthenticatedUser(request);
+      if (!user) throw new HttpError(401, "Sign in to update your email.");
+      await rate("auth:emchg:" + user.userId, 6, 900_000);
+      const input = await body(request, 4096);
+      const result = await requestEmailChange(
+        user.userId,
+        input.currentPassword,
+        input.newEmail,
+        url.origin,
+      );
+      return json({ ok: true, ...result }, 200);
+    }
+
+    if (action === "confirm-email-change" && method === "POST") {
+      protectMutation(request, 2048);
+      const user = await getAuthenticatedUser(request);
+      if (!user) throw new HttpError(401, "Sign in to verify your email.");
+      await rate("auth:emver:" + user.userId, 15, 900_000);
+      const input = await body(request, 2048);
+      const result = await confirmEmailChange(user.userId, input.token);
+      return json({ ok: true, ...result }, 200);
+    }
+
+    if (action === "sessions" && method === "GET") {
+      const user = await getAuthenticatedUser(request);
+      if (!user) throw new HttpError(401, "Sign in to view active sessions.");
+      const currentHash = await getSessionTokenHashFromRequest(request);
+      const [sessions, emailStatus] = await Promise.all([
+        listActiveSessions(user.userId, currentHash),
+        getEmailVerificationStatus(user.userId, user.email),
+      ]);
+      return json({ sessions, emailStatus }, 200);
+    }
+
+    if (action === "sessions/revoke" && method === "POST") {
+      protectMutation(request, 2048);
+      const user = await getAuthenticatedUser(request);
+      if (!user) throw new HttpError(401, "Sign in to manage active sessions.");
+      const currentHash = await getSessionTokenHashFromRequest(request);
+      const input = await body(request, 2048);
+      if (input.allOthers === true) {
+        const res = await revokeOtherUserSessions(user.userId, currentHash);
+        return json({ ok: true, ...res }, 200);
+      }
+      const sessionId = String(input.sessionId ?? "");
+      const res = await revokeSessionBySafeId(user.userId, sessionId, currentHash);
+      const headers = new Headers();
+      if (res.revokedCurrent) {
+        headers.append("Set-Cookie", clearSessionCookie(request));
+      }
+      return json({ ok: true, ...res }, 200, headers);
     }
 
     if (action === "google" && method === "GET") {

@@ -22,7 +22,7 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json(
       {
         ok: false,
-        provider: "Angel One SmartAPI (Read-Only)",
+        provider: "Exchange Market Feed (Read-Only)",
         errorCode: "UPSTREAM_ERROR",
         message: "Market-data health check unavailable.",
         serverTimestampUTC: new Date().toISOString(),

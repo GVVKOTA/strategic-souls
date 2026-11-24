@@ -64,9 +64,12 @@ export default function AuthPanel({
   googleEnabled: googleEnabledProp,
   onAuthenticated,
 }: Props) {
-  const [mode, setMode] = useState<"signin" | "register">(initialMode);
+  const [mode, setMode] = useState<"signin" | "register" | "forgot" | "reset">(
+    initialMode,
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [resetToken, setResetToken] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [adult, setAdult] = useState(false);
@@ -74,8 +77,26 @@ export default function AuthPanel({
   const [terms, setTerms] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [infoMessage, setInfoMessage] = useState("");
   const [googleEnabled, setGoogleEnabled] = useState(!!googleEnabledProp);
   const submitLock = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const tok = params.get("reset_token");
+    if (tok && tok.trim().length >= 32) {
+      let alive = true;
+      queueMicrotask(() => {
+        if (!alive) return;
+        setResetToken(tok.trim());
+        setMode("reset");
+      });
+      return () => {
+        alive = false;
+      };
+    }
+  }, []);
 
   useEffect(() => {
     if (googleEnabledProp !== undefined) return;
@@ -102,8 +123,34 @@ export default function AuthPanel({
     if (submitLock.current) return;
     submitLock.current = true;
     setError("");
+    setInfoMessage("");
     setBusy(true);
     try {
+      if (mode === "forgot") {
+        const res = await api<{ message?: string }>(
+          "/api/auth/forgot-password",
+          { email },
+        );
+        setInfoMessage(
+          res.message ||
+            "If an account exists for that email address, reset instructions were processed.",
+        );
+        return;
+      }
+      if (mode === "reset") {
+        const res = await api<{ message?: string }>(
+          "/api/auth/reset-password",
+          { token: resetToken, newPassword: password },
+        );
+        setPassword("");
+        setResetToken("");
+        setMode("signin");
+        setInfoMessage(
+          res.message ||
+            "Password reset complete. Sign in with your new password.",
+        );
+        return;
+      }
       const endpoint =
         mode === "register" ? "/api/auth/register" : "/api/auth/signin";
       const payload =
@@ -132,10 +179,11 @@ export default function AuthPanel({
         <button
           type="button"
           role="tab"
-          aria-selected={mode === "signin"}
+          aria-selected={mode === "signin" || mode === "forgot" || mode === "reset"}
           onClick={() => {
             setMode("signin");
             setError("");
+            setInfoMessage("");
           }}
         >
           Sign in
@@ -147,13 +195,14 @@ export default function AuthPanel({
           onClick={() => {
             setMode("register");
             setError("");
+            setInfoMessage("");
           }}
         >
           Create account
         </button>
       </div>
 
-      {effectiveGoogleEnabled && (
+      {effectiveGoogleEnabled && (mode === "signin" || mode === "register") && (
         <div className="x2-auth-oauth">
           <a
             className="x1-secondary x1-motion-button"
@@ -183,52 +232,134 @@ export default function AuthPanel({
           </label>
         )}
 
-        <label>
-          Email address
-          <input
-            type="email"
-            name="email"
-            autoComplete="email"
-            maxLength={254}
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="researcher@example.com"
-            disabled={busy}
-          />
-        </label>
-
-        <label>
-          Password
-          <div className="x2-password-field">
+        {mode !== "reset" && (
+          <label>
+            Email address
             <input
-              type={showPassword ? "text" : "password"}
-              name="password"
-              autoComplete={
-                mode === "register" ? "new-password" : "current-password"
-              }
-              minLength={mode === "register" ? 10 : 1}
-              maxLength={128}
+              type="email"
+              name="email"
+              autoComplete="email"
+              maxLength={254}
               required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={
-                mode === "register"
-                  ? "10+ characters with letters and numbers"
-                  : "Enter your password"
-              }
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="researcher@example.com"
               disabled={busy}
             />
+          </label>
+        )}
+
+        {mode === "reset" && (
+          <label>
+            Reset code
+            <input
+              type="text"
+              name="resetToken"
+              autoComplete="one-time-code"
+              maxLength={128}
+              required
+              value={resetToken}
+              onChange={(e) => setResetToken(e.target.value)}
+              placeholder="Paste single-use reset code"
+              disabled={busy}
+            />
+          </label>
+        )}
+
+        {mode !== "forgot" && (
+          <label>
+            {mode === "reset" ? "New password" : "Password"}
+            <div className="x2-password-field">
+              <input
+                type={showPassword ? "text" : "password"}
+                name="password"
+                autoComplete={
+                  mode === "register" || mode === "reset"
+                    ? "new-password"
+                    : "current-password"
+                }
+                minLength={mode === "register" || mode === "reset" ? 10 : 1}
+                maxLength={128}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={
+                  mode === "register" || mode === "reset"
+                    ? "10+ characters with letters and numbers"
+                    : "Enter your password"
+                }
+                disabled={busy}
+              />
+              <button
+                type="button"
+                className="x1-icon-button"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                onClick={() => setShowPassword((v) => !v)}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </label>
+        )}
+
+        {mode === "signin" && (
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
             <button
               type="button"
-              className="x1-icon-button"
-              aria-label={showPassword ? "Hide password" : "Show password"}
-              onClick={() => setShowPassword((v) => !v)}
+              className="x1-text-button"
+              onClick={() => {
+                setMode("forgot");
+                setError("");
+                setInfoMessage("");
+              }}
             >
-              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              Forgot password?
             </button>
           </div>
-        </label>
+        )}
+
+        {mode === "forgot" && (
+          <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <button
+              type="button"
+              className="x1-text-button"
+              onClick={() => {
+                setMode("signin");
+                setError("");
+              }}
+            >
+              Back to sign in
+            </button>
+            <button
+              type="button"
+              className="x1-text-button"
+              onClick={() => {
+                setMode("reset");
+                setError("");
+              }}
+            >
+              I already have a reset code
+            </button>
+          </div>
+        )}
+
+        {mode === "reset" && (
+          <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <button
+              type="button"
+              className="x1-text-button"
+              onClick={() => {
+                setMode("signin");
+                setError("");
+              }}
+            >
+              Back to sign in
+            </button>
+            <span className="x1-caption">
+              Resetting your password signs out all active sessions.
+            </span>
+          </div>
+        )}
 
         {mode === "register" && (
           <>
@@ -274,6 +405,12 @@ export default function AuthPanel({
           </>
         )}
 
+        {infoMessage && (
+          <p role="status" className="x1-callout" style={{ margin: 0 }}>
+            {infoMessage}
+          </p>
+        )}
+
         {error && (
           <p role="alert" className="x1-form-error">
             {error}
@@ -290,10 +427,18 @@ export default function AuthPanel({
           {busy
             ? mode === "register"
               ? "Creating account…"
-              : "Signing in…"
+              : mode === "forgot"
+                ? "Submitting request…"
+                : mode === "reset"
+                  ? "Resetting password…"
+                  : "Signing in…"
             : mode === "register"
               ? "Create account"
-              : "Sign in"}
+              : mode === "forgot"
+                ? "Request password reset"
+                : mode === "reset"
+                  ? "Set new password"
+                  : "Sign in"}
           <ArrowRight size={16} />
         </button>
       </form>

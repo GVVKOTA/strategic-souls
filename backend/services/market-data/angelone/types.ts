@@ -167,6 +167,7 @@ export type NormalizedCandleSeries = {
 
 export type CandleInterval = "1d" | "1h" | "15m" | "5m";
 export const MAX_DAILY_CANDLE_DAYS = 2_000;
+export const MAX_HOURLY_CANDLE_DAYS = 60;
 
 export type BrokerAuthState =
   | "AUTHENTICATED"

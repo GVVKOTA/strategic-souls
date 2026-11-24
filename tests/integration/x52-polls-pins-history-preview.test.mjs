@@ -376,7 +376,8 @@ test("[30] Post Preview: mirrors exact source-rights blocks (Angel One & Test CS
     audience: "PUBLIC",
   });
   assert.equal(brokerPrev.allowed, false);
-  assert.match(brokerPrev.blockReason, /Angel One/i);
+  assert.match(brokerPrev.blockReason, /private non-redistributable/i);
+  assert.doesNotMatch(brokerPrev.blockReason, /Angel One|SmartAPI/i);
 
   const testCsvPrev = await networkMod.previewSoulPublish("user-a", {
     scanId: "scan-testcsv-1",

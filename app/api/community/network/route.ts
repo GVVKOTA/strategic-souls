@@ -7,14 +7,26 @@ import {
 import {
   getPendingFollowRequests,
   getPostComments,
+  getPostInsights,
   getPublicResearcherProfile,
   listProfileConnections,
   listWebSouls,
   mutateResearchNetwork,
+  recordPostShare,
+  recordPostView,
   searchPublicResearchers,
 } from "../../../../backend/services/community/research-network";
 
 export const dynamic = "force-dynamic";
+
+function clientFingerprintFrom(request: Request): string {
+  const ip =
+    request.headers.get("cf-connecting-ip") ||
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "local";
+  const ua = (request.headers.get("user-agent") || "unknown").slice(0, 120);
+  return `${ip}|${ua}`;
+}
 
 function json(data: unknown, status = 200, isPrivate = true): Response {
   return Response.json(data, {
@@ -59,6 +71,11 @@ export async function GET(request: Request): Promise<Response> {
       return json(await getPostComments(viewerId, postId), 200, true);
     }
 
+    if (view === "insights") {
+      const postId = params.get("postId") ?? "";
+      return json(await getPostInsights(viewerId, postId), 200, true);
+    }
+
     if (view === "follow-requests") {
       if (!viewerId) {
         throw new HttpError(401, "Sign in to view follow requests.");
@@ -100,12 +117,33 @@ export async function GET(request: Request): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const user = await getAuthenticatedUser(request);
+    protectMutation(request, 16384);
+    const input = await body(request, 16384);
+    const user = await getAuthenticatedUser(request).catch(() => null);
+    const action = String(input.action ?? "");
+
+    if (action === "record-view") {
+      const result = await recordPostView(
+        user?.userId ?? null,
+        String(input.postId ?? ""),
+        clientFingerprintFrom(request),
+      );
+      return json({ ok: true, ...result }, 200, true);
+    }
+
+    if (action === "record-share") {
+      const result = await recordPostShare(
+        user?.userId ?? null,
+        String(input.postId ?? ""),
+        input.channel,
+        clientFingerprintFrom(request),
+      );
+      return json({ ok: true, ...result }, 200, true);
+    }
+
     if (!user) {
       throw new HttpError(401, "Sign in to interact with the Research Network.");
     }
-    protectMutation(request, 16384);
-    const input = await body(request, 16384);
     const result = await mutateResearchNetwork(user.userId, input);
     return json({ ok: true, ...result }, 200, true);
   } catch (err) {

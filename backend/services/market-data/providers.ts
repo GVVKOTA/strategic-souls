@@ -428,6 +428,188 @@ export async function providerCandles(
     ? normalizeEod(data, now)
     : normalizeTrueData(data, now);
 }
+
+function parseIntradayIso(raw: unknown, now: number, assumeIst = false): string {
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new ProviderFailure("INVALID_DATA", "Missing intraday timestamp.");
+  }
+  const s = raw.trim();
+  let candidate = s;
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2})?$/.test(s)) {
+    const normalized = s.replace(" ", "T");
+    const withSeconds = normalized.length === 16 ? `${normalized}:00` : normalized;
+    candidate = assumeIst ? `${withSeconds}+05:30` : `${withSeconds}Z`;
+  }
+  const ms = Date.parse(candidate);
+  if (!Number.isFinite(ms) || ms > now) {
+    throw new ProviderFailure("INVALID_DATA", "Invalid or future intraday timestamp.");
+  }
+  return new Date(ms).toISOString();
+}
+
+export function normalizeTrueDataIntraday(value: unknown, now = Date.now()): Candle[] {
+  const v = value as { status?: unknown; records?: unknown[][] };
+  if (
+    !v ||
+    v.status !== "Success" ||
+    !Array.isArray(v.records) ||
+    v.records.length > 2501
+  ) {
+    throw new ProviderFailure(
+      "INVALID_DATA",
+      "TrueData did not return a successful bounded intraday history.",
+    );
+  }
+  const rows: Candle[] = [];
+  const seen = new Set<string>();
+  for (const r of v.records.slice(1)) {
+    if (!Array.isArray(r) || r.length < 6 || typeof r[0] !== "string") {
+      throw new ProviderFailure("INVALID_DATA", "Invalid TrueData intraday record.");
+    }
+    const open = r[1] as number;
+    const high = r[2] as number;
+    const low = r[3] as number;
+    const close = r[4] as number;
+    const volume = r[5] as number | null | undefined;
+    const oi = r[6] as number | null | undefined;
+    if (
+      ![open, high, low, close].every((n) => finite(n) && n > 0) ||
+      high < Math.max(open, close) ||
+      low > Math.min(open, close) ||
+      low > high ||
+      (volume != null && (!finite(volume) || volume < 0)) ||
+      (oi != null && (!finite(oi) || oi < 0))
+    ) {
+      throw new ProviderFailure("INVALID_DATA", "Invalid intraday OHLCV values.");
+    }
+    const iso = parseIntradayIso(r[0], now, true);
+    if (seen.has(iso)) {
+      throw new ProviderFailure("INVALID_DATA", "Duplicate intraday timestamp.");
+    }
+    seen.add(iso);
+    rows.push({
+      date: iso,
+      open,
+      high,
+      low,
+      close,
+      adjustedClose: null,
+      volume: typeof volume === "number" ? volume : null,
+      openInterest: typeof oi === "number" ? oi : null,
+      knownAt: new Date(now).toISOString(),
+      adjustment: "RAW",
+      provider: "TrueData",
+    });
+  }
+  return rows.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export function normalizeEodIntraday(value: unknown, now = Date.now()): Candle[] {
+  if (!Array.isArray(value) || value.length > 2500) {
+    throw new ProviderFailure("INVALID_DATA", "Invalid intraday history response.");
+  }
+  const rows: Candle[] = [];
+  const seen = new Set<string>();
+  for (const v of value) {
+    if (
+      !v ||
+      typeof v !== "object" ||
+      !["open", "high", "low", "close"].every(
+        (k) => finite((v as Record<string, unknown>)[k]) && ((v as Record<string, number>)[k] > 0),
+      )
+    ) {
+      throw new ProviderFailure("INVALID_DATA", "Invalid intraday OHLC values.");
+    }
+    const rec = v as Record<string, unknown>;
+    const open = rec.open as number;
+    const high = rec.high as number;
+    const low = rec.low as number;
+    const close = rec.close as number;
+    const volume = rec.volume as number | null | undefined;
+    if (
+      high < Math.max(open, close) ||
+      low > Math.min(open, close) ||
+      low > high ||
+      (volume != null && (!finite(volume) || volume < 0))
+    ) {
+      throw new ProviderFailure("INVALID_DATA", "Invalid intraday OHLCV bounds.");
+    }
+    const iso =
+      typeof rec.timestamp === "number" && Number.isFinite(rec.timestamp)
+        ? parseIntradayIso(new Date(rec.timestamp * 1000).toISOString(), now, false)
+        : parseIntradayIso(rec.datetime ?? rec.date, now, false);
+    if (seen.has(iso)) {
+      throw new ProviderFailure("INVALID_DATA", "Duplicate intraday timestamp.");
+    }
+    seen.add(iso);
+    rows.push({
+      date: iso,
+      open,
+      high,
+      low,
+      close,
+      adjustedClose: null,
+      volume: typeof volume === "number" ? volume : null,
+      openInterest: null,
+      knownAt: new Date(now).toISOString(),
+      adjustment: "RAW",
+      provider: "EODHD",
+    });
+  }
+  return rows.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export async function providerIntradayCandles(
+  config: ProviderConfig,
+  instrument: Instrument,
+  secret: string,
+  interval: "1h" = "1h",
+  days = 45,
+  fetcher: typeof fetch = fetch,
+  now = Date.now(),
+): Promise<Candle[]> {
+  if (instrument.expiry && Date.parse(instrument.expiry + "T23:59:59Z") < now) {
+    throw new ProviderFailure(
+      "INVALID_DATA",
+      "Expired contract; select a verified current contract.",
+    );
+  }
+  const boundedDays = Math.max(7, Math.min(60, Math.round(days)));
+  const fromMs = now - boundedDays * 86_400_000;
+  let url: URL;
+  let headers: Record<string, string> = {};
+  if (config.provider === "EODHD") {
+    url = new URL(
+      "https://eodhd.com/api/intraday/" +
+        encodeURIComponent(instrument.providerSymbol),
+    );
+    url.search = new URLSearchParams({
+      api_token: secret,
+      fmt: "json",
+      interval,
+      from: String(Math.floor(fromMs / 1000)),
+      to: String(Math.floor(now / 1000)),
+    }).toString();
+  } else {
+    url = new URL("https://history.truedata.in/getbars");
+    const toDate = new Date(now).toISOString().slice(0, 10);
+    const fromDate = new Date(fromMs).toISOString().slice(0, 10);
+    const td = (v: string, end: boolean) =>
+      v.replaceAll("-", "").slice(2) + (end ? "T23:59:59" : "T00:00:00");
+    url.search = new URLSearchParams({
+      symbol: instrument.providerSymbol,
+      from: td(fromDate, false),
+      to: td(toDate, true),
+      interval: "60min",
+      response: "json",
+    }).toString();
+    headers = { Authorization: "Bearer " + secret };
+  }
+  const data = await fetchProviderJson(url, headers, fetcher);
+  return config.provider === "EODHD"
+    ? normalizeEodIntraday(data, now)
+    : normalizeTrueDataIntraday(data, now);
+}
 export async function providerFundamentals(
   instrument: Instrument,
   secret: string,

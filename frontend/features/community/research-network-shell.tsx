@@ -2,20 +2,23 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
+  BarChart2,
   Bookmark,
-  Copy,
-  Globe2,
+  Eye,
+  Heart,
   MessageSquare,
   Pencil,
   Pin,
   PinOff,
+  Play,
   Send,
+  Share2,
   Trash2,
   UserCheck,
   UserPlus,
-  Users,
 } from "lucide-react";
 import type {
+  PostInsightsSnapshot,
   PublicResearcherSearchItem,
   PublishedSoulCard,
 } from "../../../backend/services/community/research-network";
@@ -25,9 +28,15 @@ import {
   Modal,
   WorkspaceSkeleton,
   api,
+  copyTextSafe,
   moment,
   type Notice,
 } from "../../components/workspace/shared";
+import {
+  IconChats,
+  IconRooms,
+  IconSoulFeed,
+} from "../../components/workspace/ss-icons";
 import AvatarBadge from "../account/avatar-badge";
 import type { SettingsSection } from "../account/account-quick-panel";
 import PublicProfileSheet from "./public-profile-sheet";
@@ -39,6 +48,79 @@ const SocialWorkspace = lazy(() =>
 );
 
 type PrimaryCommunityTab = "web" | "chats" | "groups";
+
+const COMM_TAB_STORAGE_KEY = "ss-v3-comm-tab";
+const COMM_TAB_ORDER: PrimaryCommunityTab[] = ["web", "chats", "groups"];
+
+function formatFeedTimeframe(tf: string): string {
+  const lower = tf.toLowerCase();
+  if (lower === "1h") return "1 Hour";
+  if (lower === "1d") return "Daily";
+  if (lower === "1wk") return "Weekly";
+  if (lower === "1mo") return "Monthly";
+  return tf;
+}
+
+/**
+ * Observes card visibility (>=50% visible for >=1.2s) and records at most
+ * one real post view per card per page session. Never fires for the post's author.
+ */
+function PostViewObserver({
+  postId,
+  isMine,
+  recordedSet,
+  onViewRecorded,
+}: {
+  postId: string;
+  isMine: boolean;
+  recordedSet: React.MutableRefObject<Set<string>>;
+  onViewRecorded: (postId: string, viewCount: number) => void;
+}) {
+  const markerRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (isMine || recordedSet.current.has(postId)) return;
+    const node = markerRef.current?.parentElement;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    let dwellTimer: number | null = null;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
+          if (dwellTimer === null && !recordedSet.current.has(postId)) {
+            dwellTimer = window.setTimeout(async () => {
+              if (recordedSet.current.has(postId)) return;
+              recordedSet.current.add(postId);
+              try {
+                const res = await api<{ viewCount?: number }>(
+                  "/api/community/network",
+                  { action: "record-view", postId },
+                );
+                if (typeof res.viewCount === "number") {
+                  onViewRecorded(postId, res.viewCount);
+                }
+              } catch {
+                /* Best-effort telemetry never disrupts reading */
+              }
+            }, 1200);
+          }
+        } else if (dwellTimer !== null) {
+          window.clearTimeout(dwellTimer);
+          dwellTimer = null;
+        }
+      },
+      { threshold: [0.5] },
+    );
+    observer.observe(node);
+    return () => {
+      if (dwellTimer !== null) window.clearTimeout(dwellTimer);
+      observer.disconnect();
+    };
+  }, [postId, isMine, recordedSet, onViewRecorded]);
+
+  return <span ref={markerRef} aria-hidden="true" style={{ display: "none" }} />;
+}
 
 type SoulComment = {
   id: string;
@@ -98,16 +180,28 @@ export default function ResearchNetworkShell({
   onCopyToStrategy,
   onMobileChatActive,
 }: Props) {
-  const [tab, setTab] = useState<PrimaryCommunityTab>(initialTab);
+  const [tab, setTab] = useState<PrimaryCommunityTab>(() => {
+    if (initialTab !== "web" || tabNonce > 0) return initialTab;
+    if (typeof window !== "undefined") {
+      try {
+        const saved = window.localStorage.getItem(COMM_TAB_STORAGE_KEY);
+        if (saved === "web" || saved === "chats" || saved === "groups") {
+          return saved;
+        }
+      } catch {
+        /* Storage unavailable */
+      }
+    }
+    return initialTab;
+  });
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [chatView, setChatView] = useState<SocialView>("Messages");
   const [pendingThreadId, setPendingThreadId] = useState("");
   const [modeFilter, setModeFilter] = useState<"ALL" | "CLASSIC" | "ADVANCED">(
     "ALL",
   );
   const [tfFilter, setTfFilter] = useState("ALL");
-  const [sort, setSort] = useState<"newest" | "following" | "evidence">(
-    "newest",
-  );
+  const [sort, setSort] = useState<"newest" | "following">("newest");
   const [savedOnly, setSavedOnly] = useState(savedOnlyRequested);
 
   const [posts, setPosts] = useState<PublishedSoulCard[]>([]);
@@ -115,6 +209,28 @@ export default function ResearchNetworkShell({
   const [myProfile, setMyProfile] = useState<UserProfileSnapshot | null>(null);
   const [legacyBannerDismissed, setLegacyBannerDismissed] = useState(false);
   const [optingPublic, setOptingPublic] = useState(false);
+
+  // Author-only Post Insights modal
+  const [insightsPost, setInsightsPost] = useState<PublishedSoulCard | null>(null);
+  const [insightsData, setInsightsData] = useState<PostInsightsSnapshot | null>(null);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const recordedViewsRef = useRef<Set<string>>(new Set());
+  const tabRefs = useRef<Record<PrimaryCommunityTab, HTMLButtonElement | null>>({
+    web: null,
+    chats: null,
+    groups: null,
+  });
+
+  const selectCommunityTab = useCallback((nextTab: PrimaryCommunityTab) => {
+    setTab(nextTab);
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(COMM_TAB_STORAGE_KEY, nextTab);
+      } catch {
+        /* Ignore storage restrictions */
+      }
+    }
+  }, []);
 
   // Compact researcher search results
   const [researchers, setResearchers] = useState<PublicResearcherSearchItem[]>(
@@ -147,10 +263,40 @@ export default function ResearchNetworkShell({
   useEffect(() => {
     if (tabNonce <= 0) return;
     queueMicrotask(() => {
-      setTab(initialTab);
+      selectCommunityTab(initialTab);
       setSavedOnly(savedOnlyRequested);
     });
-  }, [initialTab, savedOnlyRequested, tabNonce]);
+  }, [initialTab, savedOnlyRequested, tabNonce, selectCommunityTab]);
+
+  // Real unread chat count badge sync (fetched on mount when signed in + updated live from SocialWorkspace)
+  useEffect(() => {
+    if (!authenticated) {
+      queueMicrotask(() => setChatUnreadCount(0));
+      return;
+    }
+    let alive = true;
+    const onUnread = (e: Event) => {
+      const n = Number((e as CustomEvent<number>).detail ?? 0);
+      if (alive && Number.isFinite(n)) setChatUnreadCount(Math.max(0, n));
+    };
+    window.addEventListener("ss-chat-unread-synced", onUnread);
+    api<{ inbox?: { unread?: number }[] }>("/api/x2/social?view=home")
+      .then((res) => {
+        if (!alive) return;
+        const total = (res.inbox ?? []).reduce(
+          (sum, t) => sum + Math.max(0, Number(t.unread || 0)),
+          0,
+        );
+        setChatUnreadCount(total);
+      })
+      .catch(() => {
+        /* Leave badge at 0 until chats sync */
+      });
+    return () => {
+      alive = false;
+      window.removeEventListener("ss-chat-unread-synced", onUnread);
+    };
+  }, [authenticated]);
 
   const loadMyProfile = useCallback(async () => {
     if (!authenticated) {
@@ -363,7 +509,7 @@ export default function ResearchNetworkShell({
         } catch {
           /* Ignore */
         }
-        setTab("chats");
+        selectCommunityTab("chats");
         setChatView("Messages");
         setPendingThreadId(res.threadId);
       }
@@ -443,32 +589,170 @@ export default function ResearchNetworkShell({
       onRequireAuth?.();
       return;
     }
+    const prevSaved = post.savedByMe;
+    const prevCount = post.saveCount;
+    const next = !prevSaved;
     setActionBusy("save:" + post.id);
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === post.id
+          ? {
+              ...p,
+              savedByMe: next,
+              saveCount: Math.max(0, prevCount + (next ? 1 : -1)),
+            }
+          : p,
+      ),
+    );
     try {
-      const next = !post.savedByMe;
       await api("/api/community/network", {
         action: "save-soul",
         postId: post.id,
         active: next,
       });
+      notify(next ? "Saved to your bookmarks." : "Removed from Saved.");
+    } catch (err) {
       setPosts((prev) =>
         prev.map((p) =>
           p.id === post.id
-            ? {
-                ...p,
-                savedByMe: next,
-                saveCount: Math.max(0, p.saveCount + (next ? 1 : -1)),
-              }
+            ? { ...p, savedByMe: prevSaved, saveCount: prevCount }
             : p,
         ),
       );
-      notify(next ? "Saved to your bookmarks." : "Removed from Saved.");
-    } catch (err) {
       notify(err instanceof Error ? err.message : "Could not save Soul.", true);
     } finally {
       setActionBusy("");
     }
   }
+
+  async function toggleLikeSoul(post: PublishedSoulCard) {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    const prevLiked = post.likedByMe;
+    const prevCount = post.likeCount;
+    const next = !prevLiked;
+    setActionBusy("like:" + post.id);
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === post.id
+          ? {
+              ...p,
+              likedByMe: next,
+              likeCount: Math.max(0, prevCount + (next ? 1 : -1)),
+            }
+          : p,
+      ),
+    );
+    try {
+      const res = await api<{ liked: boolean; likeCount: number }>(
+        "/api/community/network",
+        {
+          action: "like-post",
+          postId: post.id,
+          active: next,
+        },
+      );
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === post.id
+            ? { ...p, likedByMe: res.liked, likeCount: res.likeCount }
+            : p,
+        ),
+      );
+    } catch (err) {
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === post.id
+            ? { ...p, likedByMe: prevLiked, likeCount: prevCount }
+            : p,
+        ),
+      );
+      notify(err instanceof Error ? err.message : "Could not update like.", true);
+    } finally {
+      setActionBusy("");
+    }
+  }
+
+  async function shareSoul(post: PublishedSoulCard) {
+    const shareUrl =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/?view=community&profile=${encodeURIComponent(post.authorHandle)}`
+        : "";
+    let channel: "NATIVE" | "COPY" = "COPY";
+    let completed = false;
+    if (
+      typeof navigator !== "undefined" &&
+      typeof navigator.share === "function"
+    ) {
+      try {
+        await navigator.share({
+          title: `${post.title} — Strategic Souls`,
+          text: `${post.title} by @${post.authorHandle}`,
+          url: shareUrl,
+        });
+        channel = "NATIVE";
+        completed = true;
+      } catch (err) {
+        if ((err as Error)?.name === "AbortError") return;
+      }
+    }
+    if (!completed) {
+      const copied = await copyTextSafe(shareUrl);
+      if (!copied) {
+        notify("Unable to copy share link on this browser.", true);
+        return;
+      }
+      channel = "COPY";
+      completed = true;
+    }
+    if (!completed) return;
+    try {
+      const res = await api<{ shareCount?: number }>("/api/community/network", {
+        action: "record-share",
+        postId: post.id,
+        channel,
+      });
+      if (typeof res.shareCount === "number") {
+        setPosts((prev) =>
+          prev.map((p) =>
+            p.id === post.id ? { ...p, shareCount: res.shareCount! } : p,
+          ),
+        );
+      }
+      notify(channel === "NATIVE" ? "Soul shared." : "Share link copied.");
+    } catch {
+      notify(channel === "NATIVE" ? "Soul shared." : "Share link copied.");
+    }
+  }
+
+  async function openPostInsights(post: PublishedSoulCard) {
+    if (!post.isMine) return;
+    setInsightsPost(post);
+    setInsightsData(null);
+    setInsightsLoading(true);
+    try {
+      const res = await api<{ insights: PostInsightsSnapshot }>(
+        `/api/community/network?view=insights&postId=${encodeURIComponent(post.id)}`,
+      );
+      setInsightsData(res.insights);
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : "Could not load Post Insights.",
+        true,
+      );
+      setInsightsPost(null);
+    } finally {
+      setInsightsLoading(false);
+    }
+  }
+
+  const handleViewRecorded = useCallback((postId: string, viewCount: number) => {
+    setPosts((prev) =>
+      prev.map((p) => (p.id === postId ? { ...p, viewCount } : p)),
+    );
+  }, []);
 
   async function togglePinSoul(post: PublishedSoulCard) {
     if (!authenticated) {
@@ -514,28 +798,9 @@ export default function ResearchNetworkShell({
     }
   }
 
-  async function copyPublishedSoul(post: PublishedSoulCard) {
-    if (!authenticated) {
-      onRequireAuth?.();
-      return;
-    }
-    setActionBusy("copy:" + post.id);
-    try {
-      const res = await api<{
-        ok: boolean;
-        attribution: string;
-        definition: { formula: string };
-      }>("/api/community/network", {
-        action: "copy-soul",
-        postId: post.id,
-      });
-      notify(res.attribution + " Opening in Strategy Builder.");
-      onCopyToStrategy(res.definition.formula);
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "Could not copy Soul.", true);
-    } finally {
-      setActionBusy("");
-    }
+  function tryPublishedFormula(post: PublishedSoulCard) {
+    notify(`Loaded "${post.title}" by @${post.authorHandle} into Strategy Builder.`);
+    onCopyToStrategy(post.formula);
   }
 
   async function openComments(post: PublishedSoulCard) {
@@ -613,6 +878,13 @@ export default function ResearchNetworkShell({
 
   return (
     <div className="x51-global-stack" style={{ gap: 12 }}>
+      <header className="ss-v3-comm-header">
+        <h1>Community</h1>
+        <span className="x1-caption">
+          Published Souls, direct chats, and private research rooms
+        </span>
+      </header>
+
       {/* 1. COMPACT MY PROFILE STRIP (tapping identity opens canonical Profile; Edit opens Settings) */}
       <div className="x54-my-strip" aria-label="Your researcher identity">
         {authenticated ? (
@@ -769,39 +1041,85 @@ export default function ResearchNetworkShell({
         </section>
       )}
 
-      {/* 3. PRIMARY COMMUNITY TABS: SOUL FEED | CHATS | ROOMS */}
-      <div
-        className="x1-segment x55-comm-tabs"
-        role="tablist"
-        aria-label="Community sections"
-      >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "web"}
-          onClick={() => setTab("web")}
+      {/* 3. ENLARGED, IMMEDIATELY DISCOVERABLE COMMUNITY TABS: SOUL FEED | CHATS | ROOMS (Sec 08.1) */}
+      <div className="ss-v3-comm-tabs-wrap">
+        <div
+          className="ss-v3-comm-tabs"
+          role="tablist"
+          aria-label="Community sections"
+          onKeyDown={(e) => {
+            const idx = COMM_TAB_ORDER.indexOf(tab);
+            if (idx < 0) return;
+            let nextIdx = idx;
+            if (e.key === "ArrowRight") nextIdx = (idx + 1) % COMM_TAB_ORDER.length;
+            else if (e.key === "ArrowLeft")
+              nextIdx = (idx - 1 + COMM_TAB_ORDER.length) % COMM_TAB_ORDER.length;
+            else if (e.key === "Home") nextIdx = 0;
+            else if (e.key === "End") nextIdx = COMM_TAB_ORDER.length - 1;
+            else return;
+            e.preventDefault();
+            const nextTab = COMM_TAB_ORDER[nextIdx];
+            selectCommunityTab(nextTab);
+            tabRefs.current[nextTab]?.focus();
+          }}
         >
-          <Globe2 size={15} />
-          <span>Soul Feed</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "chats"}
-          onClick={() => setTab("chats")}
-        >
-          <MessageSquare size={15} />
-          <span>Chats</span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === "groups"}
-          onClick={() => setTab("groups")}
-        >
-          <Users size={15} />
-          <span>Rooms</span>
-        </button>
+          <button
+            ref={(el) => {
+              tabRefs.current.web = el;
+            }}
+            type="button"
+            role="tab"
+            className={"ss-v3-comm-tab" + (tab === "web" ? " is-active" : "")}
+            aria-selected={tab === "web"}
+            tabIndex={tab === "web" ? 0 : -1}
+            onClick={() => selectCommunityTab("web")}
+          >
+            <span className="ss-v3-comm-tab-icon">
+              <IconSoulFeed size={24} />
+            </span>
+            <span>Soul Feed</span>
+          </button>
+          <button
+            ref={(el) => {
+              tabRefs.current.chats = el;
+            }}
+            type="button"
+            role="tab"
+            className={"ss-v3-comm-tab" + (tab === "chats" ? " is-active" : "")}
+            aria-selected={tab === "chats"}
+            tabIndex={tab === "chats" ? 0 : -1}
+            onClick={() => selectCommunityTab("chats")}
+          >
+            <span className="ss-v3-comm-tab-icon">
+              <IconChats size={24} />
+              {chatUnreadCount > 0 && (
+                <span
+                  className="ss-v3-comm-badge"
+                  aria-label={`${chatUnreadCount} unread messages`}
+                >
+                  {chatUnreadCount > 99 ? "99+" : chatUnreadCount}
+                </span>
+              )}
+            </span>
+            <span>Chats</span>
+          </button>
+          <button
+            ref={(el) => {
+              tabRefs.current.groups = el;
+            }}
+            type="button"
+            role="tab"
+            className={"ss-v3-comm-tab" + (tab === "groups" ? " is-active" : "")}
+            aria-selected={tab === "groups"}
+            tabIndex={tab === "groups" ? 0 : -1}
+            onClick={() => selectCommunityTab("groups")}
+          >
+            <span className="ss-v3-comm-tab-icon">
+              <IconRooms size={24} />
+            </span>
+            <span>Rooms</span>
+          </button>
+        </div>
       </div>
 
       {/* TAB 1: SOUL FEED — Published Souls Discovery Feed */}
@@ -835,8 +1153,7 @@ export default function ResearchNetworkShell({
                 onChange={(e) => setTfFilter(e.target.value)}
               >
                 <option value="ALL">All Timeframes</option>
-                <option value="30m">30 min</option>
-                <option value="1h">1 hour</option>
+                <option value="1h">1 Hour</option>
                 <option value="1d">Daily</option>
                 <option value="1wk">Weekly</option>
                 <option value="1mo">Monthly</option>
@@ -846,12 +1163,11 @@ export default function ResearchNetworkShell({
                 className="x55-feed-select"
                 value={sort}
                 onChange={(e) =>
-                  setSort(e.target.value as "newest" | "following" | "evidence")
+                  setSort(e.target.value as "newest" | "following")
                 }
               >
                 <option value="newest">Newest</option>
                 <option value="following">Following</option>
-                <option value="evidence">Most Evidence</option>
               </select>
             </div>
           </div>
@@ -876,6 +1192,12 @@ export default function ResearchNetworkShell({
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {posts.map((post) => (
                 <article key={post.id} className="x51-soul-card">
+                  <PostViewObserver
+                    postId={post.id}
+                    isMine={post.isMine}
+                    recordedSet={recordedViewsRef}
+                    onViewRecorded={handleViewRecorded}
+                  />
                   <div className="x51-soul-card-head">
                     <button
                       type="button"
@@ -902,7 +1224,8 @@ export default function ResearchNetworkShell({
                         <span className="x51-pill x51-pill-blue">Pinned</span>
                       )}
                       <span className="x51-pill x51-pill-green">
-                        {post.mode} · {post.timeframe}
+                        {post.mode === "CLASSIC" ? "Classic" : "Advanced"} ·{" "}
+                        {formatFeedTimeframe(post.timeframe)}
                       </span>
                       {post.audience !== "PUBLIC" && (
                         <span className="x51-pill">{post.audience}</span>
@@ -937,42 +1260,81 @@ export default function ResearchNetworkShell({
                   )}
 
                   <div className="x1-caption">
-                    <strong>{post.evidenceStatus}</strong> ·{" "}
-                    {post.sourceAttribution}
+                    {post.mode === "CLASSIC" ? "Classic" : "Advanced"} ·{" "}
+                    {post.universeLabel} · {formatFeedTimeframe(post.timeframe)} ·{" "}
+                    {post.matchedSymbols.length} matched · {moment(post.createdAt)}
                   </div>
 
-                  <div className="x51-soul-actions">
+                  <div className="ss-v3-post-stats" role="group" aria-label="Post actions and metrics">
                     <button
                       type="button"
-                      className={post.savedByMe ? "is-active" : ""}
-                      disabled={actionBusy === "save:" + post.id}
-                      onClick={() => void toggleSaveSoul(post)}
+                      className={
+                        "ss-v3-post-stat-btn" + (post.likedByMe ? " is-liked" : "")
+                      }
+                      aria-pressed={post.likedByMe}
+                      disabled={actionBusy === "like:" + post.id}
+                      onClick={() => void toggleLikeSoul(post)}
                     >
-                      <Bookmark size={14} />
-                      <span>
-                        {post.savedByMe ? "Saved" : "Save"} ({post.saveCount})
-                      </span>
+                      <Heart
+                        size={14}
+                        fill={post.likedByMe ? "currentColor" : "none"}
+                      />
+                      <span>{post.likeCount}</span>
                     </button>
                     <button
                       type="button"
+                      className="ss-v3-post-stat-btn"
                       onClick={() => void openComments(post)}
                     >
                       <MessageSquare size={14} />
-                      <span>Discuss ({post.commentCount})</span>
+                      <span>{post.commentCount}</span>
                     </button>
                     <button
                       type="button"
-                      disabled={actionBusy === "copy:" + post.id}
-                      onClick={() => void copyPublishedSoul(post)}
+                      className={
+                        "ss-v3-post-stat-btn" + (post.savedByMe ? " is-saved" : "")
+                      }
+                      aria-pressed={post.savedByMe}
+                      disabled={actionBusy === "save:" + post.id}
+                      onClick={() => void toggleSaveSoul(post)}
                     >
-                      <Copy size={14} />
-                      <span>Copy to Drafts</span>
+                      <Bookmark
+                        size={14}
+                        fill={post.savedByMe ? "currentColor" : "none"}
+                      />
+                      <span>{post.saveCount}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="ss-v3-post-stat-btn"
+                      onClick={() => void shareSoul(post)}
+                    >
+                      <Share2 size={14} />
+                      <span>{post.shareCount}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="ss-v3-post-stat-btn"
+                      onClick={() => tryPublishedFormula(post)}
+                    >
+                      <Play size={13} />
+                      <span>Try this formula</span>
                     </button>
                     {post.isMine && (
                       <>
                         <button
                           type="button"
-                          className={post.pinned ? "is-active" : ""}
+                          className="ss-v3-post-stat-btn"
+                          onClick={() => void openPostInsights(post)}
+                        >
+                          <BarChart2 size={14} />
+                          <span>Insights</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            "ss-v3-post-stat-btn" + (post.pinned ? " is-saved" : "")
+                          }
                           disabled={actionBusy === "pin:" + post.id}
                           onClick={() => void togglePinSoul(post)}
                         >
@@ -985,14 +1347,19 @@ export default function ResearchNetworkShell({
                         </button>
                         <button
                           type="button"
+                          className="ss-v3-post-stat-btn"
                           disabled={actionBusy === "del:" + post.id}
                           onClick={() => void deletePublishedSoul(post)}
+                          aria-label={`Delete ${post.title}`}
                         >
                           <Trash2 size={14} />
-                          <span>Delete</span>
                         </button>
                       </>
                     )}
+                    <span className="ss-v3-post-views" title="Unique daily views (excludes author)">
+                      <Eye size={14} aria-hidden="true" />
+                      <span>{post.viewCount}</span>
+                    </span>
                   </div>
                 </article>
               ))}
@@ -1016,7 +1383,7 @@ export default function ResearchNetworkShell({
                 initialThreadId={pendingThreadId}
                 onClearInitialThread={() => setPendingThreadId("")}
                 onOpenProfile={openResearcherProfile}
-                onOpenGroup={() => setTab("groups")}
+                onOpenGroup={() => selectCommunityTab("groups")}
                 onMobileChatActive={onMobileChatActive}
               />
             </Suspense>
@@ -1158,6 +1525,67 @@ export default function ResearchNetworkShell({
               </span>
             </button>
           </form>
+        </Modal>
+      )}
+
+      {/* Author-only Post Insights Modal (Sec 17.3) */}
+      {insightsPost && (
+        <Modal
+          title={`Post Insights · ${insightsPost.title}`}
+          onClose={() => {
+            setInsightsPost(null);
+            setInsightsData(null);
+          }}
+        >
+          {insightsLoading ? (
+            <p role="status" className="x1-caption">
+              Loading post metrics…
+            </p>
+          ) : insightsData ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                  gap: 8,
+                }}
+              >
+                <div className="x1-stat-box">
+                  <span>Views</span>
+                  <strong>{insightsData.views}</strong>
+                </div>
+                <div className="x1-stat-box">
+                  <span>Likes</span>
+                  <strong>{insightsData.likes}</strong>
+                </div>
+                <div className="x1-stat-box">
+                  <span>Comments</span>
+                  <strong>{insightsData.comments}</strong>
+                </div>
+                <div className="x1-stat-box">
+                  <span>Saves</span>
+                  <strong>{insightsData.saves}</strong>
+                </div>
+                <div className="x1-stat-box">
+                  <span>Shares</span>
+                  <strong>{insightsData.shares}</strong>
+                </div>
+                <div className="x1-stat-box">
+                  <span>Engagement</span>
+                  <strong>
+                    {insightsData.engagementRatePct === null
+                      ? "—"
+                      : `${insightsData.engagementRatePct}%`}
+                  </strong>
+                </div>
+              </div>
+              <p className="x1-caption" style={{ margin: 0 }}>
+                Only you can see Post Insights for your published Souls. Views are
+                deduplicated per viewer per UTC day and exclude your own visits.
+                Individual viewer identities are never exposed.
+              </p>
+            </div>
+          ) : null}
         </Modal>
       )}
 

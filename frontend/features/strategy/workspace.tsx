@@ -1,23 +1,18 @@
 "use client";
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Archive,
   ArrowRight,
-  ArrowUpRight,
   Check,
   ChevronRight,
   Compass,
-  Copy,
   Info,
   PenTool,
-  Plus,
+  RefreshCw,
   Send,
-  Share2,
   SlidersHorizontal,
   Sparkles,
 } from "lucide-react";
 import { compileFormula } from "../../../backend/engines/scan";
-import type { SoulGenomeReport } from "../../../backend/engines/soul-genome";
 import {
   CLASSIC_50_PRESETS,
   CLASSIC_CATEGORY_COUNTS,
@@ -34,50 +29,34 @@ import {
 } from "../../../backend/services/research/discover-parser";
 import {
   RESEARCH_GLOSSARY,
-  DEFAULT_SCAN_UNIVERSE_PRESET,
   SCAN_REQUEST_VERSION,
   SCAN_UNIVERSE_LABEL,
   compileTree,
   scanUniverseForPreset,
-  matchesScanMarketPreset,
   treeFromFormula,
   validateResearch,
-  type RuleTree,
-  type ResearchDefinition,
-  type ScanUniversePreset,
-  type ScanSourceExclusion,
   type OutcomeDefinition,
-  type preflightResearch,
+  type ResearchDefinition,
+  type RuleTree,
+  type ScanUniversePreset,
 } from "../../../backend/services/research/research";
-import {
-  X2_INSTRUMENTS,
-  registryInstrument,
-  searchCanonicalInstruments,
-} from "../../../backend/services/market-data/instrument-registry";
 import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import { TradingViewWidget } from "../../components/tradingview-widget";
 import {
-  Panel,
   Empty,
   Modal,
+  Panel,
   SourceLink,
   WorkspaceSkeleton,
   api,
-  copyTextSafe,
   moment,
-  type WorkspaceState,
-  type ScanRun,
   type Notice,
+  type ScanRun,
+  type WorkspaceState,
 } from "../../components/workspace/shared";
-import {
-  RuleEditor,
-  OutcomeControls,
-  ResearchInfo,
-  EvidencePanel,
-  ReplayPanel,
-  Comparison,
-} from "./controls";
-import { ScanCoverageChart } from "./evidence-charts";
+import { IconGraveyard, IconPin, IconStrategy } from "../../components/workspace/ss-icons";
+import { triggerGoFeedback } from "../../components/workspace/go-feedback";
+import { ResearchInfo, RuleEditor } from "./controls";
 import "./research.css";
 
 const FormulaLab = lazy(() => import("./formula-lab"));
@@ -93,60 +72,86 @@ type Props = {
   openAsset: (id: string) => void;
   share: (formula: string) => void;
   onOpenCommunityWeb?: () => void;
+  onOpenWatchlist?: () => void;
   initialFormula: string;
   initialInstrument?: string;
-  initialUniversePreset?:
-    | "INDIAN_EQUITIES"
-    | "MCX_FUTURES"
-    | "MY_WATCHLIST"
-    | "ECB_DAILY"
-    | "CUSTOM_CSV";
+  initialUniversePreset?: ScanUniversePreset;
   initialPanel?: string;
 };
 
-type Preflight = {
-  preflight: ReturnType<typeof preflightResearch>;
-  pointInTime: boolean;
-  source: string;
-  sourceExclusions: { id: string; reason: string }[];
-  redaction?: { applied: boolean; reason: string | null };
+type StrategyTab = "scan" | "lab";
+type ScanTierMode = "CLASSIC" | "ADVANCED";
+type AdvancedEntryMode = "BUILD" | "DISCOVER" | "DRAW";
+type UserScanSource = "MY_WATCHLIST" | "MARKET";
+type UserTimeframe = "1h" | "1d" | "1wk" | "1mo";
+
+const TIMEFRAME_OPTIONS: readonly { value: UserTimeframe; label: string }[] = [
+  { value: "1h", label: "1 Hour" },
+  { value: "1d", label: "Daily" },
+  { value: "1wk", label: "Weekly" },
+  { value: "1mo", label: "Monthly" },
+];
+
+const TIMEFRAME_LABEL: Record<string, string> = {
+  "1h": "1 Hour",
+  "1d": "Daily",
+  "1wk": "Weekly",
+  "1mo": "Monthly",
 };
 
-type Draft = {
-  id: string;
-  name: string;
-  version: number;
-  payload: {
-    definition: ResearchDefinition;
-    versions: {
-      version: number;
-      savedAt: string;
-      definition: ResearchDefinition;
-    }[];
-  };
+const DEFAULT_OUTCOME: OutcomeDefinition = {
+  family: "POSITIVE_RETURN",
+  horizon: 10,
+  threshold: 0,
+  target: 5,
+  stop: 3,
+  costBps: 0,
 };
 
-type RichRun = ScanRun & {
-  redaction?: { applied: boolean; reason: string | null };
-  digestVerifiableFromResponse?: boolean;
-  payload: ScanRun["payload"] & {
-    description?: string;
-    scanTier?: "CLASSIC" | "ADVANCED";
-    origin?: "CLASSIC" | "DISCOVER" | "BUILD" | "DRAW";
-    research?: ResearchDefinition;
-    preflight?: Pick<ReturnType<typeof preflightResearch>, "accounting">;
-    source?: string;
-    sourceExclusions?: ScanSourceExclusion[];
-    soulGenome?: SoulGenomeReport;
-  };
+const DEFAULT_ADVANCED_TREE: RuleTree = {
+  kind: "ALL",
+  children: [
+    { kind: "condition", rule: { id: "r1", field: "close", op: ">", value: 0 } },
+    { kind: "condition", rule: { id: "r2", field: "rsi14", op: "<", value: 70 } },
+  ],
 };
+
+const DEFAULT_ADVANCED_FORMULA = "all(close > sma(close, 20), rsi(close, 14) < 70)";
+
+function defaultSoulNameForPreset(preset: ClassicPreset): string {
+  const short = preset.label.trim();
+  return short.length <= 64 ? short : `${short.slice(0, 61)}…`;
+}
+
+function sourceBadgeLabel(rawPreset?: string, rawSource?: string): string {
+  if (rawPreset === "MY_WATCHLIST" || rawSource === "Watchlist") return "Watchlist";
+  if (
+    rawPreset === "MARKET" ||
+    rawPreset === "INDIAN_EQUITIES" ||
+    rawPreset === "MCX_FUTURES"
+  ) {
+    return "Market";
+  }
+  if (rawPreset && rawPreset in SCAN_UNIVERSE_LABEL) {
+    return SCAN_UNIVERSE_LABEL[rawPreset as ScanUniversePreset];
+  }
+  return "Market";
+}
+
+function formatScanBarTimestamp(iso: string | null | undefined, interval?: string): string {
+  if (!iso) return "";
+  if (interval === "1h" || (iso.includes("T") && !iso.endsWith("T00:00:00.000Z"))) {
+    return moment(iso);
+  }
+  return iso.slice(0, 10);
+}
 
 export function FinancialCalendar() {
   return (
     <Panel title="Financial calendar">
       <ResearchInfo label="Source coverage">
         Source-hosted calendars are display only. Structured official schedules
-        now live in Global → Economic Calendar.
+        live in Global → Economic Calendar.
       </ResearchInfo>
       <div className="x1-actions">
         <SourceLink href="https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx">
@@ -167,1898 +172,1227 @@ export function FinancialCalendar() {
   );
 }
 
-const defaultOutcome: OutcomeDefinition = {
-  family: "POSITIVE_RETURN",
-  horizon: 10,
-  threshold: 0,
-  target: 5,
-  stop: 3,
-  costBps: 0,
-};
-
-const defaultTree: RuleTree = {
-  kind: "ALL",
-  children: [
-    { kind: "condition", rule: { field: "rsi14", op: "<", value: 40 } },
-  ],
-};
-
-const TIMEFRAMES: { id: ResearchDefinition["interval"]; label: string }[] = [
-  { id: "30m", label: "30 min" },
-  { id: "1h", label: "1 hour" },
-  { id: "1d", label: "Daily" },
-  { id: "1wk", label: "Weekly" },
-  { id: "1mo", label: "Monthly" },
-];
-
-function localTimeShort(iso: string | null | undefined): string {
-  if (!iso) return "unavailable";
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-      day: "numeric",
-      month: "short",
-    }).format(new Date(iso));
-  } catch {
-    return iso;
-  }
-}
-
-function closedObservationLabel(eventAt: string | null, source: string) {
-  if (!eventAt) return "unavailable";
-  if (source.includes("Angel One") && eventAt.includes("T"))
-    return new Intl.DateTimeFormat("en-IN", {
-      timeZone: "Asia/Kolkata", day: "numeric", month: "short", year: "numeric",
-    }).format(new Date(eventAt)) + " IST";
-  return eventAt.slice(0, 10);
-}
-
-function SoulGenomePanel({
-  genome,
-  onOpenAsset,
-}: {
-  genome: SoulGenomeReport;
-  onOpenAsset: (id: string) => void;
-}) {
-  return (
-    <Panel
-      title="Soul Genome Evidence"
-      kicker="Causal Historical Twins · Empirical Future Paths · Anti-Scan Skepticism"
-    >
-      <div className="x51-genome-grid">
-        {/* 1. Historical Twins */}
-        <div className="x51-genome-card">
-          <h4>Historical Twins ({genome.historicalTwins.length})</h4>
-          {genome.historicalTwins.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {genome.historicalTwins.slice(0, 6).map((t, i) => (
-                <div
-                  key={`${t.instrumentId}-${t.windowEndAt}-${i}`}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    gap: 8,
-                    fontSize: "0.82rem",
-                    borderBottom: "1px solid var(--x51-hairline)",
-                    paddingBottom: 4,
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="x1-text-button"
-                    onClick={() =>
-                      onOpenAsset(t.instrumentId.replace(/^CSV:/, ""))
-                    }
-                  >
-                    {t.instrumentId} ({t.windowEndAt.slice(0, 10)})
-                  </button>
-                  <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                    Fit {t.patternFit} ·{" "}
-                    {t.subsequentReturnPct >= 0 ? "+" : ""}
-                    {t.subsequentReturnPct.toFixed(2)}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="x1-caption" style={{ margin: 0 }}>
-              No purged non-overlapping historical analogues qualified on this
-              series.
-            </p>
-          )}
-        </div>
-
-        {/* 2. Empirical Future Paths */}
-        <div className="x51-genome-card">
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 6,
-            }}
-          >
-            <h4>Future Paths ({genome.futurePaths.horizonBars}-bar)</h4>
-            <span
-              className={
-                genome.futurePaths.status === "CALIBRATED_EMPIRICAL"
-                  ? "x51-pill x51-pill-green"
-                  : "x51-pill x51-pill-amber"
-              }
-            >
-              {genome.futurePaths.status}
-            </span>
-          </div>
-          {genome.futurePaths.status === "CALIBRATED_EMPIRICAL" &&
-          genome.futurePaths.quantilesPct ? (
-            <dl className="x1-details" style={{ margin: 0 }}>
-              <div>
-                <dt>Sample (purged)</dt>
-                <dd>n = {genome.futurePaths.sampleSize}</dd>
-              </div>
-              <div>
-                <dt>Positive rate (Wilson 95%)</dt>
-                <dd>
-                  {genome.futurePaths.positiveOutcomeRatePct}% (
-                  {genome.futurePaths.wilson95IntervalPct?.[0]}% –{" "}
-                  {genome.futurePaths.wilson95IntervalPct?.[1]}%)
-                </dd>
-              </div>
-              <div>
-                <dt>Median / IQR</dt>
-                <dd>
-                  {genome.futurePaths.quantilesPct.median}% (P25{" "}
-                  {genome.futurePaths.quantilesPct.p25}% · P75{" "}
-                  {genome.futurePaths.quantilesPct.p75}%)
-                </dd>
-              </div>
-              <div>
-                <dt>Median Max Drawdown</dt>
-                <dd>{genome.futurePaths.medianMaxAdverseExcursionPct}%</dd>
-              </div>
-            </dl>
-          ) : (
-            <p className="x1-caption" style={{ margin: 0 }}>
-              {genome.futurePaths.disclosure}
-            </p>
-          )}
-        </div>
-
-        {/* 3. Anti-Scan Skepticism */}
-        <div className="x51-genome-card">
-          <h4>Anti-Scan Skepticism</h4>
-          <ul style={{ margin: 0, paddingLeft: 16, fontSize: "0.82rem" }}>
-            {genome.antiScan.map((chk) => (
-              <li key={chk.id} style={{ marginBottom: 6 }}>
-                <strong>{chk.title}</strong> ({chk.status}):{" "}
-                <span className="x1-caption">{chk.detail}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-
-      {/* Explicit Gated R&D Modules Disclosure */}
-      <details className="x1-small-details" style={{ marginTop: 12 }}>
-        <summary>
-          Explicitly Gated R&amp;D Modules ({genome.gatedModules.length})
-        </summary>
-        <ul style={{ marginTop: 8, paddingLeft: 18 }}>
-          {genome.gatedModules.map((mod) => (
-            <li key={mod.name} className="x1-caption" style={{ marginBottom: 4 }}>
-              <strong>{mod.name}</strong> [{mod.status}]: {mod.reason}
-            </li>
-          ))}
-        </ul>
-      </details>
-    </Panel>
-  );
-}
-
-export default function ResearchWorkspace({
+export default function Strategy({
   workspace,
   authenticated = true,
   onRequireAuth,
   reload,
   notify,
   openAsset,
-  share,
   onOpenCommunityWeb,
+  onOpenWatchlist,
   initialFormula,
-  initialInstrument,
   initialUniversePreset,
   initialPanel,
 }: Props) {
-  // Strictly 2 sub-dashboards: "Soul Scan" | "Formula Lab"
-  const [panel, setPanel] = useState<"Soul Scan" | "Formula Lab">(
-    initialPanel === "Formula Lab" ? "Formula Lab" : "Soul Scan",
+  const [section, setSection] = useState<StrategyTab>(
+    initialPanel === "lab" ? "lab" : "scan",
   );
-  // Inside Soul Scan ONLY: Classic | Advanced
-  const [scanMode, setScanMode] = useState<"CLASSIC" | "ADVANCED">(
-    initialFormula ? "ADVANCED" : "CLASSIC",
-  );
-  // Inside Advanced ONLY: Discover | Build | Draw
-  const [advancedTab, setAdvancedTab] = useState<"DISCOVER" | "BUILD" | "DRAW">(
-    initialFormula ? "BUILD" : "DISCOVER",
-  );
-  // Build mode sub-editor: visual block builder vs canonical formula editor
-  const [buildMode, setBuildMode] = useState<"VISUAL" | "FORMULA">(
-    initialFormula ? "FORMULA" : "VISUAL",
-  );
+  const [scanTier, setScanTier] = useState<ScanTierMode>("CLASSIC");
+  const [advancedEntry, setAdvancedEntry] = useState<AdvancedEntryMode>("BUILD");
 
-  // Classic 50-preset state (selection-only — no freeform typing in Classic!)
-  const [selectedClassicId, setSelectedClassicId] = useState<string>(
-    CLASSIC_50_PRESETS[0].id, // Default #01: Close crosses above EMA(20)
-  );
-  const [classicFilter, setClassicFilter] = useState("");
-  const [classicCategory, setClassicCategory] = useState<
-    "ALL" | ClassicPresetCategory
-  >("ALL");
-  const [expandedClassicDetailsId, setExpandedClassicDetailsId] = useState<
-    string | null
-  >(null);
-  const [preModalClassicId, setPreModalClassicId] = useState<string>(
-    CLASSIC_50_PRESETS[0].id,
-  );
+  // Classic preset state (default-ready in 1 click)
+  const initialClassic = CLASSIC_50_PRESETS[0];
+  const [classicPresetId, setClassicPresetId] = useState<string>(initialClassic.id);
+  const [formulaPickerOpen, setFormulaPickerOpen] = useState(false);
+  const [formulaQuery, setFormulaQuery] = useState("");
+  const [formulaCategory, setFormulaCategory] = useState<"ALL" | ClassicPresetCategory>("ALL");
+  const [expandedFormulaId, setExpandedFormulaId] = useState<string | null>(null);
+  const [activeInfoOpen, setActiveInfoOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [policyOpen, setPolicyOpen] = useState(false);
 
-  // Discover state
+  // Per-user D1 formula pins (optimistic with rollback)
+  const [pinnedIds, setPinnedIds] = useState<string[]>(
+    workspace?.pinnedFormulaIds ?? [],
+  );
+  const [pinningId, setPinningId] = useState<string | null>(null);
+
+  // Soul name (sensible prefilled editable default so 1 click runs immediately)
+  const [name, setName] = useState<string>(defaultSoulNameForPreset(initialClassic));
+  const [nameEditedManually, setNameEditedManually] = useState(false);
+
+  // Advanced rule tree + formula
+  const [tree, setTree] = useState<RuleTree>(DEFAULT_ADVANCED_TREE);
+  const [advancedFormula, setAdvancedFormula] = useState<string>(DEFAULT_ADVANCED_FORMULA);
   const [discoverQuery, setDiscoverQuery] = useState("");
-  const [discoverBlueprint, setDiscoverBlueprint] =
-    useState<DiscoverBlueprint | null>(null);
-  const [discoverBusy, setDiscoverBusy] = useState(false);
+  const [discoverBlueprint, setDiscoverBlueprint] = useState<DiscoverBlueprint | null>(null);
+  const [discoverLoading, setDiscoverLoading] = useState(false);
 
-  // Shared Soul definition state — name ALWAYS starts blank for every new Soul
-  const [formula, setFormula] = useState(
-    initialFormula || CLASSIC_50_PRESETS[0].formula,
+  // Scan Source (EXACTLY Watchlist or Market; default Market)
+  const [scanSource, setScanSource] = useState<UserScanSource>(
+    initialUniversePreset === "MY_WATCHLIST" ? "MY_WATCHLIST" : "MARKET",
   );
-  const [tree, setTree] = useState<RuleTree>(defaultTree);
-  const [name, setName] = useState("");
-  const [nameError, setNameError] = useState("");
-  const [description, setDescription] = useState("");
-  const [quotaInfoOpen, setQuotaInfoOpen] = useState(false);
-  const nameInputRef = useRef<HTMLInputElement>(null);
-  const [universePreset, setUniversePreset] = useState<ScanUniversePreset | undefined>(
-    initialUniversePreset ?? DEFAULT_SCAN_UNIVERSE_PRESET,
-  );
-  const universe = scanUniverseForPreset(universePreset);
-  const [customCsv, setCustomCsv] = useState("");
-  const [watchlistId, setWatchlistId] = useState("");
-  const [pickerQuery, setPickerQuery] = useState("");
-  const [interval, setInterval] = useState<ResearchDefinition["interval"]>("1d");
-  const [instruments, setInstruments] = useState("");
-  const [partialPolicy, setPartial] =
-    useState<ResearchDefinition["partialPolicy"]>("ALLOW_UNKNOWN");
-  const [outcome, setOutcome] = useState<OutcomeDefinition>(defaultOutcome);
+  const [watchlistId, setWatchlistId] = useState<string>("");
 
-  // Execution & Pipeline UX
-  const [busy, setBusy] = useState("");
-  const [pipelineStep, setPipelineStep] = useState<number>(0);
+  // Timeframe (EXACTLY 1 Hour, Daily, Weekly, Monthly; default Daily)
+  const [interval, setInterval] = useState<UserTimeframe>("1d");
+
+  // Scan execution & results state
+  const [busy, setBusy] = useState(false);
+  const [scanError, setScanError] = useState("");
+  const [selectedScanId, setSelectedScanId] = useState<string | null>(null);
   const [justCompletedId, setJustCompletedId] = useState<string | null>(null);
-  const [preflight, setPreflight] = useState<{
-    signature: string;
-    value: Preflight;
-  } | null>(null);
-  const [selected, setSelected] = useState<string | null>("");
-  const [review, setReview] = useState<ScanRun | null>(null);
+
+  // GRAVEYARD filters & actions
   const [graveyardFilter, setGraveyardFilter] = useState<
     "ALL" | "CLASSIC" | "ADVANCED" | "RETIRED"
   >("ALL");
-  const [historySearch, setHistorySearch] = useState("");
-  const [olderRuns, setOlderRuns] = useState<ScanRun[]>([]);
-  const [olderCursor, setOlderCursor] = useState<string | null | undefined>(
-    undefined,
-  );
-  const [draft, setDraft] = useState<{ id: string; version: number } | null>(
-    null,
-  );
-  const [savedSignature, setSavedSignature] = useState("");
-
-  // [06] Compact searchable Classic formula dialog
-  const [formulaPickerOpen, setFormulaPickerOpen] = useState(false);
-
-  // One-Click Post Soul + [30] Server-Validated Post Preview state (ordinary Web posts default PUBLIC)
-  const [postTarget, setPostTarget] = useState<ScanRun | null>(null);
-  const [postSummary, setPostSummary] = useState("");
-  const [postRiskNote, setPostRiskNote] = useState(
-    "Educational research hypothesis on historical observations only; not financial advice.",
-  );
-  const [postBusy, setPostBusy] = useState(false);
-  const [previewBusy, setPreviewBusy] = useState(false);
-  const [postPreview, setPostPreview] = useState<{
-    allowed: boolean;
-    blockReason: string | null;
-    preview: {
-      authorHandle: string;
-      authorDisplayName: string;
-      title: string;
-      summary: string;
-      audience: string;
-      mode: string;
-      formula: string;
-      timeframe: string;
-      universeLabel: string;
-      matchedSymbols: string[];
-      evidenceStatus: string;
-      sourceAttribution: string;
-      riskNote: string;
-      redactionsApplied: string[];
-    };
-  } | null>(null);
-  const [postedResultId, setPostedResultId] = useState<string | null>(null);
+  const [graveyardQuery, setGraveyardQuery] = useState("");
+  const [review, setReview] = useState<ScanRun | null>(null);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
 
   const lock = useRef(false);
-  const scopeGeneration = useRef(0);
-  const preflightRequest = useRef<AbortController | null>(null);
-  const pending = useRef<{ kind: string; signature: string; id: string } | null>(
-    null,
-  );
+  const runSeqRef = useRef(0);
+  const reviewKeyRef = useRef<{ sig: string; id: string } | null>(null);
+  const resultsRef = useRef<HTMLElement>(null);
 
+  // Sync D1 formula pins from workspace payload
   useEffect(() => {
-    if (!initialPanel) return;
+    const incoming = workspace?.pinnedFormulaIds;
+    if (!incoming) return;
+    let alive = true;
     queueMicrotask(() => {
-      setPanel(initialPanel === "Formula Lab" ? "Formula Lab" : "Soul Scan");
+      if (alive) setPinnedIds(incoming);
     });
+    return () => {
+      alive = false;
+    };
+  }, [workspace?.pinnedFormulaIds]);
+
+  // Sync section when initialPanel changes (e.g. Strategy -> Formula Lab)
+  useEffect(() => {
+    if (initialPanel !== "lab" && initialPanel !== "scan") return;
+    let alive = true;
+    queueMicrotask(() => {
+      if (alive) setSection(initialPanel);
+    });
+    return () => {
+      alive = false;
+    };
   }, [initialPanel]);
 
+  // Handle "Try this formula" handoff from Community (never auto-runs!)
   useEffect(() => {
-    if (!initialFormula) return;
+    const clean = initialFormula.trim();
+    if (!clean) return;
+    let alive = true;
     queueMicrotask(() => {
-      setFormula(initialFormula);
-      setScanMode("ADVANCED");
-      setAdvancedTab("BUILD");
-      setBuildMode("FORMULA");
+      if (!alive) return;
+      setSection("scan");
+      const matched = findClassicPresetByFormula(clean);
+      if (matched) {
+        setScanTier("CLASSIC");
+        setClassicPresetId(matched.id);
+        setName(defaultSoulNameForPreset(matched));
+        setNameEditedManually(false);
+      } else {
+        setScanTier("ADVANCED");
+        setAdvancedEntry("BUILD");
+        setAdvancedFormula(clean);
+        const parsed = treeFromFormula(clean);
+        if (parsed) setTree(parsed);
+        setName("Imported Community Soul");
+        setNameEditedManually(false);
+      }
     });
+    return () => {
+      alive = false;
+    };
   }, [initialFormula]);
 
-  useEffect(() => {
-    if (!initialInstrument) return;
-    queueMicrotask(() => {
-      setInstruments(initialInstrument);
-      const isEcb = initialInstrument.startsWith("ECB:");
-      setUniversePreset(
-        isEcb
-          ? "ECB_DAILY"
-          : initialInstrument.startsWith("MCX:")
-            ? "MCX_FUTURES"
-            : registryInstrument(initialInstrument)?.assetClass === "EQUITY"
-              ? "INDIAN_EQUITIES"
-              : undefined,
-      );
-      setPreflight(null);
-    });
-  }, [initialInstrument]);
-
-  const activeClassicPreset = useMemo(
+  // Watchlists
+  const watchlists = useMemo(
+    () => (workspace?.records ?? []).filter((r) => r.kind === "watchlist"),
+    [workspace?.records],
+  );
+  const activeWatchlist = useMemo(
     () =>
-      findClassicPresetById(selectedClassicId) ??
-      CLASSIC_50_PRESETS[0],
-    [selectedClassicId],
+      watchlists.find((w) => w.id === watchlistId) ?? watchlists[0] ?? null,
+    [watchlists, watchlistId],
   );
+  const watchlistItems = activeWatchlist?.payload.items ?? [];
 
-  const filteredClassicPresets = useMemo(
-    () => searchClassicPresets(classicFilter, classicCategory),
-    [classicFilter, classicCategory],
+  const activePreset = useMemo(
+    () => findClassicPresetById(classicPresetId) ?? CLASSIC_50_PRESETS[0],
+    [classicPresetId],
   );
+  const pinnedSet = useMemo(() => new Set(pinnedIds), [pinnedIds]);
 
-  const watchlists = workspace?.records.filter((record) => record.kind === "watchlist");
-  const selectedWatchlist = watchlistId
-    ? watchlists?.find((record) => record.id === watchlistId)
-    : watchlists?.[0];
-  const watchlistItems = selectedWatchlist?.payload?.items;
-  const scopedWatchlistId = universePreset === "MY_WATCHLIST"
-    ? watchlistId || selectedWatchlist?.id : undefined;
-  const pickerMatches = (() => {
-    if (!pickerQuery.trim()) return [];
-    const candidates = X2_INSTRUMENTS.filter((instrument) => {
-      if (universePreset === "ECB_DAILY") return instrument.id.startsWith("ECB:");
-      if (universePreset === "MY_WATCHLIST") return watchlistItems?.includes(instrument.id);
-      if (universePreset === "CUSTOM_CSV") return false;
-      return matchesScanMarketPreset(universePreset, instrument.market, instrument.assetClass, instrument.expiry);
-    });
-    return searchCanonicalInstruments(pickerQuery, candidates, {
-      limit: 6,
-    });
-  })();
-
-  function selectClassicPreset(preset: ClassicPreset) {
-    setSelectedClassicId(preset.id);
-    setFormula(preset.formula);
-    setPreflight(null);
-  }
-
-  function resetToNewSoul() {
-    setName("");
-    setNameError("");
-    setDescription("");
-    setDraft(null);
-    setSavedSignature("");
-    setPreflight(null);
-    window.requestAnimationFrame(() => nameInputRef.current?.focus());
-  }
-
-  function applyUniversePreset(next: ScanUniversePreset) {
-    if (next === universePreset) return;
-    scopeGeneration.current++;
-    preflightRequest.current?.abort();
-    setUniversePreset(next);
-    setPreflight(null);
-    setSelected(null);
-    setJustCompletedId(null);
-    setPickerQuery("");
-    setWatchlistId("");
-    setInstruments("");
-    if (next === "CUSTOM_CSV") setInterval("1d");
-    else setCustomCsv("");
-  }
+  const filteredPresets = useMemo(() => {
+    const matches = searchClassicPresets(formulaQuery, formulaCategory);
+    const pinned = matches.filter((p) => pinnedSet.has(p.id));
+    const unpinned = matches.filter((p) => !pinnedSet.has(p.id));
+    return { pinned, unpinned, total: matches.length };
+  }, [formulaQuery, formulaCategory, pinnedSet]);
 
   const effectiveFormula =
-    scanMode === "CLASSIC"
-      ? activeClassicPreset.formula
-      : advancedTab === "DISCOVER" && discoverBlueprint?.formula
-        ? discoverBlueprint.formula
-        : buildMode === "VISUAL"
-          ? (() => {
-              try {
-                return compileTree(tree).formula;
-              } catch {
-                return formula;
-              }
-            })()
-          : formula;
+    scanTier === "CLASSIC" ? activePreset.formula : advancedFormula;
 
-  const canonical = useMemo(() => {
+  const formulaCompile = useMemo(() => {
     try {
-      return { value: compileFormula(effectiveFormula), error: "" };
-    } catch (error) {
-      return { value: null, error: (error as Error).message };
+      return { ok: true as const, compiled: compileFormula(effectiveFormula) };
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message };
     }
   }, [effectiveFormula]);
 
-  const backendMode: ResearchDefinition["mode"] =
-    scanMode === "CLASSIC" ? "SIMPLE" : "ADVANCED";
-
-  const trimmedName = name.trim();
-
-  const effectiveDescription =
-    description.trim().length >= 10
-      ? description.trim()
-      : scanMode === "CLASSIC"
-        ? `${activeClassicPreset.note} (${activeClassicPreset.category} preset #${activeClassicPreset.number}).`
-        : "Research hypothesis evaluated strictly on closed historical observations.";
-
-  const definition = (() => {
-    try {
-      return {
-        value: validateResearch({
-          name: trimmedName,
-          description: effectiveDescription,
-          formula: canonical.value?.formula ?? effectiveFormula,
-          mode: backendMode,
-          universe,
-          universePreset,
-          watchlistId: scopedWatchlistId,
-          interval,
-          instrumentIds: instruments.split(/[\s,]+/).filter(Boolean),
-          partialPolicy,
-          outcome,
-        }),
-        error: "",
-      };
-    } catch (error) {
-      return { value: null, error: (error as Error).message };
+  // Select latest scan cleanly, prioritizing explicit completed scan
+  const scans = useMemo(() => workspace?.scans ?? [], [workspace?.scans]);
+  const activeScan = useMemo(() => {
+    if (selectedScanId) {
+      const found = scans.find((s) => s.id === selectedScanId);
+      if (found) return found;
     }
-  })();
+    return scans[0] ?? null;
+  }, [scans, selectedScanId]);
 
-  const signature = JSON.stringify(
-    definition.value ?? {
-      name,
-      formula: effectiveFormula,
-      mode: backendMode,
-      universe,
-      interval,
-      instruments,
-      partialPolicy,
-      outcome,
-    },
-  );
-  const [initialSignature] = useState(signature);
-  const dirty = signature !== savedSignature && signature !== initialSignature;
-
+  // Smooth-scroll to Scan Results ONLY after an explicit Run Scan completes
   useEffect(() => {
-    window.dispatchEvent(
-      new CustomEvent("x2-research-dirty", { detail: dirty }),
-    );
-    return () => {
-      window.dispatchEvent(
-        new CustomEvent("x2-research-dirty", { detail: false }),
+    if (!justCompletedId) return;
+    const el = resultsRef.current;
+    if (el) {
+      const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      el.scrollIntoView({
+        behavior: reduced ? "auto" : "smooth",
+        block: "start",
+      });
+    }
+    const timer = window.setTimeout(() => setJustCompletedId(null), 1500);
+    return () => window.clearTimeout(timer);
+  }, [justCompletedId]);
+
+  function selectMode(nextTier: ScanTierMode) {
+    setScanTier(nextTier);
+    setScanError("");
+    if (nextTier === "CLASSIC") {
+      if (!nameEditedManually) {
+        setName(defaultSoulNameForPreset(activePreset));
+      }
+    } else {
+      if (!nameEditedManually) {
+        setName("Custom Advanced Scan");
+      }
+    }
+  }
+
+  function applyClassicPreset(preset: ClassicPreset) {
+    setClassicPresetId(preset.id);
+    setScanError("");
+    if (!nameEditedManually) {
+      setName(defaultSoulNameForPreset(preset));
+    }
+  }
+
+  async function togglePin(presetId: string) {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    if (pinningId) return;
+    const currentlyPinned = pinnedSet.has(presetId);
+    const optimistic = currentlyPinned
+      ? pinnedIds.filter((id) => id !== presetId)
+      : [presetId, ...pinnedIds.filter((id) => id !== presetId)];
+    setPinnedIds(optimistic);
+    setPinningId(presetId);
+    try {
+      const res = await api<{
+        ok: boolean;
+        pinned: boolean;
+        pinnedFormulaIds: string[];
+      }>("/api/x1/workspace", {
+        action: currentlyPinned ? "unpin-formula" : "pin-formula",
+        formulaId: presetId,
+      });
+      setPinnedIds(res.pinnedFormulaIds);
+      triggerGoFeedback(
+        currentlyPinned ? "Formula unpinned" : "Formula pinned",
+        `pin-${presetId}-${currentlyPinned ? "off" : "on"}-${crypto.randomUUID()}`,
+        true,
       );
+    } catch (err) {
+      // Roll back optimistic state cleanly on failure
+      setPinnedIds(pinnedIds);
+      notify(
+        err instanceof Error ? err.message : "Could not update formula pin.",
+        true,
+      );
+    } finally {
+      setPinningId(null);
+    }
+  }
+
+  async function handleDiscoverParse() {
+    if (!discoverQuery.trim() || discoverLoading) return;
+    setDiscoverLoading(true);
+    try {
+      const res = await api<{ blueprint: DiscoverBlueprint }>("/api/x1/workspace", {
+        action: "parse-discover",
+        query: discoverQuery.trim(),
+      });
+      setDiscoverBlueprint(res.blueprint);
+      if (res.blueprint.formula) {
+        setAdvancedFormula(res.blueprint.formula);
+        const parsed = treeFromFormula(res.blueprint.formula);
+        if (parsed) setTree(parsed);
+        if (!nameEditedManually) {
+          setName(
+            res.blueprint.humanSummary
+              ? res.blueprint.humanSummary.slice(0, 60)
+              : "Discover Rule Scan",
+          );
+        }
+      }
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : "Could not parse query.",
+        true,
+      );
+    } finally {
+      setDiscoverLoading(false);
+    }
+  }
+
+  async function executeScan() {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    if (lock.current || busy) return;
+
+    const cleanName =
+      name.trim() ||
+      (scanTier === "CLASSIC"
+        ? defaultSoulNameForPreset(activePreset)
+        : "Custom Advanced Scan");
+    if (cleanName !== name) setName(cleanName);
+
+    if (scanSource === "MY_WATCHLIST" && watchlistItems.length === 0) {
+      setScanError(
+        "Your Watchlist is empty. Add instruments to your Watchlist or switch Scan Source to Market.",
+      );
+      return;
+    }
+
+    if (!formulaCompile.ok) {
+      setScanError(formulaCompile.error);
+      return;
+    }
+
+    const autoDescription =
+      scanTier === "CLASSIC"
+        ? `${activePreset.label}: ${activePreset.shortDescription}`
+        : `Advanced rule evaluation for ${cleanName}: ${effectiveFormula}`.slice(0, 1900);
+
+    const requestDef: ResearchDefinition = {
+      name: cleanName.length >= 3 ? cleanName : `${cleanName} Scan`,
+      description:
+        autoDescription.length >= 10
+          ? autoDescription
+          : `Deterministic scan evaluation for ${cleanName}.`,
+      formula: effectiveFormula,
+      mode: scanTier === "CLASSIC" ? "SIMPLE" : "ADVANCED",
+      universe: scanUniverseForPreset(scanSource),
+      universePreset: scanSource,
+      ...(scanSource === "MY_WATCHLIST" && activeWatchlist
+        ? { watchlistId: activeWatchlist.id }
+        : {}),
+      interval,
+      partialPolicy: "ALLOW_UNKNOWN",
+      outcome: DEFAULT_OUTCOME,
+      instrumentIds: [],
     };
-  }, [dirty]);
 
-  const runs = [
-    ...new Map(
-      [...(workspace?.scans ?? []), ...olderRuns].map((r) => [r.id, r]),
-    ).values(),
-  ].sort(
-    (a, b) =>
-      b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id),
-  );
-  const active = (selected === null ? undefined : (runs.find((r) => r.id === selected) ?? runs[0])) as
-    | RichRun
-    | undefined;
+    try {
+      validateResearch(requestDef as unknown as Record<string, unknown>);
+    } catch (err) {
+      setScanError((err as Error).message);
+      return;
+    }
 
-  const grave = new Set(
-    runs
-      .filter((r) => r.reviewState && r.reviewState !== "RESTORED")
-      .map((r) => r.id),
-  );
-  for (const event of workspace?.scanEvents ?? [])
-    if (event.kind === "RESTORED") grave.delete(event.scan_id);
-    else grave.add(event.scan_id);
+    lock.current = true;
+    setBusy(true);
+    setScanError("");
+    const seq = ++runSeqRef.current;
 
-  const filteredGraveyard = runs.filter((r) => {
-    const rich = r as RichRun;
-    const tier =
-      rich.payload.scanTier ?? (r.mode === "SIMPLE" ? "CLASSIC" : "ADVANCED");
-    if (graveyardFilter === "CLASSIC" && tier !== "CLASSIC") return false;
-    if (graveyardFilter === "ADVANCED" && tier !== "ADVANCED") return false;
-    if (graveyardFilter === "RETIRED" && !grave.has(r.id)) return false;
-    if (!historySearch.trim()) return true;
-    return (
-      r.name +
-      " " +
-      (rich.payload.description ?? "") +
-      " " +
-      r.payload.rule.formula
-    )
-      .toLowerCase()
-      .includes(historySearch.toLowerCase());
-  });
+    try {
+      const res = await api<{ id: string }>("/api/x1/workspace", {
+        action: "run-scan",
+        scanRequestVersion: SCAN_REQUEST_VERSION,
+        scanTier,
+        origin: scanTier === "CLASSIC" ? "CLASSIC" : advancedEntry,
+        ...requestDef,
+        requestId: crypto.randomUUID(),
+      });
+      if (seq !== runSeqRef.current) return;
+      await reload();
+      if (seq !== runSeqRef.current) return;
+      setSelectedScanId(res.id);
+      setJustCompletedId(res.id);
+      notify("Scan completed and archived to GRAVEYARD.");
+    } catch (err) {
+      if (seq !== runSeqRef.current) return;
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Scan could not complete right now. Please try again.";
+      setScanError(msg);
+      notify(msg, true);
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  }
 
-  const drafts =
-    (workspace as (WorkspaceState & { researchDrafts?: Draft[] }) | null)
-      ?.researchDrafts ?? [];
-  const nextCursor =
-    olderCursor === undefined ? workspace?.scanHistoryNextBefore : olderCursor;
-  const sourceSignature = JSON.stringify([
-    signature,
-    universePreset === "CUSTOM_CSV" ? customCsv : null,
-    universePreset === "MY_WATCHLIST" ? watchlistItems : null,
-  ]);
-  const coverage = preflight?.signature === sourceSignature ? preflight.value : null;
+  async function publishScanToCommunity(scan: ScanRun) {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    if (publishingId) return;
+    setPublishingId(scan.id);
+    try {
+      await api("/api/community/network", {
+        action: "publish-soul",
+        scanId: scan.id,
+        title: scan.name,
+        audience: "PUBLIC",
+      });
+      triggerGoFeedback(
+        "Soul published",
+        `publish-${scan.id}-${crypto.randomUUID()}`,
+      );
+      notify("Soul published to Community.");
+      onOpenCommunityWeb?.();
+    } catch (err) {
+      notify(
+        err instanceof Error
+          ? err.message
+          : "This scan could not be published.",
+        true,
+      );
+    } finally {
+      setPublishingId(null);
+    }
+  }
+
+  const graveyardScans = useMemo(() => {
+    const q = graveyardQuery.trim().toLowerCase();
+    return scans.filter((s) => {
+      const isRetired = s.reviewState === "RETIRED";
+      const isClassic = s.mode === "SIMPLE";
+      if (graveyardFilter === "CLASSIC" && !isClassic) return false;
+      if (graveyardFilter === "ADVANCED" && isClassic) return false;
+      if (graveyardFilter === "RETIRED" && !isRetired) return false;
+      if (!q) return true;
+      return (
+        s.name.toLowerCase().includes(q) ||
+        (s.payload.rule?.formula ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [scans, graveyardFilter, graveyardQuery]);
+
   const quota = workspace?.scanQuota;
 
-  function loadDefinition(
-    value: ResearchDefinition,
-    current: { id: string; version: number } | null = null,
-  ) {
-    scopeGeneration.current++;
-    preflightRequest.current?.abort();
-    setCustomCsv("");
-    setWatchlistId(value.watchlistId ?? "");
-    setName(value.name);
-    setNameError("");
-    setDescription(value.description);
-    setFormula(value.formula);
-    const matchedPreset =
-      value.mode === "SIMPLE"
-        ? findClassicPresetByFormula(value.formula)
-        : undefined;
-    if (matchedPreset) {
-      setSelectedClassicId(matchedPreset.id);
-      setScanMode("CLASSIC");
-    } else {
-      const converted = treeFromFormula(value.formula);
-      if (converted) setTree(converted);
-      setScanMode("ADVANCED");
-      setAdvancedTab("BUILD");
-      setBuildMode(converted ? "VISUAL" : "FORMULA");
-    }
-    setUniversePreset(value.universePreset ?? (value.universe === "ECB_DAILY" ? "ECB_DAILY" : undefined));
-    setInterval(value.interval);
-    setInstruments(value.instrumentIds.join(", "));
-    setPartial(value.partialPolicy);
-    setOutcome(value.outcome);
-    setDraft(current);
-    setSavedSignature(current ? JSON.stringify(value) : "");
-    setPreflight(null);
-    setPanel("Soul Scan");
-  }
-
-  async function parseDiscoverIntent(rawQuery?: string) {
-    const q = (rawQuery ?? discoverQuery).trim();
-    if (!q) {
-      notify("Describe the strategy you want to test.", true);
-      return;
-    }
-    if (!authenticated) {
-      onRequireAuth?.();
-      return;
-    }
-    setDiscoverBusy(true);
-    try {
-      const res = await api<{ blueprint: DiscoverBlueprint }>(
-        "/api/strategy/scan",
-        {
-          action: "parse-discover",
-          query: q,
-        },
-      );
-      setDiscoverBlueprint(res.blueprint);
-      if (res.blueprint.supported && res.blueprint.formula) {
-        setFormula(res.blueprint.formula);
-        setDescription((prev) => prev.trim() || res.blueprint.humanSummary);
-        setInterval(res.blueprint.suggestedTimeframe);
-        setPreflight(null);
-      }
-    } catch (err) {
-      notify(
-        err instanceof Error ? err.message : "Could not parse Discover query.",
-        true,
-      );
-    } finally {
-      setDiscoverBusy(false);
-    }
-  }
-
-  function validateSoulName(): boolean {
-    if (!trimmedName) {
-      setNameError("Enter a Soul name");
-      nameInputRef.current?.focus();
-      return false;
-    }
-    if ([...trimmedName].length < 3 || [...trimmedName].length > 100) {
-      setNameError("Soul names must be 3–100 characters long.");
-      nameInputRef.current?.focus();
-      return false;
-    }
-    setNameError("");
-    return true;
-  }
-
-  async function perform(kind: "preflight" | "run" | "draft") {
-    if (!validateSoulName()) return;
-    if (!authenticated) {
-      onRequireAuth?.();
-      return;
-    }
-    if (lock.current || !canonical.value) return;
-    if (!universePreset) {
-      notify("Choose a market for this scan.", true);
-      return;
-    }
-    if (!definition.value) {
-      notify(definition.error || "Check your Soul inputs before continuing.", true);
-      return;
-    }
-    lock.current = true;
-    const generation = scopeGeneration.current;
-    const controller = kind === "preflight" ? new AbortController() : null;
-    preflightRequest.current = controller;
-    setPipelineStep(kind === "run" ? 1 : 0);
-    setBusy(
-      kind === "preflight"
-        ? "1/1 Checking source coverage…"
-        : kind === "draft"
-          ? "Saving draft version…"
-          : "1/3 Running preflight & data checks…",
-    );
-    const requestSignature = kind === "draft" ? signature : sourceSignature;
-    if (
-      pending.current?.signature !== requestSignature ||
-      pending.current?.kind !== kind
-    ) {
-      pending.current = { kind, signature: requestSignature, id: crypto.randomUUID() };
-    }
-    const endpoint = "/api/strategy/scan";
-    try {
-      if (kind === "preflight") {
-        const value = await api<Preflight>(endpoint, {
-          action: "preflight-scan",
-          scanRequestVersion: SCAN_REQUEST_VERSION,
-          ...definition.value,
-          ...(universePreset === "CUSTOM_CSV" && customCsv.trim()
-            ? { customCsv }
-            : {}),
-        }, { signal: controller?.signal });
-        if (generation !== scopeGeneration.current) return;
-        setPreflight({ signature: sourceSignature, value });
-        if (value.preflight.blocked) {
-          notify(
-            value.preflight.reason || "Data preflight blocked execution.",
-            true,
-          );
-        } else {
-          notify(
-            `Coverage ready: ${value.preflight.eligible}/${value.preflight.total} eligible instruments.`,
-          );
-        }
-      }
-      if (kind === "draft") {
-        const result = await api<{ id: string; version: number }>(
-          "/api/x1/workspace",
-          {
-            action: "save-scan-draft",
-            requestId: pending.current.id,
-            draftId: draft?.id,
-            version: draft?.version,
-            definition: definition.value,
-          },
-        );
-        if (generation !== scopeGeneration.current) return;
-        setDraft(result);
-        setSavedSignature(signature);
-        await reload();
-        notify("Draft saved.");
-      }
-      if (kind === "run") {
-        setPipelineStep(2);
-        setBusy("2/3 Evaluating rules on closed historical bars…");
-        const result = await api<{ id: string }>(endpoint, {
-          action: "run-scan",
-          scanRequestVersion: SCAN_REQUEST_VERSION,
-          requestId: pending.current.id,
-          scanTier: scanMode,
-          origin: scanMode === "CLASSIC" ? "CLASSIC" : advancedTab,
-          ...definition.value,
-          ...(universePreset === "CUSTOM_CSV" && customCsv.trim()
-            ? { customCsv }
-            : {}),
-        });
-        if (generation !== scopeGeneration.current) {
-          await reload();
-          return;
-        }
-        setPipelineStep(3);
-        setBusy("3/3 Saved to GRAVEYARD · Updating workspace…");
-        setSelected(result.id);
-        setJustCompletedId(result.id);
-        setSavedSignature(signature);
-        await reload();
-        setPipelineStep(4);
-        notify("Scan complete. Saved to GRAVEYARD.");
-      }
-      pending.current = null;
-    } catch (e) {
-      if (generation !== scopeGeneration.current) return;
-      notify((e as Error).message, true);
-      setPipelineStep(0);
-    } finally {
-      preflightRequest.current = null;
-      lock.current = false;
-      setBusy("");
-    }
-  }
-
-  async function loadOlder() {
-    if (lock.current || !nextCursor) return;
-    lock.current = true;
-    setBusy("Loading older Graveyard scans…");
-    try {
-      const page = await api<WorkspaceState>(
-        "/api/x1/workspace?scanBefore=" + encodeURIComponent(nextCursor),
-      );
-      setOlderRuns((current) => [
-        ...new Map([...current, ...page.scans].map((r) => [r.id, r])).values(),
-      ]);
-      setOlderCursor(page.scanHistoryNextBefore ?? null);
-    } catch (e) {
-      notify((e as Error).message, true);
-    } finally {
-      lock.current = false;
-      setBusy("");
-    }
-  }
-
-  function openPostSoulModal(run: ScanRun) {
-    if (!authenticated) {
-      onRequireAuth?.();
-      return;
-    }
-    const rich = run as RichRun;
-    setPostTarget(run);
-    setPostPreview(null);
-    setPostedResultId(null);
-    setPostSummary(
-      rich.payload.description ||
-        `Evaluated ${run.payload.rule.formula} across ${run.payload.results.total} instruments (${run.payload.results.matches} matched).`,
-    );
-  }
-
-  async function runPostPreview() {
-    if (!postTarget || previewBusy) return;
-    setPreviewBusy(true);
-    try {
-      const res = await api<
-        NonNullable<typeof postPreview> & { ok: boolean }
-      >("/api/community/network", {
-        action: "preview-soul",
-        scanId: postTarget.id,
-        audience: "PUBLIC",
-        summary: postSummary.trim(),
-      });
-      setPostPreview({
-        allowed: res.allowed,
-        blockReason: res.blockReason,
-        preview: res.preview,
-      });
-    } catch (err) {
-      notify(
-        err instanceof Error ? err.message : "Could not generate server post preview.",
-        true,
-      );
-    } finally {
-      setPreviewBusy(false);
-    }
-  }
-
-  async function submitPostSoul(e: React.FormEvent) {
-    e.preventDefault();
-    if (!postTarget || postBusy) return;
-    setPostBusy(true);
-    try {
-      const res = await api<{ ok: boolean; postId: string; replayed?: boolean }>(
-        "/api/community/network",
-        {
-          action: "publish-soul",
-          scanId: postTarget.id,
-          audience: "PUBLIC",
-          summary: postSummary.trim(),
-          riskNote: postRiskNote.trim(),
-          requestId: `post_${postTarget.id}_PUBLIC`.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80),
-        },
-      );
-      setPostedResultId(res.postId);
-      notify(
-        res.replayed
-          ? "This Soul is already live in the Soul Feed."
-          : "Soul published! Your Soul is now live in the Soul Feed.",
-      );
-    } catch (err) {
-      notify(
-        err instanceof Error ? err.message : "Could not publish Soul.",
-        true,
-      );
-    } finally {
-      setPostBusy(false);
-    }
-  }
-
-  const activeMatches = active
-    ? active.payload.results.results.filter((r) => r.status === "PASS")
-    : [];
-  const activeNonMatches = active
-    ? active.payload.results.results.filter((r) => r.status !== "PASS")
-    : [];
-
   return (
-    <>
-      {/* EXACTLY TWO SUB-DASHBOARDS: Full-Width 50/50 SS Blue Tabs */}
-      <div className="x52-full-tabs-2" role="tablist" aria-label="Strategy sub-dashboards">
-        {(["Soul Scan", "Formula Lab"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={panel === t}
-            className="x52-full-tab"
-            onClick={() => setPanel(t)}
-          >
-            {t}
-          </button>
-        ))}
+    <div className="x53-focused-stack">
+      {/* Top Strategy Section Switcher: Soul Scan vs Formula Lab */}
+      <div
+        className="x52-full-tabs-2"
+        role="tablist"
+        aria-label="Strategy tools"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={section === "scan"}
+          className={"x52-full-tab" + (section === "scan" ? " is-active" : "")}
+          onClick={() => setSection("scan")}
+        >
+          <IconStrategy size={18} />
+          <span>Soul Scan</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={section === "lab"}
+          className={"x52-full-tab" + (section === "lab" ? " is-active" : "")}
+          onClick={() => setSection("lab")}
+        >
+          <SlidersHorizontal size={17} aria-hidden="true" />
+          <span>Formula Lab</span>
+        </button>
       </div>
 
-      {panel === "Soul Scan" && (
-        <div className="x51-global-stack">
-          {/* Full-Width 50/50 SS Blue Classic | Advanced Switcher + compact quota strip */}
-          <div className="x54-scan-mode-wrap">
+      {section === "lab" ? (
+        <Suspense
+          fallback={<WorkspaceSkeleton label="Opening Formula Lab…" kind="panel" />}
+        >
+          <FormulaLab notify={notify} />
+        </Suspense>
+      ) : (
+        <>
+          {/* 1. STRATEGY BUILDER */}
+          <section
+            className="ss-v3-strategy-card"
+            aria-labelledby="ss-v3-strategy-heading"
+          >
+            <div className="ss-v3-strategy-head">
+              <div className="ss-v3-pw-title-row">
+                <span className="ss-v3-icon-badge" aria-hidden="true">
+                  <IconStrategy size={20} />
+                </span>
+                <div>
+                  <h2 id="ss-v3-strategy-heading">Strategy Builder</h2>
+                  <p className="x1-caption" style={{ margin: 0 }}>
+                    Pick a rule, source, and timeframe — then tap Run Scan.
+                  </p>
+                </div>
+              </div>
+              <div className="x1-actions" style={{ gap: 6 }}>
+                <button
+                  type="button"
+                  className="x54-quota-info-btn"
+                  onClick={() => setGuideOpen(true)}
+                >
+                  <Info size={14} aria-hidden="true" />
+                  <span>Guide</span>
+                </button>
+                <button
+                  type="button"
+                  className="x54-quota-info-btn"
+                  aria-expanded={policyOpen}
+                  onClick={() => setPolicyOpen((v) => !v)}
+                >
+                  <span>Limits</span>
+                </button>
+              </div>
+            </div>
+
+            {policyOpen && (
+              <div className="x54-quota-popover" role="note">
+                <strong>Daily scan allowance</strong>
+                <div style={{ marginTop: 4 }}>
+                  {quota
+                    ? `Classic: ${quota.classic.remaining}/${quota.classic.limit} remaining today · Advanced: ${quota.advanced.remaining}/${quota.advanced.limit} available this hour.`
+                    : "Classic: 8 scans per IST day · Advanced: 1 scan per rolling 60 minutes."}
+                </div>
+                <div className="x1-caption" style={{ marginTop: 4 }}>
+                  Failed or unavailable scans never consume your scan allowance.
+                </div>
+              </div>
+            )}
+
+            {/* 2. Classic / Advanced */}
             <div
               className="x52-full-tabs-2"
               role="group"
-              aria-label="Soul Scan mode"
+              aria-label="Scan mode"
+              style={{ marginBottom: 0 }}
             >
               <button
                 type="button"
-                className="x52-full-tab"
-                aria-pressed={scanMode === "CLASSIC"}
-                onClick={() => {
-                  setScanMode("CLASSIC");
-                  setFormula(activeClassicPreset.formula);
-                  setPreflight(null);
-                }}
+                aria-pressed={scanTier === "CLASSIC"}
+                className={
+                  "x52-full-tab" + (scanTier === "CLASSIC" ? " is-active" : "")
+                }
+                onClick={() => selectMode("CLASSIC")}
               >
                 Classic
               </button>
               <button
                 type="button"
-                className="x52-full-tab"
-                aria-pressed={scanMode === "ADVANCED"}
-                onClick={() => {
-                  setScanMode("ADVANCED");
-                  setPreflight(null);
-                }}
+                aria-pressed={scanTier === "ADVANCED"}
+                className={
+                  "x52-full-tab" + (scanTier === "ADVANCED" ? " is-active" : "")
+                }
+                onClick={() => selectMode("ADVANCED")}
               >
                 Advanced
               </button>
             </div>
 
-            <div className="x54-quota-strip">
-              <span
-                className={
-                  "x54-quota-status" +
-                  ((scanMode === "CLASSIC" && quota && quota.classic.remaining === 0) ||
-                  (scanMode === "ADVANCED" && quota && quota.advanced.remaining === 0)
-                    ? " is-exhausted"
-                    : "")
-                }
-              >
-                {scanMode === "CLASSIC"
-                  ? quota
-                    ? quota.classic.remaining > 0
-                      ? `${quota.classic.remaining} scans left`
-                      : `0 scans left · resets ${localTimeShort(quota.classic.resetsAtUTC)}`
-                    : "8 scans left"
-                  : quota
-                    ? quota.advanced.remaining > 0
-                      ? "1 scan ready"
-                      : `Cooldown · next ${localTimeShort(quota.advanced.nextEligibleAtUTC)}`
-                    : "1 scan ready"}
-              </span>
-              <button
-                type="button"
-                className="x54-quota-info-btn"
-                aria-expanded={quotaInfoOpen}
-                aria-label="Scan allowance and reset policy"
-                onClick={() => setQuotaInfoOpen((v) => !v)}
-              >
-                <Info size={14} aria-hidden="true" />
-                <span>Policy</span>
-              </button>
+            {/* 3. Soul Name (prefilled editable default) */}
+            <div className="x54-field-group">
+              <label className="x54-field-label" htmlFor="ss-v3-soul-name">
+                <span>Soul Name</span>
+              </label>
+              <input
+                id="ss-v3-soul-name"
+                type="text"
+                className="x54-name-input"
+                value={name}
+                maxLength={100}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setNameEditedManually(true);
+                }}
+                placeholder="Name your Soul scan"
+              />
             </div>
 
-            {quotaInfoOpen && (
-              <div className="x54-quota-popover" role="note">
-                Classic: {quota?.classic.limit ?? 8} completed scans per IST day
-                {quota?.classic.resetsAtUTC
-                  ? ` (resets ${localTimeShort(quota.classic.resetsAtUTC)})`
-                  : ""}
-                . Advanced: 1 completed scan per rolling 60 min. Failed or
-                blocked scans never deduct quota.
-              </div>
-            )}
-          </div>
-
-          <div className="x1-scan-grid">
-            <Panel
-              title={
-                scanMode === "CLASSIC"
-                  ? "Classic Soul Scan"
-                  : "Advanced Soul Scan"
-              }
-              action={
-                draft || trimmedName ? (
+            {/* 4. Formula Picker (Classic) OR Rule Tree + Expression (Advanced) */}
+            {scanTier === "CLASSIC" ? (
+              <div className="x54-field-group">
+                <div className="x54-field-label">
+                  <span>Formula</span>
+                  <span className="x1-caption">
+                    {pinnedIds.length > 0 ? `${pinnedIds.length} pinned · ` : ""}
+                    50 Classic rules
+                  </span>
+                </div>
+                <div className="ss-v3-formula-row">
                   <button
                     type="button"
-                    className="x54-new-soul-btn"
-                    onClick={resetToNewSoul}
+                    className="x54-formula-card"
+                    onClick={() => setFormulaPickerOpen(true)}
                   >
-                    <Plus size={14} aria-hidden="true" />
-                    <span>New Soul</span>
-                  </button>
-                ) : undefined
-              }
-            >
-              <div className="x54-scan-form">
-                {/* Shared Soul Name — ALWAYS blank on New Soul, never overwritten by presets/tabs */}
-                <div className="x54-field-group">
-                  <label htmlFor="x54-soul-name" className="x54-field-label">
-                    <span>Soul name</span>
-                    {draft && (
-                      <span className="x54-draft-tag">Draft v{draft.version}</span>
-                    )}
-                  </label>
-                  <input
-                    id="x54-soul-name"
-                    ref={nameInputRef}
-                    className={"x54-name-input" + (nameError ? " has-error" : "")}
-                    value={name}
-                    maxLength={100}
-                    autoComplete="off"
-                    placeholder="Name your Soul"
-                    aria-invalid={nameError ? "true" : undefined}
-                    aria-describedby={nameError ? "x54-soul-name-error" : undefined}
-                    onChange={(e) => {
-                      setName(e.target.value);
-                      if (nameError) setNameError("");
-                    }}
-                  />
-                  {nameError && (
-                    <p
-                      id="x54-soul-name-error"
-                      role="alert"
-                      className="x1-form-error x54-inline-error"
-                    >
-                      {nameError}
-                    </p>
-                  )}
-                </div>
-
-                {/* CLASSIC MODE: Single clean clickable formula card */}
-                {scanMode === "CLASSIC" ? (
-                  <div className="x54-field-group">
-                    <span className="x54-field-label">Rule</span>
-                    <button
-                      type="button"
-                      className="x54-formula-card"
-                      aria-haspopup="dialog"
-                      aria-label={`Selected rule #${activeClassicPreset.rankCode} ${activeClassicPreset.label}. Tap to choose from 50 classic formulas.`}
-                      onClick={() => {
-                        setPreModalClassicId(activeClassicPreset.id);
-                        setFormulaPickerOpen(true);
-                      }}
-                    >
-                      <div className="x54-formula-card-main">
-                        <div className="x54-formula-card-head">
-                          <span className="x54-formula-rank-badge">
-                            {activeClassicPreset.rankCode}
-                          </span>
-                          <strong className="x54-formula-card-title">
-                            {activeClassicPreset.label}
-                          </strong>
-                        </div>
-                        <span className="x54-formula-card-desc">
-                          {activeClassicPreset.shortDescription}
+                    <div className="x54-formula-card-main">
+                      <div className="x54-formula-card-head">
+                        <span className="x54-formula-rank-badge">
+                          {activePreset.rankCode}
                         </span>
-                        <div className="x54-formula-card-meta">
-                          <span className="x51-pill">
-                            {activeClassicPreset.category}
-                          </span>
-                          <span className="x56-rule-type-pill">
-                            {activeClassicPreset.ruleType === "event"
-                              ? "Event rule"
-                              : "State filter"}
-                          </span>
-                        </div>
+                        <span className="x54-formula-card-title">
+                          {activePreset.label}
+                        </span>
                       </div>
-                      <span className="x54-formula-card-cue" aria-hidden="true">
-                        <span>50 rules</span>
-                        <ChevronRight size={15} />
-                      </span>
-                    </button>
-                  </div>
-                ) : (
-                  /* ADVANCED MODE: Discover | Build | Draw */
-                  <div
-                    className="x52-full-tabs-3"
-                    role="tablist"
-                    aria-label="Advanced Soul Scan modes"
+                      <div className="x54-formula-card-meta">
+                        <span className="x56-rule-type-pill">
+                          {activePreset.category}
+                        </span>
+                        <span className="x56-rule-type-pill">
+                          {activePreset.ruleType}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="x54-formula-card-cue">
+                      <span>Browse</span>
+                      <ChevronRight size={14} aria-hidden="true" />
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      "ss-v3-pin-btn" +
+                      (pinnedSet.has(activePreset.id) ? " is-pinned" : "")
+                    }
+                    aria-label={
+                      pinnedSet.has(activePreset.id)
+                        ? `Unpin ${activePreset.label}`
+                        : `Pin ${activePreset.label}`
+                    }
+                    aria-pressed={pinnedSet.has(activePreset.id)}
+                    disabled={pinningId === activePreset.id}
+                    onClick={() => void togglePin(activePreset.id)}
                   >
-                    <button
-                      type="button"
-                      role="tab"
-                      className="x52-full-tab"
-                      aria-selected={advancedTab === "DISCOVER"}
-                      onClick={() => setAdvancedTab("DISCOVER")}
-                    >
-                      <Compass size={14} /> Discover
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      className="x52-full-tab"
-                      aria-selected={advancedTab === "BUILD"}
-                      onClick={() => setAdvancedTab("BUILD")}
-                    >
-                      <SlidersHorizontal size={14} /> Build
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      className="x52-full-tab"
-                      aria-selected={advancedTab === "DRAW"}
-                      onClick={() => setAdvancedTab("DRAW")}
-                    >
-                      <PenTool size={14} /> Draw
-                    </button>
+                    <IconPin size={18} active={pinnedSet.has(activePreset.id)} />
+                  </button>
+                  <button
+                    type="button"
+                    className="ss-v3-pin-btn"
+                    aria-label="Inspect formula details"
+                    aria-expanded={activeInfoOpen}
+                    onClick={() => setActiveInfoOpen((v) => !v)}
+                  >
+                    <Info size={18} aria-hidden="true" />
+                  </button>
+                </div>
+                {activeInfoOpen && (
+                  <div className="x56-formula-drawer" role="note">
+                    <p className="x56-formula-meaning" style={{ margin: 0 }}>
+                      {activePreset.shortDescription}
+                    </p>
+                    <code className="x56-formula-drawer-code">
+                      {activePreset.formula}
+                    </code>
+                    <div className="x56-formula-drawer-grid">
+                      <span>Minimum bars: {activePreset.minBars}</span>
+                      <span>Requires: {activePreset.prerequisites.join(", ")}</span>
+                    </div>
                   </div>
                 )}
-
-                {/* Compact Market & Timeframe rows */}
-                <div className="x54-compact-selectors">
-                  <div className="x54-field-group">
-                    <span className="x54-field-label">Market</span>
-                    <div
-                      className="x54-chip-strip"
-                      role="group"
-                      aria-label="Scan market"
-                    >
-                      {(
-                        [
-                          ["ECB_DAILY", "ECB FX"],
-                          ["CUSTOM_CSV", "Private CSV"],
-                          ["MY_WATCHLIST", "Watchlist"],
-                          ["INDIAN_EQUITIES", "NSE / BSE"],
-                          ["MCX_FUTURES", "MCX"],
-                        ] as const
-                      ).map(([id, label]) => (
-                        <button
-                          key={id}
-                          type="button"
-                          className={
-                            "x54-chip" + (universePreset === id ? " is-active" : "")
-                          }
-                          aria-pressed={universePreset === id}
-                          onClick={() => applyUniversePreset(id)}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    {universePreset === "MY_WATCHLIST" && (
-                      <label className="x1-label">
-                        Active watchlist
-                        <select
-                          value={scopedWatchlistId ?? ""}
-                          onChange={(event) => {
-                            scopeGeneration.current++;
-                            preflightRequest.current?.abort();
-                            setWatchlistId(event.target.value);
-                            setInstruments("");
-                            setPreflight(null);
-                            setSelected(null);
-                          }}
-                        >
-                          {!selectedWatchlist && <option value={scopedWatchlistId ?? ""}>Choose an active watchlist</option>}
-                          {watchlists?.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}
-                        </select>
-                      </label>
-                    )}
-                  </div>
-
-                  <div className="x54-field-group">
-                    <span className="x54-field-label">Timeframe</span>
-                    <div
-                      className="x54-chip-strip is-tf"
-                      role="group"
-                      aria-label="Timeframe"
-                    >
-                      {TIMEFRAMES.map((tf) => (
-                        <button
-                          key={tf.id}
-                          type="button"
-                          className={
-                            "x54-chip" + (interval === tf.id ? " is-active" : "")
-                          }
-                          aria-pressed={interval === tf.id}
-                          disabled={tf.id === "30m" || tf.id === "1h" ||
-                            (universePreset === "CUSTOM_CSV" && tf.id !== "1d")}
-                          title={tf.id === "30m" || tf.id === "1h" ? "Intraday history is unavailable for Soul Scan." : undefined}
-                          onClick={() => {
-                            setInterval(tf.id);
-                            setPreflight(null);
-                          }}
-                        >
-                          {tf.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+              </div>
+            ) : (
+              <div className="x54-advanced-pane">
+                <div
+                  className="x52-full-tabs-3"
+                  role="group"
+                  aria-label="Advanced creation style"
+                  style={{ marginBottom: 4 }}
+                >
+                  <button
+                    type="button"
+                    aria-pressed={advancedEntry === "BUILD"}
+                    className={
+                      "x52-full-tab" +
+                      (advancedEntry === "BUILD" ? " is-active" : "")
+                    }
+                    onClick={() => setAdvancedEntry("BUILD")}
+                  >
+                    <SlidersHorizontal size={15} aria-hidden="true" />
+                    <span>Rule Builder</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={advancedEntry === "DISCOVER"}
+                    className={
+                      "x52-full-tab" +
+                      (advancedEntry === "DISCOVER" ? " is-active" : "")
+                    }
+                    onClick={() => setAdvancedEntry("DISCOVER")}
+                  >
+                    <Compass size={15} aria-hidden="true" />
+                    <span>Discover</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={advancedEntry === "DRAW"}
+                    className={
+                      "x52-full-tab" +
+                      (advancedEntry === "DRAW" ? " is-active" : "")
+                    }
+                    onClick={() => setAdvancedEntry("DRAW")}
+                  >
+                    <PenTool size={15} aria-hidden="true" />
+                    <span>Draw</span>
+                  </button>
                 </div>
 
-                {universePreset === "CUSTOM_CSV" && (
+                {advancedEntry === "DISCOVER" && (
                   <div className="x54-field-group">
-                    <span className="x54-field-label">
-                      Private CSV OHLCV (<code>symbol,date,open,high,low,close,volume</code>)
-                    </span>
-                    <textarea
-                      className="x1-code-editor"
-                      rows={4}
-                      value={customCsv}
-                      aria-label="Private CSV OHLCV dataset"
-                      onChange={(e) => {
-                        setCustomCsv(e.target.value);
-                        setPreflight(null);
-                      }}
-                    />
-                  </div>
-                )}
-
-                {scanMode === "ADVANCED" && advancedTab === "DISCOVER" && (
-                  <div className="x54-advanced-pane">
-                    <label className="x1-label">
-                      Describe setup in plain English (quota-free AST preview)
-                      <textarea
-                        rows={3}
+                    <label className="x54-field-label" htmlFor="ss-v3-discover">
+                      <span>Describe your setup</span>
+                    </label>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input
+                        id="ss-v3-discover"
+                        type="text"
+                        className="x54-name-input"
                         value={discoverQuery}
                         onChange={(e) => setDiscoverQuery(e.target.value)}
-                        placeholder="e.g. Stocks breaking 20-bar high on 1.5x volume with rising trend"
+                        placeholder="e.g. RSI below 35 and price above 200 SMA"
                       />
-                    </label>
-                    <div className="x54-chip-strip" aria-label="Example prompts">
-                      {DISCOVER_EXAMPLES.map((ex) => (
+                      <button
+                        type="button"
+                        className="x1-secondary"
+                        disabled={discoverLoading || !discoverQuery.trim()}
+                        onClick={() => void handleDiscoverParse()}
+                      >
+                        <Sparkles size={15} aria-hidden="true" />
+                        <span>{discoverLoading ? "Parsing…" : "Build"}</span>
+                      </button>
+                    </div>
+                    <div className="x51-chip-row">
+                      {DISCOVER_EXAMPLES.slice(0, 3).map((ex) => (
                         <button
                           key={ex.title}
                           type="button"
-                          className="x54-chip"
-                          onClick={() => {
-                            setDiscoverQuery(ex.query);
-                            void parseDiscoverIntent(ex.query);
-                          }}
+                          className="x51-chip"
+                          onClick={() => setDiscoverQuery(ex.query)}
                         >
-                          <Sparkles size={12} /> {ex.title}
+                          {ex.title}
                         </button>
                       ))}
                     </div>
-                    <div className="x1-actions">
-                      <button
-                        type="button"
-                        className="x51-accent-btn"
-                        disabled={discoverBusy || !discoverQuery.trim()}
-                        onClick={() => void parseDiscoverIntent()}
-                      >
-                        {discoverBusy ? "Parsing…" : "Build Blueprint"}
-                      </button>
-                    </div>
-
                     {discoverBlueprint && (
-                      <div className="x51-genome-card">
-                        <div
-                          style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            gap: 8,
-                          }}
-                        >
-                          <h4>Research Blueprint</h4>
-                          <span
-                            className={
-                              discoverBlueprint.supported
-                                ? "x51-pill x51-pill-green"
-                                : "x51-pill x51-pill-red"
-                            }
-                          >
-                            {discoverBlueprint.interpretationConfidence}
-                          </span>
-                        </div>
-                        <p className="x1-caption" style={{ margin: 0 }}>
-                          {discoverBlueprint.humanSummary}
-                        </p>
-                        {discoverBlueprint.formula && (
-                          <code className="x51-soul-formula">
-                            {discoverBlueprint.formula}
-                          </code>
-                        )}
-                        {discoverBlueprint.clauses.length > 0 && (
-                          <ul style={{ margin: 0, paddingLeft: 18, fontSize: "0.82rem" }}>
-                            {discoverBlueprint.clauses.map((c, idx) => (
-                              <li key={idx}>
-                                <strong>{c.explanation}</strong> →{" "}
-                                <code>{c.formula}</code>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                        {discoverBlueprint.assumptions.length > 0 && (
-                          <p className="x1-caption" style={{ margin: 0 }}>
-                            Assumptions: {discoverBlueprint.assumptions.join(" · ")}
-                          </p>
-                        )}
-                        {discoverBlueprint.unsupportedPhrases.length > 0 && (
-                          <p role="alert" className="x1-form-error" style={{ margin: 0 }}>
-                            Unsupported: {discoverBlueprint.unsupportedPhrases.join("; ")}
-                          </p>
-                        )}
-                        {discoverBlueprint.supported && discoverBlueprint.formula && (
-                          <div className="x1-actions">
-                            <button
-                              type="button"
-                              className="x1-secondary"
-                              onClick={() => {
-                                setFormula(discoverBlueprint.formula!);
-                                setAdvancedTab("BUILD");
-                                setBuildMode("FORMULA");
-                              }}
-                            >
-                              Edit in Build
-                            </button>
-                          </div>
-                        )}
+                      <div className="x56-formula-drawer">
+                        <strong>Generated formula</strong>
+                        <code className="x56-formula-drawer-code">
+                          {discoverBlueprint.formula}
+                        </code>
                       </div>
                     )}
                   </div>
                 )}
 
-                {scanMode === "ADVANCED" && advancedTab === "BUILD" && (
-                  <div className="x54-advanced-pane">
-                    <label className="x1-label">
-                      Hypothesis note (optional)
-                      <textarea
-                        className="x2-scan-description"
-                        rows={2}
-                        value={description}
-                        maxLength={2000}
-                        placeholder="Document what edge or structure you are testing."
-                        onChange={(e) => setDescription(e.target.value)}
-                      />
-                    </label>
-                    <div className="x1-segment">
-                      <button
-                        type="button"
-                        aria-pressed={buildMode === "VISUAL"}
-                        onClick={() => {
-                          const converted = treeFromFormula(formula);
-                          if (converted) setTree(converted);
-                          setBuildMode("VISUAL");
-                        }}
-                      >
-                        Visual Blocks
-                      </button>
-                      <button
-                        type="button"
-                        aria-pressed={buildMode === "FORMULA"}
-                        onClick={() => {
-                          if (canonical.value) setFormula(canonical.value.formula);
-                          setBuildMode("FORMULA");
-                        }}
-                      >
-                        Formula AST
-                      </button>
-                    </div>
-                    {buildMode === "VISUAL" ? (
-                      <RuleEditor tree={tree} onChange={setTree} />
-                    ) : (
-                      <label className="x1-label">
-                        Canonical formula
-                        <textarea
-                          className="x1-code-editor"
-                          value={formula}
-                          maxLength={4000}
-                          spellCheck={false}
-                          onChange={(e) => setFormula(e.target.value)}
-                        />
-                      </label>
-                    )}
-                    <OutcomeControls value={outcome} onChange={setOutcome} />
-                  </div>
-                )}
-
-                {scanMode === "ADVANCED" && advancedTab === "DRAW" && (
+                {advancedEntry === "DRAW" ? (
                   <Suspense
-                    fallback={<WorkspaceSkeleton label="Loading Draw Canvas…" kind="panel" />}
+                    fallback={
+                      <WorkspaceSkeleton label="Opening Draw canvas…" kind="panel" />
+                    }
                   >
                     <PatternDrawCanvas
-                      key={scopedWatchlistId ?? universePreset}
                       authenticated={authenticated}
                       onRequireAuth={onRequireAuth}
                       scanName={name}
-                      onRequireName={(msg) => {
-                        setNameError(msg);
-                        nameInputRef.current?.focus();
-                      }}
-                      universe={universe}
-                      universePreset={universePreset}
-                      watchlistId={scopedWatchlistId}
-                      interval={interval}
-                      customCsv={
-                        universePreset === "CUSTOM_CSV" ? customCsv : undefined
+                      universe={scanUniverseForPreset(scanSource)}
+                      universePreset={scanSource}
+                      watchlistId={
+                        scanSource === "MY_WATCHLIST" ? activeWatchlist?.id : undefined
                       }
-                      instrumentIds={instruments.split(/[\s,]+/).filter(Boolean)}
-                      busy={!!busy}
+                      interval={interval}
+                      busy={busy}
+                      onScanComplete={async (res) => {
+                        await reload();
+                        setSelectedScanId(res.id);
+                        setJustCompletedId(res.id);
+                      }}
                       onOpenAsset={openAsset}
                       notify={notify}
-                      onScanComplete={async (res) => {
-                        setSelected(res.id);
-                        setJustCompletedId(res.id);
-                        await reload();
-                      }}
                     />
                   </Suspense>
-                )}
-
-                {/* Scope & Partial-Data Policy (Collapsible) */}
-                <details className="x1-small-details x54-compact-details">
-                  <summary>Instrument filter &amp; missing-data policy</summary>
-                  <label className="x1-label">
-                    Add instruments
-                    <input
-                      value={pickerQuery}
-                      onChange={(e) => setPickerQuery(e.target.value)}
-                      placeholder="HDFC, SBIN, RELIANCE, NIFTY…"
-                    />
-                  </label>
-                  {pickerMatches.length > 0 && (
-                    <div className="x1-chip-row">
-                      {pickerMatches.map((m) => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => {
-                            const existing = instruments
-                              .split(/[\s,]+/)
-                              .filter(Boolean);
-                            if (!existing.includes(m.id)) {
-                              setInstruments([...existing, m.id].join(", "));
-                              setPreflight(null);
-                            }
-                            setPickerQuery("");
-                          }}
-                        >
-                          + {m.name} ({m.id})
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <label className="x1-label">
-                    Exact instrument IDs (optional)
-                    <input
-                      value={instruments}
-                      onChange={(e) => setInstruments(e.target.value)}
-                      placeholder="Comma-separated canonical IDs"
-                    />
-                  </label>
-                  <label className="x1-label">
-                    Missing inputs
-                    <select
-                      value={partialPolicy}
-                      onChange={(e) =>
-                        setPartial(
-                          e.target.value as ResearchDefinition["partialPolicy"],
-                        )
-                      }
-                    >
-                      <option value="ALLOW_UNKNOWN">
-                        Allow explicit UNKNOWN rows
-                      </option>
-                      <option value="STRICT">Require complete inputs</option>
-                    </select>
-                  </label>
-                </details>
-
-                {/* Primary / Secondary / Tertiary Action Hierarchy */}
-                {!(scanMode === "ADVANCED" && advancedTab === "DRAW") && (
+                ) : (
                   <>
-                    {canonical.error && (
-                      <p role="alert" className="x1-form-error">
-                        {canonical.error}
-                      </p>
-                    )}
-                    <div className="x54-scan-actions">
-                      <button
-                        type="button"
-                        className="x1-primary x1-motion-button x54-scan-primary"
-                        disabled={
-                          !!busy ||
-                          !canonical.value ||
-                          (scanMode === "ADVANCED" &&
-                            advancedTab === "DISCOVER" &&
-                            !discoverBlueprint?.supported)
+                    <RuleEditor
+                      tree={tree}
+                      onChange={(nextTree) => {
+                        setTree(nextTree);
+                        try {
+                          setAdvancedFormula(compileTree(nextTree).formula);
+                        } catch {
+                          /* Keep last valid formula while editing */
                         }
-                        onClick={() => void perform("run")}
+                      }}
+                    />
+                    <div className="x54-field-group">
+                      <label
+                        className="x54-field-label"
+                        htmlFor="ss-v3-adv-formula"
                       >
-                        <span>Run scan</span>
-                        <ArrowRight size={16} aria-hidden="true" />
-                      </button>
-                      <div className="x54-scan-subactions">
-                        <button
-                          type="button"
-                          className="x1-secondary x54-scan-secondary"
-                          disabled={!!busy || !canonical.value}
-                          onClick={() => void perform("preflight")}
-                        >
-                          Check coverage
-                        </button>
-                        <button
-                          type="button"
-                          className="x54-scan-tertiary"
-                          disabled={!!busy || !canonical.value}
-                          onClick={() => void perform("draft")}
-                        >
-                          Save draft
-                        </button>
-                      </div>
+                        <span>Rule expression</span>
+                      </label>
+                      <textarea
+                        id="ss-v3-adv-formula"
+                        rows={2}
+                        className="x54-name-input"
+                        style={{
+                          fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+                          fontSize: "0.88rem",
+                        }}
+                        value={advancedFormula}
+                        onChange={(e) => {
+                          setAdvancedFormula(e.target.value);
+                          setScanError("");
+                        }}
+                      />
+                      {!formulaCompile.ok && (
+                        <p className="x54-inline-error" role="alert">
+                          {formulaCompile.error}
+                        </p>
+                      )}
                     </div>
                   </>
                 )}
-
-                {busy && (
-                  <div className="x51-pipeline-steps" role="status" aria-live="polite">
-                    <span className="x51-accent-dot" />
-                    <strong>{busy}</strong>
-                    <span>Stage {Math.max(1, pipelineStep)}/3</span>
-                  </div>
-                )}
-
-                {coverage && (
-                  <div className="x2-source-preflight">
-                    <strong>
-                      {coverage.preflight.blocked
-                        ? "Not enough data to scan"
-                        : "Data coverage ready"}
-                    </strong>
-                    <p>
-                      {coverage.preflight.eligible}/{coverage.preflight.accounting.discovered}{" "}
-                      eligible · {coverage.preflight.unknown} UNKNOWN ·{" "}
-                      {coverage.source} · {TIMEFRAMES.find((tf) => tf.id === interval)?.label}
-                      {coverage.preflight.minimumBars !== null &&
-                        ` · Rule history ${coverage.preflight.minimumBars} bars`}
-                    </p>
-                    {coverage.preflight.reason && <p>{coverage.preflight.reason}</p>}
-                    {(coverage.sourceExclusions.length > 0 || coverage.preflight.exclusions.length > 0) && (
-                      <details>
-                        <summary>Data exclusions</summary>
-                        <ul>
-                          {coverage.sourceExclusions.map(({ id, reason }) => (
-                            <li key={`source:${id}`}>{id} · {reason}</li>
-                          ))}
-                          {coverage.preflight.exclusions.map(({ id, reasons }) => (
-                            <li key={`evaluation:${id}`}>{id} · {reasons.join(" ")}</li>
-                          ))}
-                        </ul>
-                      </details>
-                    )}
-                  </div>
-                )}
               </div>
-            </Panel>
+            )}
 
-            <Panel title="Drafts & Glossary" kicker="Private">
-              {drafts.length ? (
-                <div className="x2-research-drafts">
-                  {drafts.map((row) => (
-                    <details key={row.id}>
-                      <summary>
-                        {row.name} · v{row.version}
-                      </summary>
-                      <div className="x1-actions">
-                        <button
-                          type="button"
-                          className="x1-text-button"
-                          onClick={() =>
-                            loadDefinition(row.payload.definition, {
-                              id: row.id,
-                              version: row.version,
-                            })
-                          }
-                        >
-                          Open draft
-                        </button>
-                      </div>
-                      <p className="x1-caption">
-                        <code>{row.payload.definition.formula}</code>
-                      </p>
-                    </details>
+            {/* 5. Scan Source: EXACTLY Watchlist or Market */}
+            <div className="x54-field-group">
+              <div className="x54-field-label">
+                <span>Scan Source</span>
+                <span className="x1-caption">
+                  {scanSource === "MARKET"
+                    ? "NSE · BSE · MCX"
+                    : `${watchlistItems.length} symbol${watchlistItems.length === 1 ? "" : "s"}`}
+                </span>
+              </div>
+              <div
+                className="ss-v3-source-grid"
+                role="group"
+                aria-label="Scan source"
+              >
+                <button
+                  type="button"
+                  aria-pressed={scanSource === "MY_WATCHLIST"}
+                  className={
+                    "ss-v3-seg-btn" +
+                    (scanSource === "MY_WATCHLIST" ? " is-active" : "")
+                  }
+                  onClick={() => {
+                    setScanSource("MY_WATCHLIST");
+                    setScanError("");
+                  }}
+                >
+                  Watchlist
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={scanSource === "MARKET"}
+                  className={
+                    "ss-v3-seg-btn" +
+                    (scanSource === "MARKET" ? " is-active" : "")
+                  }
+                  onClick={() => {
+                    setScanSource("MARKET");
+                    setScanError("");
+                  }}
+                >
+                  Market
+                </button>
+              </div>
+
+              {scanSource === "MY_WATCHLIST" && watchlists.length > 1 && (
+                <select
+                  aria-label="Choose watchlist"
+                  className="x54-name-input"
+                  value={activeWatchlist?.id ?? ""}
+                  onChange={(e) => setWatchlistId(e.target.value)}
+                >
+                  {watchlists.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name} ({w.payload.items?.length ?? 0})
+                    </option>
                   ))}
-                </div>
-              ) : (
-                <Empty title="No saved drafts yet">
-                  Saved drafts stay private to your account.
-                </Empty>
+                </select>
               )}
-              <Comparison runs={runs} />
-              <details className="x1-small-details">
-                <summary>Glossary (RSI, ATR, MACD, BB, ADX, PIT)</summary>
-                <div className="x3-glossary-grid">
-                  {RESEARCH_GLOSSARY.map((item) => (
-                    <div className="x3-glossary-item" key={item.term}>
-                      <strong>{item.term}</strong>
-                      <p>{item.meaning}</p>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            </Panel>
-          </div>
 
-          {/* ACTIVE SCAN RESULTS: Compact Metrics + Coverage Chart + Collapsed-by-Default Match Accordion */}
-          {active && (
-            <div
-              className={
-                "x53-results-shell" +
-                (justCompletedId === active.id ? " x51-scan-complete-pulse" : "")
-              }
-            >
-              <Panel
-                title={`Results · ${active.name}`}
-                kicker={`${active.payload.scanTier ?? active.mode} · ${moment(active.created_at)}`}
-                action={
-                  <div className="x1-actions" style={{ gap: 6 }}>
-                    <button
-                      type="button"
-                      className="x51-accent-btn"
-                      style={{ minHeight: 36, fontSize: "0.82rem" }}
-                      onClick={() => openPostSoulModal(active)}
-                    >
-                      <Send size={14} />
-                      <span>Publish Soul</span>
-                    </button>
+              {scanSource === "MY_WATCHLIST" && watchlistItems.length === 0 && (
+                <div className="x54-quota-popover" role="note">
+                  <div>
+                    Your Watchlist is empty. Add instruments to scan your
+                    Watchlist, or switch directly to Market.
+                  </div>
+                  <div className="x1-actions" style={{ marginTop: 8, gap: 8 }}>
                     <button
                       type="button"
                       className="x1-secondary"
-                      style={{ minHeight: 36, fontSize: "0.82rem" }}
                       onClick={() => {
-                        setSavedSignature(signature);
-                        share(active.payload.rule.formula);
+                        setScanSource("MARKET");
+                        setScanError("");
                       }}
                     >
-                      <Share2 size={14} />
-                      <span>Share</span>
+                      Switch to Market
                     </button>
-                  </div>
-                }
-              >
-                <div className="x53-compact-metrics" aria-label="Scan result counts">
-                  <div className="x53-compact-metric">
-                    <strong>{activeMatches.length}</strong>
-                    <span>Matched</span>
-                  </div>
-                  <div className="x53-compact-metric">
-                    <strong>{active.payload.results.eligible ?? 0}</strong>
-                    <span>Evaluated</span>
-                  </div>
-                  <div className="x53-compact-metric">
-                    <strong>{active.payload.results.failed ?? 0}</strong>
-                    <span>Did not match</span>
-                  </div>
-                  <div className="x53-compact-metric">
-                    <strong>{active.payload.results.unknown ?? 0}</strong>
-                    <span>Unknown</span>
-                  </div>
-                </div>
-
-                <div className="x53-formula-meta-row">
-                  <code className="x53-compact-formula">
-                    {active.payload.rule.formula}
-                  </code>
-                  <details className="x53-meta-info">
-                    <summary>Method &amp; Digest</summary>
-                    <div className="x53-meta-info-body">
-                      <p className="x1-caption" style={{ margin: 0 }}>
-                        {active.payload.knownAtPolicy}
-                      </p>
-                      <div className="x1-actions" style={{ gap: 8, marginTop: 6 }}>
-                        <code className="x1-caption">
-                          SHA-256: {active.digest.slice(0, 20)}…
-                        </code>
-                        <button
-                          type="button"
-                          className="x1-text-button"
-                          onClick={() => {
-                            void copyTextSafe(active.digest).then((ok) => {
-                              notify(
-                                ok
-                                  ? "Copied scan SHA-256 digest."
-                                  : "Unable to copy digest on this browser.",
-                                !ok,
-                              );
-                            });
-                          }}
-                        >
-                          <Copy size={13} /> Copy digest
-                        </button>
-                      </div>
-                    </div>
-                  </details>
-                </div>
-                <p className="x1-caption">
-                  {active.payload.research?.universePreset
-                    ? SCAN_UNIVERSE_LABEL[active.payload.research.universePreset]
-                    : active.payload.research?.universe === "ECB_DAILY"
-                      ? SCAN_UNIVERSE_LABEL.ECB_DAILY
-                      : "Legacy scan scope"}
-                  {" · "}
-                  {TIMEFRAMES.find(({ id }) => id === (active.payload.research?.interval ?? active.payload.interval))?.label ?? "Timeframe unavailable"}
-                  {active.payload.source && ` · ${active.payload.source}`}
-                </p>
-
-                <ScanCoverageChart
-                  passed={activeMatches.length}
-                  failed={active.payload.results.failed ?? 0}
-                  unknown={active.payload.results.unknown ?? 0}
-                  candidateCount={active.payload.preflight?.accounting?.discovered}
-                />
-
-                {activeMatches.length > 0 ? (
-                  <div className="x53-match-accordion" role="list" aria-label="Matching instruments">
-                    {activeMatches.map((r) => {
-                      const regInfo = registryInstrument(
-                        r.instrumentId.replace(/^CSV:/, ""),
-                      );
-                      return (
-                        <details
-                          key={r.instrumentId}
-                          className="x53-match-row"
-                          role="listitem"
-                        >
-                          <summary className="x53-match-summary">
-                            <span className="x53-match-title">
-                              <strong>{r.instrumentId.replace(/^CSV:/, "")}</strong>
-                              {regInfo && (
-                                <span className="x1-caption">{regInfo.name}</span>
-                              )}
-                            </span>
-                            <span className="x51-pill x51-pill-green">MATCH</span>
-                          </summary>
-                          <div className="x53-match-body">
-                            <ul>
-                              {r.reasons.map((reason, i) => (
-                                <li key={i}>{reason}</li>
-                              ))}
-                            </ul>
-                            <div className="x53-match-foot">
-                              <span className="x1-caption">
-                                {r.source} · closed bar{" "}
-                                {closedObservationLabel(r.latestEventAt, r.source)}
-                              </span>
-                              <button
-                                type="button"
-                                className="x1-text-button"
-                                onClick={() =>
-                                  openAsset(r.instrumentId.replace(/^CSV:/, ""))
-                                }
-                              >
-                                Asset Detail
-                                <ArrowUpRight size={14} />
-                              </button>
-                            </div>
-                          </div>
-                        </details>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="x1-callout" style={{ marginTop: 10 }}>
-                    Zero instruments matched at {moment(active.created_at)}.
-                    Recorded honestly in Graveyard.
-                  </div>
-                )}
-
-                <details className="x1-small-details" style={{ marginTop: 10 }}>
-                  <summary>
-                    Coverage &amp; Exclusions ({activeNonMatches.length + (active.payload.sourceExclusions?.length ?? 0)})
-                  </summary>
-                  <div className="x1-scan-results" style={{ marginTop: 8 }}>
-                    {activeNonMatches.map((r) => (
-                      <div
-                        key={r.instrumentId}
-                        style={{
-                          padding: "7px 10px",
-                          borderBottom: "1px solid var(--x51-hairline)",
-                          fontSize: "0.82rem",
-                        }}
+                    {onOpenWatchlist && (
+                      <button
+                        type="button"
+                        className="x1-secondary"
+                        onClick={onOpenWatchlist}
                       >
-                        <strong>{r.instrumentId}</strong>{" "}
-                        <span className="x51-pill">{r.status === "FAIL" ? "Did not match" : r.status}</span> ·{" "}
-                        <span className="x1-caption">
-                          {r.reasons.join(" ")}
-                          {" · "}{r.source}{" · "}{closedObservationLabel(r.latestEventAt, r.source)}
-                        </span>
-                      </div>
-                    ))}
-                    {active.payload.sourceExclusions?.map(({ id, kind, reason }) => (
-                      <div key={id} className="x1-caption">
-                        <strong>{id}</strong>{" · "}{kind === "deferred" ? "Deferred" : "Excluded"}{" · "}{reason}
-                      </div>
-                    ))}
+                        Open Watchlist
+                      </button>
+                    )}
                   </div>
-                </details>
-              </Panel>
-
-              {active.payload.soulGenome && (
-                <div style={{ marginTop: 14 }}>
-                  <SoulGenomePanel
-                    genome={active.payload.soulGenome}
-                    onOpenAsset={openAsset}
-                  />
                 </div>
               )}
+            </div>
 
-              <div className="x2-probability-grid" style={{ marginTop: 14 }}>
-                <EvidencePanel scanId={active.id} selectRun={setSelected} />
-                <ReplayPanel run={active} />
+            {/* 6. Timeframe: EXACTLY 1 Hour, Daily, Weekly, Monthly */}
+            <div className="x54-field-group">
+              <div className="x54-field-label">
+                <span>Timeframe</span>
+              </div>
+              <div
+                className="ss-v3-tf-grid"
+                role="group"
+                aria-label="Scan timeframe"
+              >
+                {TIMEFRAME_OPTIONS.map((tf) => (
+                  <button
+                    key={tf.value}
+                    type="button"
+                    aria-pressed={interval === tf.value}
+                    className={
+                      "ss-v3-seg-btn" + (interval === tf.value ? " is-active" : "")
+                    }
+                    onClick={() => {
+                      setInterval(tf.value);
+                      setScanError("");
+                    }}
+                  >
+                    {tf.label}
+                  </button>
+                ))}
               </div>
             </div>
-          )}
 
-          {/* GRAVEYARD: Standalone Signature Heading (Zero subtitle/descriptor) */}
+            {scanError && (
+              <div className="x1-callout" role="alert" style={{ margin: 0 }}>
+                <div style={{ marginBottom: 8 }}>{scanError}</div>
+                <button
+                  type="button"
+                  className="x1-secondary"
+                  disabled={busy}
+                  onClick={() => void executeScan()}
+                >
+                  <RefreshCw size={14} aria-hidden="true" />
+                  <span>Retry scan</span>
+                </button>
+              </div>
+            )}
+
+            {/* 7. Primary Run Scan CTA (hidden in Draw mode since Draw canvas has its own submit) */}
+            {!(scanTier === "ADVANCED" && advancedEntry === "DRAW") && (
+              <button
+                type="button"
+                className="ss-v3-run-cta"
+                disabled={busy}
+                aria-busy={busy}
+                onClick={() => void executeScan()}
+              >
+                <span>{busy ? "Scanning…" : "Run Scan"}</span>
+                {!busy && <ArrowRight size={17} aria-hidden="true" />}
+              </button>
+            )}
+          </section>
+
+          {/* 2. SCAN RESULTS (Simple, Minimal, Uncluttered — Sec 06) */}
+          <section
+            ref={resultsRef}
+            className="ss-v3-results-card"
+            aria-labelledby="ss-v3-results-heading"
+          >
+            <div>
+              <h2 id="ss-v3-results-heading" className="ss-v3-results-title">
+                Scan Results
+              </h2>
+              {activeScan ? (
+                <p className="ss-v3-results-context">
+                  {activeScan.name} ·{" "}
+                  {activeScan.mode === "SIMPLE" ? "Classic" : "Advanced"} ·{" "}
+                  {sourceBadgeLabel(
+                    (activeScan.payload as { research?: { universePreset?: string } })
+                      .research?.universePreset,
+                    (activeScan.payload as { source?: string }).source,
+                  )}{" "}
+                  ·{" "}
+                  {TIMEFRAME_LABEL[
+                    (activeScan.payload as { research?: { interval?: string } })
+                      .research?.interval ??
+                      activeScan.payload.interval ??
+                      "1d"
+                  ] ?? "Daily"}{" "}
+                  · {moment(activeScan.payload.results?.asOf ?? activeScan.created_at)}
+                </p>
+              ) : (
+                <p className="ss-v3-results-context">
+                  Run a scan above to see matching instruments here.
+                </p>
+              )}
+            </div>
+
+            {activeScan ? (
+              (() => {
+                const res = activeScan.payload.results;
+                const matched = (res?.results ?? []).filter(
+                  (r) => r.status === "PASS",
+                );
+                const unknownCount = res?.unknown ?? 0;
+                const scanInterval =
+                  (activeScan.payload as { research?: { interval?: string } })
+                    .research?.interval ??
+                  activeScan.payload.interval ??
+                  "1d";
+                const isAdvanced = activeScan.mode !== "SIMPLE";
+
+                return (
+                  <>
+                    <div className="ss-v3-results-count">
+                      {matched.length === 0
+                        ? "No instruments matched"
+                        : `${matched.length} instrument${matched.length === 1 ? "" : "s"} matched`}
+                    </div>
+
+                    {matched.length > 0 ? (
+                      <div className="ss-v3-match-list" role="list">
+                        {matched.map((item) => {
+                          const [venue, sym] = item.instrumentId.includes(":")
+                            ? item.instrumentId.split(":", 2)
+                            : ["MKT", item.instrumentId];
+                          const barStamp = formatScanBarTimestamp(
+                            item.latestEventAt,
+                            scanInterval,
+                          );
+                          return (
+                            <div
+                              key={item.instrumentId}
+                              role="listitem"
+                              className="ss-v3-match-item"
+                            >
+                              <div className="ss-v3-match-row">
+                                <button
+                                  type="button"
+                                  className="x1-text-button"
+                                  style={{
+                                    padding: 0,
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: 8,
+                                    color: "var(--x1-text-primary)",
+                                  }}
+                                  onClick={() => openAsset(item.instrumentId)}
+                                >
+                                  <strong>{sym}</strong>
+                                  <span className="x51-pill">{venue}</span>
+                                </button>
+                                <span className="x1-caption">
+                                  {barStamp || "Latest closed bar"}
+                                </span>
+                              </div>
+                              {isAdvanced && item.reasons?.length > 0 && (
+                                <details
+                                  style={{
+                                    padding: "0 14px 10px",
+                                    fontSize: "0.82rem",
+                                    color: "var(--x1-text-secondary)",
+                                  }}
+                                >
+                                  <summary style={{ cursor: "pointer", color: "var(--x1-title-blue)" }}>
+                                    Matched conditions
+                                  </summary>
+                                  <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                                    {item.reasons.slice(0, 6).map((reason, idx) => (
+                                      <li key={idx}>{reason}</li>
+                                    ))}
+                                  </ul>
+                                </details>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="x1-caption" style={{ margin: 0 }}>
+                        Evaluated {res?.eligible ?? 0} instrument
+                        {(res?.eligible ?? 0) === 1 ? "" : "s"} on closed bars —
+                        none satisfied the rule on the latest bar.
+                      </p>
+                    )}
+
+                    {unknownCount > 0 && (
+                      <p className="x1-caption" style={{ margin: 0 }}>
+                        {unknownCount} instrument
+                        {unknownCount === 1 ? " had" : "s had"} insufficient
+                        history for the selected lookback and{" "}
+                        {unknownCount === 1 ? "was" : "were"} skipped cleanly.
+                      </p>
+                    )}
+                  </>
+                );
+              })()
+            ) : (
+              <Empty title="Ready for your first scan">
+                Classic mode with Market and Daily is pre-configured — tap Run
+                Scan above whenever you are ready.
+              </Empty>
+            )}
+          </section>
+
+          {/* 3. GRAVEYARD (Preserved Approved Visual DNA, Immediately Below Scan Results — Sec 07) */}
           <section
             className="x53-graveyard-shell"
-            aria-labelledby="x53-graveyard-heading"
+            aria-labelledby="ss-v3-graveyard-heading"
           >
             <div className="x53-graveyard-head">
               <div className="x53-graveyard-title-wrap">
                 <span className="x53-graveyard-icon" aria-hidden="true">
-                  <Archive size={18} />
+                  <IconGraveyard size={22} />
                 </span>
-                <h2 id="x53-graveyard-heading" className="x53-graveyard-title">
+                <h2 id="ss-v3-graveyard-heading" className="x53-graveyard-title">
                   GRAVEYARD
                 </h2>
               </div>
-              <div className="x51-chip-row" role="group" aria-label="Graveyard filter">
-                {(["ALL", "CLASSIC", "ADVANCED", "RETIRED"] as const).map(
-                  (f) => (
-                    <button
-                      key={f}
-                      type="button"
-                      className={
-                        "x51-chip" + (graveyardFilter === f ? " is-active" : "")
-                      }
-                      aria-pressed={graveyardFilter === f}
-                      onClick={() => setGraveyardFilter(f)}
-                    >
-                      {f === "ALL"
-                        ? "All"
-                        : f === "CLASSIC"
-                          ? "Classic"
-                          : f === "ADVANCED"
-                            ? "Advanced"
-                            : "Retired"}
-                    </button>
-                  ),
-                )}
-              </div>
+              <span className="x51-pill x51-pill-blue">
+                {scans.length} saved
+              </span>
             </div>
 
-            <div className="x2-history-tools">
-              <input
-                type="search"
-                aria-label="Search Graveyard scans"
-                placeholder="Search scans or formulas…"
-                value={historySearch}
-                onChange={(e) => setHistorySearch(e.target.value)}
-              />
-              <span>{filteredGraveyard.length} saved</span>
+            <div className="x51-chip-row" role="group" aria-label="Filter GRAVEYARD">
+              {(["ALL", "CLASSIC", "ADVANCED", "RETIRED"] as const).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  aria-pressed={graveyardFilter === f}
+                  className={
+                    "x51-chip" + (graveyardFilter === f ? " is-active" : "")
+                  }
+                  onClick={() => setGraveyardFilter(f)}
+                >
+                  {f === "ALL"
+                    ? "All"
+                    : f === "CLASSIC"
+                      ? "Classic"
+                      : f === "ADVANCED"
+                        ? "Advanced"
+                        : "Retired"}
+                </button>
+              ))}
             </div>
 
-            {filteredGraveyard.length ? (
+            <input
+              type="search"
+              className="x56-formula-search-input"
+              aria-label="Search GRAVEYARD scans"
+              placeholder="Search saved Souls or formulas…"
+              value={graveyardQuery}
+              onChange={(e) => setGraveyardQuery(e.target.value)}
+            />
+
+            {graveyardScans.length > 0 ? (
               <div className="x53-graveyard-list">
-                {filteredGraveyard.map((run) => {
-                  const rich = run as RichRun;
-                  const tier =
-                    rich.payload.scanTier ??
-                    (run.mode === "SIMPLE" ? "CLASSIC" : "ADVANCED");
-                  const isSelected = active?.id === run.id;
+                {graveyardScans.map((s) => {
+                  const tfKey =
+                    (s.payload as { research?: { interval?: string } }).research
+                      ?.interval ??
+                    s.payload.interval ??
+                    "1d";
+                  const presetKey = (
+                    s.payload as { research?: { universePreset?: string } }
+                  ).research?.universePreset;
+                  const srcStr = (s.payload as { source?: string }).source;
                   return (
                     <div
+                      key={s.id}
                       className={
-                        "x53-graveyard-card" + (isSelected ? " is-selected" : "")
+                        "x53-graveyard-card" +
+                        (activeScan?.id === s.id ? " is-selected" : "")
                       }
-                      key={run.id}
                     >
                       <button
                         type="button"
                         className="x53-graveyard-main"
-                        onClick={() => setSelected(run.id)}
+                        onClick={() => setSelectedScanId(s.id)}
                       >
                         <div className="x53-graveyard-card-top">
-                          <strong>{run.name}</strong>
-                          <span className="x51-pill">{tier}</span>
-                          {grave.has(run.id) && (
-                            <span className="x51-pill x51-pill-amber">Retired</span>
+                          <strong>{s.name}</strong>
+                          <span className="x51-pill">
+                            {s.mode === "SIMPLE" ? "Classic" : "Advanced"}
+                          </span>
+                          <span className="x51-pill">
+                            {sourceBadgeLabel(presetKey, srcStr)}
+                          </span>
+                          <span className="x51-pill">
+                            {TIMEFRAME_LABEL[tfKey] ?? tfKey}
+                          </span>
+                          {s.reviewState && (
+                            <span className="x51-pill x51-pill-amber">
+                              {s.reviewState}
+                            </span>
                           )}
                         </div>
-                        <div className="x1-caption">
-                          {moment(run.created_at)} ·{" "}
-                          {run.payload.results.matches ?? "Withheld"} matched ·{" "}
-                          <code>{run.payload.rule.formula}</code>
-                        </div>
+                        <code className="x53-compact-formula">
+                          {s.payload.rule?.formula ?? ""}
+                        </code>
+                        <span className="x1-caption">
+                          {s.payload.results?.matches ?? 0} matched ·{" "}
+                          {moment(s.created_at)}
+                        </span>
                       </button>
-                      <div className="x1-actions" style={{ gap: 8, flexShrink: 0 }}>
+
+                      <div className="ss-v3-graveyard-actions">
                         <button
                           type="button"
-                          className="x1-text-button"
-                          onClick={() => openPostSoulModal(run)}
+                          className="x51-accent-btn"
+                          style={{ minHeight: 40, padding: "0 12px", fontSize: "0.84rem" }}
+                          disabled={publishingId === s.id}
+                          onClick={() => void publishScanToCommunity(s)}
                         >
-                          Publish Soul
+                          <Send size={14} aria-hidden="true" />
+                          <span>
+                            {publishingId === s.id
+                              ? "Publishing…"
+                              : "Publish Soul"}
+                          </span>
                         </button>
                         <button
                           type="button"
-                          className="x1-text-button"
-                          onClick={() => setReview(run)}
+                          className="x1-secondary"
+                          style={{ minHeight: 40, padding: "0 12px", fontSize: "0.84rem" }}
+                          onClick={() => setReview(s)}
                         >
-                          {grave.has(run.id) ? "Review" : "Review scan"}
+                          Review Scan
                         </button>
                       </div>
                     </div>
@@ -2066,55 +1400,28 @@ export default function ResearchWorkspace({
                 })}
               </div>
             ) : (
-              <Empty
-                title={
-                  historySearch.trim() || graveyardFilter !== "ALL"
-                    ? "No matching scans."
-                    : "No scans yet"
-                }
-              >
-                {historySearch.trim() || graveyardFilter !== "ALL"
-                  ? "Try clearing your search or switching filters."
-                  : "Completed Classic and Advanced scans are saved here automatically."}
+              <Empty title="No archived Souls match">
+                Completed Soul scans appear here automatically and stay preserved
+                as immutable records.
               </Empty>
             )}
-            {nextCursor && (
-              <button
-                type="button"
-                className="x1-secondary"
-                style={{ marginTop: 10 }}
-                disabled={!!busy}
-                onClick={() => void loadOlder()}
-              >
-                Load older scans
-              </button>
-            )}
           </section>
-        </div>
+        </>
       )}
 
-      {/* STANDALONE FORMULA LAB (Never nested inside Classic / Advanced!) */}
-      {panel === "Formula Lab" && (
-        <Suspense
-          fallback={<WorkspaceSkeleton label="Loading Formula Lab…" kind="workspace" />}
-        >
-          <FormulaLab notify={notify} />
-        </Suspense>
-      )}
-
-      {/* [06] Redesigned Zero-Overlap 50-Formula Picker Modal */}
+      {/* 50-Formula Picker Modal with Pinned Section First */}
       {formulaPickerOpen && (
         <Modal
-          title="Choose a Formula"
+          title="Select Classic Formula"
           onClose={() => setFormulaPickerOpen(false)}
         >
           <div className="x56-formula-modal-shell">
             <div className="x56-formula-modal-subhead">
               <p className="x56-formula-modal-subtitle">
-                {CLASSIC_50_PRESETS.length} beginner-friendly rules · evaluated on completed bars
+                Pin your favorite formulas to keep them at the top.
               </p>
-              <span className="x56-formula-count-badge" aria-live="polite">
-                Showing {filteredClassicPresets.length} of {CLASSIC_50_PRESETS.length}
+              <span className="x56-formula-count-badge">
+                {filteredPresets.total} of {CLASSIC_50_PRESETS.length}
               </span>
             </div>
 
@@ -2122,35 +1429,29 @@ export default function ResearchWorkspace({
               <input
                 type="search"
                 className="x56-formula-search-input"
-                value={classicFilter}
-                onChange={(e) => setClassicFilter(e.target.value)}
                 aria-label="Search 50 Classic formulas"
-                placeholder="Search Golden Cross, RSI, MACD, Bollinger, Supertrend, OBV, MFI…"
-                autoFocus
+                placeholder="Search RSI, EMA, MACD, Bollinger, Supertrend…"
+                value={formulaQuery}
+                onChange={(e) => setFormulaQuery(e.target.value)}
               />
-              {classicFilter.trim().length > 0 && (
+              {formulaQuery && (
                 <button
                   type="button"
                   className="x56-formula-search-clear"
-                  onClick={() => setClassicFilter("")}
+                  onClick={() => setFormulaQuery("")}
                 >
                   Clear
                 </button>
               )}
             </div>
 
-            <div
-              className="x56-formula-chip-bar"
-              role="group"
-              aria-label="Filter formulas by indicator category"
-            >
+            <div className="x56-formula-chip-bar" role="group" aria-label="Formula categories">
               <button
                 type="button"
-                aria-pressed={classicCategory === "ALL"}
                 className={
-                  "x51-chip" + (classicCategory === "ALL" ? " is-active" : "")
+                  "x51-chip" + (formulaCategory === "ALL" ? " is-active" : "")
                 }
-                onClick={() => setClassicCategory("ALL")}
+                onClick={() => setFormulaCategory("ALL")}
               >
                 All ({CLASSIC_50_PRESETS.length})
               </button>
@@ -2158,127 +1459,150 @@ export default function ResearchWorkspace({
                 <button
                   key={cat}
                   type="button"
-                  aria-pressed={classicCategory === cat}
                   className={
-                    "x51-chip" + (classicCategory === cat ? " is-active" : "")
+                    "x51-chip" + (formulaCategory === cat ? " is-active" : "")
                   }
-                  onClick={() => setClassicCategory(cat)}
+                  onClick={() => setFormulaCategory(cat)}
                 >
                   {cat} ({CLASSIC_CATEGORY_COUNTS[cat]})
                 </button>
               ))}
             </div>
 
-            <div
-              className="x56-formula-list"
-              role="listbox"
-              aria-label="50 Classic Soul Scan formulas"
-            >
-              {filteredClassicPresets.map((preset) => {
-                const isSelected = activeClassicPreset.id === preset.id;
-                const isExpanded = expandedClassicDetailsId === preset.id;
+            <div className="x56-formula-list">
+              {filteredPresets.pinned.length > 0 && (
+                <>
+                  <small className="x1-caption" style={{ paddingLeft: 4 }}>
+                    Pinned ({filteredPresets.pinned.length})
+                  </small>
+                  {filteredPresets.pinned.map((p) => {
+                    const isSelected = p.id === classicPresetId;
+                    const isExpanded = expandedFormulaId === p.id;
+                    return (
+                      <div
+                        key={`pin-${p.id}`}
+                        className={
+                          "x56-formula-item" + (isSelected ? " is-active" : "")
+                        }
+                      >
+                        <div className="x56-formula-item-top">
+                          <button
+                            type="button"
+                            className="x56-formula-select-btn"
+                            onClick={() => {
+                              applyClassicPreset(p);
+                              setFormulaPickerOpen(false);
+                            }}
+                          >
+                            <div className="x56-formula-title-row">
+                              <span className="x54-formula-rank-badge">
+                                {p.rankCode}
+                              </span>
+                              <span className="x56-formula-title">{p.label}</span>
+                            </div>
+                            <p className="x56-formula-meaning">{p.shortDescription}</p>
+                          </button>
+                          <div className="x56-formula-actions-col">
+                            <button
+                              type="button"
+                              className="ss-v3-pin-btn is-pinned"
+                              style={{ minWidth: 36, minHeight: 36, padding: 0 }}
+                              aria-label={`Unpin ${p.label}`}
+                              disabled={pinningId === p.id}
+                              onClick={() => void togglePin(p.id)}
+                            >
+                              <IconPin size={16} active />
+                            </button>
+                            <button
+                              type="button"
+                              className="x56-formula-details-btn"
+                              onClick={() =>
+                                setExpandedFormulaId(isExpanded ? null : p.id)
+                              }
+                            >
+                              {isExpanded ? "Hide" : "Formula"}
+                            </button>
+                          </div>
+                        </div>
+                        {isExpanded && (
+                          <div className="x56-formula-drawer">
+                            <code className="x56-formula-drawer-code">
+                              {p.formula}
+                            </code>
+                            <div className="x56-formula-drawer-grid">
+                              <span>Min bars: {p.minBars}</span>
+                              <span>{p.ruleType}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {filteredPresets.unpinned.length > 0 && (
+                    <small className="x1-caption" style={{ paddingLeft: 4, marginTop: 4 }}>
+                      All Classic Formulas
+                    </small>
+                  )}
+                </>
+              )}
+
+              {filteredPresets.unpinned.map((p) => {
+                const isSelected = p.id === classicPresetId;
+                const isExpanded = expandedFormulaId === p.id;
                 return (
                   <div
-                    key={preset.id}
-                    role="option"
-                    aria-selected={isSelected}
+                    key={p.id}
                     className={
-                      "x56-formula-item x51-preset-option" +
-                      (isSelected ? " is-active" : "")
+                      "x56-formula-item" + (isSelected ? " is-active" : "")
                     }
                   >
                     <div className="x56-formula-item-top">
                       <button
                         type="button"
                         className="x56-formula-select-btn"
-                        onClick={() => selectClassicPreset(preset)}
-                        onDoubleClick={() => {
-                          selectClassicPreset(preset);
+                        onClick={() => {
+                          applyClassicPreset(p);
                           setFormulaPickerOpen(false);
                         }}
                       >
                         <div className="x56-formula-title-row">
                           <span className="x54-formula-rank-badge">
-                            {preset.rankCode}
+                            {p.rankCode}
                           </span>
-                          <strong className="x56-formula-title">
-                            {preset.label}
-                          </strong>
+                          <span className="x56-formula-title">{p.label}</span>
                         </div>
-                        <p className="x56-formula-meaning">
-                          {preset.shortDescription}
-                        </p>
-                        <div className="x56-formula-badges">
-                          <span className="x51-pill">{preset.category}</span>
-                          <span className="x56-rule-type-pill">
-                            {preset.ruleType === "event"
-                              ? "Event"
-                              : "State"}
-                          </span>
-                          {preset.requiresVolume && (
-                            <span className="x56-rule-type-pill">
-                              Requires Volume
-                            </span>
-                          )}
-                        </div>
+                        <p className="x56-formula-meaning">{p.shortDescription}</p>
                       </button>
-
                       <div className="x56-formula-actions-col">
-                        {isSelected && (
-                          <span className="x56-formula-selected-pill">
-                            <Check size={12} aria-hidden="true" />
-                            <span>Selected</span>
-                          </span>
-                        )}
+                        <button
+                          type="button"
+                          className="ss-v3-pin-btn"
+                          style={{ minWidth: 36, minHeight: 36, padding: 0 }}
+                          aria-label={`Pin ${p.label}`}
+                          disabled={pinningId === p.id}
+                          onClick={() => void togglePin(p.id)}
+                        >
+                          <IconPin size={16} />
+                        </button>
                         <button
                           type="button"
                           className="x56-formula-details-btn"
-                          aria-expanded={isExpanded}
-                          aria-label={`Technical details for ${preset.label}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setExpandedClassicDetailsId((prev) =>
-                              prev === preset.id ? null : preset.id,
-                            );
-                          }}
+                          onClick={() =>
+                            setExpandedFormulaId(isExpanded ? null : p.id)
+                          }
                         >
-                          {isExpanded ? "Hide details" : "Details"}
+                          {isExpanded ? "Hide" : "Formula"}
                         </button>
                       </div>
                     </div>
-
                     {isExpanded && (
                       <div className="x56-formula-drawer">
                         <code className="x56-formula-drawer-code">
-                          {preset.formula}
+                          {p.formula}
                         </code>
                         <div className="x56-formula-drawer-grid">
-                          <span>
-                            Type:{" "}
-                            <strong>
-                              {preset.ruleType === "event"
-                                ? "Bar-close transition event"
-                                : "Sustained state filter"}
-                            </strong>
-                          </span>
-                          <span>
-                            Context:{" "}
-                            <strong>{preset.signalBias}</strong>
-                          </span>
-                          <span>
-                            Warm-up:{" "}
-                            <strong>{preset.minBars} completed bars</strong>
-                          </span>
-                          <span>
-                            Inputs:{" "}
-                            <strong>{preset.prerequisites.join(", ")}</strong>
-                          </span>
-                          <span>
-                            Timeframes:{" "}
-                            <strong>
-                              {preset.supportedTimeframes.join(", ")}
-                            </strong>
-                          </span>
+                          <span>Min bars: {p.minBars}</span>
+                          <span>{p.ruleType}</span>
                         </div>
                       </div>
                     )}
@@ -2286,273 +1610,113 @@ export default function ResearchWorkspace({
                 );
               })}
 
-              {filteredClassicPresets.length === 0 && (
+              {filteredPresets.total === 0 && (
                 <div className="x56-formula-empty">
-                  <p className="x1-caption" style={{ margin: 0 }}>
-                    No Classic formulas matched &ldquo;{classicFilter.trim()}&rdquo;
-                    {classicCategory !== "ALL"
-                      ? ` in ${classicCategory}`
-                      : ""}
-                    .
-                  </p>
+                  <strong>No formulas matched</strong>
                   <button
                     type="button"
                     className="x1-secondary"
                     onClick={() => {
-                      setClassicFilter("");
-                      setClassicCategory("ALL");
+                      setFormulaQuery("");
+                      setFormulaCategory("ALL");
                     }}
                   >
-                    Clear search &amp; filters
+                    Reset search
                   </button>
                 </div>
               )}
-            </div>
-
-            <div className="x56-formula-modal-footer">
-              <span className="x56-formula-footer-summary">
-                Active:{" "}
-                <strong>
-                  #{activeClassicPreset.rankCode} · {activeClassicPreset.label}
-                </strong>
-              </span>
-              <div className="x56-formula-footer-actions">
-                <button
-                  type="button"
-                  className="x1-secondary"
-                  onClick={() => {
-                    const prev =
-                      findClassicPresetById(preModalClassicId) ??
-                      CLASSIC_50_PRESETS[0];
-                    selectClassicPreset(prev);
-                    setFormulaPickerOpen(false);
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="x51-accent-btn"
-                  onClick={() => setFormulaPickerOpen(false)}
-                >
-                  <Check size={15} aria-hidden="true" />
-                  <span>Use formula</span>
-                </button>
-              </div>
             </div>
           </div>
         </Modal>
       )}
 
-      {/* Publish Soul Modal with Server-Validated Preview */}
-      {postTarget && (
-        <Modal
-          title="Publish to Soul Feed"
-          onClose={() => setPostTarget(null)}
-        >
-          {postedResultId ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div className="x1-callout">
-                <strong>Soul published!</strong> Your Soul{" "}
-                <strong>{postTarget.name}</strong> is now live in the Soul Feed.
+      {/* Formula Guide Modal (replaces inline Drafts & Glossary card) */}
+      {guideOpen && (
+        <Modal title="Formula & Scan Guide" onClose={() => setGuideOpen(false)}>
+          <p className="x1-caption" style={{ marginTop: 0 }}>
+            All scans evaluate strictly on completed closed bars across your
+            selected source and timeframe.
+          </p>
+          <div className="x3-glossary-grid">
+            {RESEARCH_GLOSSARY.map((item) => (
+              <div key={item.term} className="x3-glossary-item">
+                <strong>{item.term}</strong>
+                <p>{item.meaning}</p>
               </div>
-              <div className="x1-actions">
-                {onOpenCommunityWeb && (
-                  <button
-                    type="button"
-                    className="x51-accent-btn"
-                    onClick={() => {
-                      setPostTarget(null);
-                      onOpenCommunityWeb();
-                    }}
-                  >
-                    View in Soul Feed
-                    <ArrowRight size={15} />
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="x1-secondary"
-                  onClick={() => setPostTarget(null)}
-                >
-                  Done
-                </button>
-              </div>
-            </div>
-          ) : (
-            <form className="x1-form" onSubmit={submitPostSoul}>
-              <p className="x1-caption" style={{ margin: 0 }}>
-                Soul: <strong>{postTarget.name}</strong> · Formula:{" "}
-                <code>{postTarget.payload.rule.formula}</code>
-              </p>
-              <p className="x1-caption x54-public-disclosure" style={{ margin: 0 }}>
-                Published publicly to the Soul Feed. Portfolios, drafts, private CSV rows, and messages are never shared.
-              </p>
-              <label>
-                Research summary
-                <textarea
-                  rows={3}
-                  maxLength={1200}
-                  value={postSummary}
-                  onChange={(e) => {
-                    setPostSummary(e.target.value);
-                    setPostPreview(null);
-                  }}
-                  required
-                />
-              </label>
-              <label>
-                Risk &amp; limitation note
-                <input
-                  maxLength={280}
-                  value={postRiskNote}
-                  onChange={(e) => setPostRiskNote(e.target.value)}
-                  required
-                />
-              </label>
-
-              {/* [30] Exact Server-Validated Post Preview Card */}
-              {postPreview && (
-                <div
-                  className="x51-soul-card"
-                  role="region"
-                  aria-label="Server-validated post preview"
-                >
-                  <div className="x51-soul-card-head">
-                    <strong>
-                      Preview · @{postPreview.preview.authorHandle}
-                    </strong>
-                    <span
-                      className={
-                        postPreview.allowed
-                          ? "x51-pill x51-pill-green"
-                          : "x51-pill x51-pill-red"
-                      }
-                    >
-                      {postPreview.allowed
-                        ? `Ready (${postPreview.preview.audience})`
-                        : "Blocked by Data Rights"}
-                    </span>
-                  </div>
-                  {!postPreview.allowed && postPreview.blockReason ? (
-                    <p role="alert" className="x1-caption" style={{ color: "var(--x51-red)", margin: 0 }}>
-                      {postPreview.blockReason}
-                    </p>
-                  ) : (
-                    <>
-                      <strong>{postPreview.preview.title}</strong>
-                      <p className="x1-caption" style={{ margin: 0 }}>
-                        {postPreview.preview.summary}
-                      </p>
-                      <code className="x51-soul-formula">
-                        {postPreview.preview.formula}
-                      </code>
-                      <p className="x1-caption" style={{ margin: 0 }}>
-                        {postPreview.preview.mode} · {postPreview.preview.timeframe} ·{" "}
-                        {postPreview.preview.universeLabel} ·{" "}
-                        {postPreview.preview.matchedSymbols.length} matched symbol(s)
-                      </p>
-                      <p className="x1-caption" style={{ margin: 0 }}>
-                        Redactions: {postPreview.preview.redactionsApplied.join(" ")}
-                      </p>
-                    </>
-                  )}
-                </div>
-              )}
-
-              <div className="x1-actions" style={{ flexWrap: "wrap", gap: 8 }}>
-                <button
-                  type="button"
-                  className="x1-secondary"
-                  disabled={previewBusy}
-                  onClick={() => void runPostPreview()}
-                >
-                  {previewBusy ? "Checking preview…" : "Preview Post"}
-                </button>
-                <button
-                  type="submit"
-                  className="x51-accent-btn"
-                  disabled={postBusy || (postPreview !== null && !postPreview.allowed)}
-                >
-                  <Send size={15} />
-                  <span>
-                    {postBusy ? "Publishing…" : "Publish Soul"}
-                  </span>
-                </button>
-              </div>
-            </form>
-          )}
+            ))}
+          </div>
         </Modal>
       )}
 
-      {/* Review Scan Modal */}
+      {/* GRAVEYARD Review Scan Modal */}
       {review && (
-        <Modal title="Review Scan" onClose={() => setReview(null)}>
-          <p>{review.name} · original scan record stays preserved.</p>
+        <Modal
+          title={`Review Scan · ${review.name}`}
+          onClose={() => setReview(null)}
+        >
+          <p className="x1-caption" style={{ marginTop: 0 }}>
+            Reviews append a status event without altering the original archived
+            scan snapshot.
+          </p>
           <form
             className="x1-form"
             onSubmit={async (e) => {
               e.preventDefault();
-              if (lock.current) return;
-              lock.current = true;
-              setBusy("Saving review…");
+              if (reviewBusy) return;
               const fields = new FormData(e.currentTarget);
-              const sig = JSON.stringify({
-                id: review.id,
-                kind: fields.get("kind"),
-                note: fields.get("note"),
-              });
-              if (
-                pending.current?.kind !== "review" ||
-                pending.current.signature !== sig
-              ) {
-                pending.current = {
-                  kind: "review",
-                  signature: sig,
-                  id: crypto.randomUUID(),
-                };
+              const kind = String(fields.get("kind") ?? "RETIRED");
+              const note = String(fields.get("note") ?? "").trim();
+              if (!note) return;
+              const sig = JSON.stringify({ id: review.id, kind, note });
+              if (reviewKeyRef.current?.sig !== sig) {
+                reviewKeyRef.current = { sig, id: crypto.randomUUID() };
               }
+              setReviewBusy(true);
               try {
                 await api("/api/x1/workspace", {
                   action: "scan-review",
                   scanId: review.id,
-                  kind: fields.get("kind"),
-                  note: fields.get("note"),
-                  requestId: pending.current.id,
+                  kind,
+                  note,
+                  requestId: reviewKeyRef.current.id,
                 });
                 await reload();
                 setReview(null);
-                pending.current = null;
+                reviewKeyRef.current = null;
                 notify("Review saved; original scan preserved.");
-              } catch (error) {
-                notify((error as Error).message, true);
+              } catch (err) {
+                notify(
+                  err instanceof Error ? err.message : "Could not save review.",
+                  true,
+                );
               } finally {
-                lock.current = false;
-                setBusy("");
+                setReviewBusy(false);
               }
             }}
           >
             <label>
-              State
+              Status
               <select name="kind">
                 <option value="RETIRED">Retired</option>
                 <option value="INVALIDATED">Invalidated</option>
-                <option value="REVIEWED_FAILURE">
-                  Reviewed failure (personal assessment)
-                </option>
-                <option value="RESTORED">Restore active research</option>
+                <option value="REVIEWED_FAILURE">Reviewed note</option>
+                <option value="RESTORED">Restore active</option>
               </select>
             </label>
             <label>
-              Evidence and limitations
+              Notes
               <textarea name="note" required maxLength={1000} />
             </label>
-            <button className="x1-primary" disabled={!!busy}>
-              {busy || "Save review"}
+            <button
+              type="submit"
+              className="x1-primary"
+              disabled={reviewBusy}
+            >
+              {reviewBusy ? "Saving…" : "Save review"}
               <Check size={15} />
             </button>
           </form>
-          {workspace?.scanEvents
+          {(workspace?.scanEvents ?? [])
             .filter((e) => e.scan_id === review.id)
             .map((event) => (
               <div className="x1-review-history" key={event.id}>
@@ -2563,6 +1727,6 @@ export default function ResearchWorkspace({
             ))}
         </Modal>
       )}
-    </>
+    </div>
   );
 }

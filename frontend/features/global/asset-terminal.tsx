@@ -1504,7 +1504,7 @@ export default function AssetTerminal({
                       </p>
                       <code className="x51-soul-formula">{post.formula}</code>
                       <p className="x1-caption" style={{ margin: 0 }}>
-                        {post.evidenceStatus} · {post.sourceAttribution}
+                        {post.universeLabel} · {post.sourceAttribution}
                       </p>
                     </article>
                   ))}

@@ -213,8 +213,15 @@ export function SocialWorkspace({
     setError("");
     setLoading(false);
     const unreadNotifications = next.notifications.filter((n) => !n.readAt).length;
+    const unreadChats = next.inbox.reduce(
+      (sum, t) => sum + Math.max(0, Number(t.unread || 0)),
+      0,
+    );
     window.dispatchEvent(
       new CustomEvent("ss-unread-synced", { detail: unreadNotifications }),
+    );
+    window.dispatchEvent(
+      new CustomEvent("ss-chat-unread-synced", { detail: unreadChats }),
     );
   }, []);
 
@@ -551,18 +558,25 @@ export function SocialWorkspace({
         if (!mounted.current) return true;
         const authoritativeUnread =
           typeof res.unread === "number" ? Math.max(0, res.unread) : 0;
-        setHome((prev) =>
-          prev
-            ? {
-                ...prev,
-                inbox: prev.inbox.map((item) =>
-                  item.id === activeThreadId
-                    ? { ...item, unread: authoritativeUnread }
-                    : item,
-                ),
-              }
-            : prev,
-        );
+        setHome((prev) => {
+          if (!prev) return prev;
+          const nextInbox = prev.inbox.map((item) =>
+            item.id === activeThreadId
+              ? { ...item, unread: authoritativeUnread }
+              : item,
+          );
+          const totalUnread = nextInbox.reduce(
+            (sum, t) => sum + Math.max(0, Number(t.unread || 0)),
+            0,
+          );
+          window.dispatchEvent(
+            new CustomEvent("ss-chat-unread-synced", { detail: totalUnread }),
+          );
+          return {
+            ...prev,
+            inbox: nextInbox,
+          };
+        });
         if (typeof res.unreadNotifications === "number") {
           window.dispatchEvent(
             new CustomEvent("ss-unread-synced", {
@@ -1447,7 +1461,7 @@ export function GroupNetworkPanel({
                 <input
                   name="pinnedSoul"
                   defaultValue={data?.settings?.pinnedSoul || ""}
-                  placeholder="Optional permitted Soul ID"
+                  placeholder="Permitted Soul ID"
                 />
               </label>
               <button disabled={busy} type="submit">

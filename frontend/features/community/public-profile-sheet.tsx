@@ -49,6 +49,10 @@ export type PublicSoulItem = {
   createdAt: string;
   saveCount: number;
   commentCount: number;
+  likeCount?: number;
+  likedByMe?: boolean;
+  viewCount?: number;
+  shareCount?: number;
   savedByMe: boolean;
   isMine: boolean;
 };
@@ -454,21 +458,9 @@ export default function PublicProfileSheet({
     }
   }
 
-  async function copySoulToDraft(post: PublicSoulItem) {
-    if (!authenticated) {
-      onRequireAuth?.();
-      return;
-    }
-    try {
-      const res = await api<{ attribution: string }>("/api/community/network", {
-        action: "copy-soul",
-        postId: post.id,
-      });
-      notify(res.attribution || `Copied to private drafts.`);
-      onCopyToStrategy?.(post.formula);
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "Could not copy Soul.", true);
-    }
+  function trySoulFormula(post: PublicSoulItem) {
+    notify(`Loaded "${post.title}" into Strategy Builder.`);
+    onCopyToStrategy?.(post.formula);
   }
 
   async function togglePinSoul(post: PublicSoulItem) {
@@ -954,7 +946,7 @@ export default function PublicProfileSheet({
                       value={reportNote}
                       maxLength={280}
                       onChange={(e) => setReportNote(e.target.value)}
-                      placeholder="Optional context…"
+                      placeholder="Additional context…"
                     />
                     <div className="x1-actions">
                       <button type="submit" className="x54-btn-primary">
@@ -1066,7 +1058,7 @@ export default function PublicProfileSheet({
                           )}
                           <div className="x54-profile-soul-foot">
                             <span className="x1-caption">
-                              {moment(post.createdAt)} · {post.evidenceStatus}
+                              {moment(post.createdAt)} · {post.universeLabel} · {post.matchedSymbols.length} matched
                             </span>
                             <div className="x54-profile-soul-actions">
                               <button
@@ -1080,10 +1072,10 @@ export default function PublicProfileSheet({
                               <button
                                 type="button"
                                 className="x54-tiny-btn"
-                                onClick={() => void copySoulToDraft(post)}
+                                onClick={() => trySoulFormula(post)}
                               >
                                 <Copy size={13} />
-                                <span>Copy to Drafts</span>
+                                <span>Try this formula</span>
                               </button>
                               {post.isMine && (
                                 <>
@@ -1174,8 +1166,8 @@ export default function PublicProfileSheet({
                       <p className="x1-caption" style={{ margin: 0 }}>
                         Public researcher profiles show only intentionally shared
                         identity details and published Souls. Portfolio values,
-                        watchlists, drafts, Graveyard scans, private CSVs, email,
-                        and direct messages stay strictly private.
+                        watchlists, Graveyard scans, email, and direct messages
+                        stay strictly private.
                       </p>
                     </div>
                   </div>

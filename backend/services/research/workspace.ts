@@ -35,8 +35,30 @@ import {
   type ScanQuotaTier,
 } from "./scan-quota";
 import { parseDiscoverQuery } from "./discover-parser";
+import { CLASSIC_50_PRESETS } from "./classic-presets";
 import { matchDrawnPattern, type DrawPoint } from "../../engines/pattern-draw";
 import { runSoulGenomeEvidence } from "../../engines/soul-genome";
+
+const VALID_CLASSIC_FORMULA_IDS = new Set(CLASSIC_50_PRESETS.map((p) => p.id));
+
+async function listPinnedFormulaIds(
+  db: ReturnType<typeof database>,
+  subject: string,
+): Promise<string[]> {
+  try {
+    const res = await db
+      .prepare(
+        "SELECT formula_id FROM v3_formula_pins WHERE subject=? ORDER BY created_at DESC, formula_id ASC LIMIT 50",
+      )
+      .bind(subject)
+      .all<{ formula_id: string }>();
+    return res.results
+      .map((r) => r.formula_id)
+      .filter((id) => VALID_CLASSIC_FORMULA_IDS.has(id));
+  } catch {
+    return [];
+  }
+}
 type RawRecord = {
   id: string;
   subject: string;
@@ -155,7 +177,7 @@ export async function workspaceState(
       "A complete snapshot export cannot use a history cursor.",
     );
   const archivedLimit = includeSnapshots ? 1000 : 100;
-  const [records, archived, ledger, scans, events, scanQuota] = await Promise.all([
+  const [records, archived, ledger, scans, events, scanQuota, pinnedFormulaIds] = await Promise.all([
     db
       .prepare(
         "SELECT * FROM x1_records WHERE subject=? AND archived=0 ORDER BY created_at,id LIMIT 101",
@@ -196,6 +218,7 @@ export async function workspaceState(
       .bind(subject)
       .all(),
     getScanQuotaSummary(db, subject),
+    listPinnedFormulaIds(db, subject),
   ]);
   if (
     records.results.length > 100 ||
@@ -260,6 +283,7 @@ export async function workspaceState(
         "Classic: 8 completed scans / IST day · Advanced: 1 completed scan / rolling 60 min · Zero paid credits.",
     },
     scanQuota,
+    pinnedFormulaIds,
   };
 }
 export async function researchEvidence(subject: string, scanId: unknown) {
@@ -421,18 +445,21 @@ async function scanSource(
     asOf: new Date().toISOString(),
     lineage: [],
   });
-  if (definition.interval === "30m" || definition.interval === "1h") {
+  if (definition.interval === "30m") {
     const source = hasCsv || preset === "CUSTOM_CSV"
       ? "Private CSV"
       : preset === "ECB_DAILY" || (!preset && definition.universe === "ECB_DAILY")
         ? "ECB Daily Reference FX"
-        : "Connected Markets";
-    return unavailable(source, `${source} does not supply ${definition.interval} observations to Soul Scan. Choose Daily, Weekly, or Monthly.`);
+        : "Market";
+    return unavailable(source, "30-minute (30m) candles are not supported in Soul Scan. Choose 1 Hour, Daily, Weekly, or Monthly.");
   }
   if (preset === "CUSTOM_CSV" && !hasCsv)
     return unavailable("Private CSV", "Upload a dated daily CSV to scan this universe.");
-  if (preset === "CUSTOM_CSV" && definition.interval !== "1d")
-    return unavailable("Private CSV", "Select Daily for imported CSV bars.");
+  if ((hasCsv || preset === "CUSTOM_CSV") && definition.interval !== "1d")
+    return unavailable(
+      "Private CSV",
+      `Private CSV uploads supply daily bars and cannot run on ${definition.interval}. Select Daily (1d).`,
+    );
   if (hasCsv) {
     let parsed;
     try {
@@ -478,7 +505,7 @@ async function scanSource(
       return unavailable("Watchlist", "The selected watchlist is unavailable. Choose one of your active watchlists.");
     const saved = watchlist ? JSON.parse(watchlist.payload).items as string[] : [];
     if (!saved.length)
-      return unavailable("Watchlist", "Add instruments to your active watchlist before scanning.");
+      return unavailable("Watchlist", "Your Watchlist is empty. Add instruments to your active watchlist or switch Scan Source to Market.");
     const requested = new Set(definition.instrumentIds);
     const members = [...new Set(saved)].filter((id) => !requested.size || requested.has(id));
     const excluded = definition.instrumentIds.filter((id) => !saved.includes(id))
@@ -507,9 +534,21 @@ async function scanSource(
     provider: ecb ? "ECB" : "CONNECTED_MARKETS",
     instrumentIds: definition.instrumentIds,
   });
-  if (preset && !data.datasets.length && !data.excluded.length)
-    return unavailable(preset === "MCX_FUTURES" ? "MCX Futures" : preset === "INDIAN_EQUITIES" ? "Indian Equities" : "ECB Daily Reference FX",
-      "No authorized historical instruments are available for this universe.");
+  if (preset && !data.datasets.length && !data.excluded.length) {
+    const label =
+      preset === "MARKET"
+        ? "Market"
+        : preset === "MCX_FUTURES"
+          ? "MCX Futures"
+          : preset === "INDIAN_EQUITIES"
+            ? "Indian Equities"
+            : "ECB Daily Reference FX";
+    const reason =
+      data.diagnostics?.failureCategory === "SHARED_MARKET_DATA_UNCONFIGURED"
+        ? "Shared NSE, BSE, and MCX market history is not yet active for standard accounts on this deployment. Your scan quota was not charged."
+        : "Eligible historical market data is temporarily unavailable for this timeframe. Retry shortly; your scan quota was not charged.";
+    return unavailable(label, reason);
+  }
   const datasets =
     !ecb
       ? data.datasets.filter((d) => !d.instrumentId.startsWith("ECB:"))
@@ -531,10 +570,31 @@ export async function mutateWorkspace(
       throw new HttpError(400, (error as Error).message);
     }
     if (action !== "preflight-scan" && input.scanRequestVersion === SCAN_REQUEST_VERSION &&
-      (input.interval === "30m" || input.interval === "1h"))
-      throw new HttpError(422, "Intraday history is unavailable for Soul Scan. Choose Daily, Weekly, or Monthly.");
+      input.interval === "30m")
+      throw new HttpError(422, "30-minute candles are not supported in Soul Scan. Choose 1 Hour, Daily, Weekly, or Monthly.");
   }
   await rate(subject + ":x1write", 120, 60000);
+  if (action === "pin-formula" || action === "unpin-formula") {
+    const formulaId = typeof input.formulaId === "string" ? input.formulaId.trim() : "";
+    if (!VALID_CLASSIC_FORMULA_IDS.has(formulaId)) {
+      throw new HttpError(400, "Choose a valid Classic formula to pin.");
+    }
+    if (action === "pin-formula") {
+      await db
+        .prepare(
+          "INSERT OR IGNORE INTO v3_formula_pins (subject, formula_id, created_at) VALUES (?, ?, ?)",
+        )
+        .bind(subject, formulaId, now)
+        .run();
+    } else {
+      await db
+        .prepare("DELETE FROM v3_formula_pins WHERE subject=? AND formula_id=?")
+        .bind(subject, formulaId)
+        .run();
+    }
+    const pinnedFormulaIds = await listPinnedFormulaIds(db, subject);
+    return { ok: true, pinned: action === "pin-formula", formulaId, pinnedFormulaIds };
+  }
   if (action === "research-preferences") {
     if (typeof input.reusePersonal !== "boolean")
       throw new HttpError(400, "Choose a personal evidence preference.");

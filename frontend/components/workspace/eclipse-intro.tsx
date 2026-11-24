@@ -154,7 +154,7 @@ export default function EclipseIntro({
       data-x1-intro=""
       data-phase={phase}
       data-preview={preview ? "true" : "false"}
-      aria-label="Optional Strategic Souls introduction"
+      aria-label="Strategic Souls introduction"
       aria-live="off"
       style={{ pointerEvents: "none" }}
     >

@@ -13,15 +13,21 @@ import {
 
 export const RESEARCH_VERSION = "x2-research-1";
 export const SCAN_UNIVERSE_PRESETS = [
-  "INDIAN_EQUITIES", "MCX_FUTURES", "MY_WATCHLIST", "ECB_DAILY", "CUSTOM_CSV",
+  "MARKET",
+  "MY_WATCHLIST",
+  "INDIAN_EQUITIES",
+  "MCX_FUTURES",
+  "ECB_DAILY",
+  "CUSTOM_CSV",
 ] as const;
 export type ScanUniversePreset = (typeof SCAN_UNIVERSE_PRESETS)[number];
 export const SCAN_REQUEST_VERSION = 2;
-export const DEFAULT_SCAN_UNIVERSE_PRESET: ScanUniversePreset = "INDIAN_EQUITIES";
+export const DEFAULT_SCAN_UNIVERSE_PRESET: ScanUniversePreset = "MARKET";
 export const SCAN_UNIVERSE_LABEL: Record<ScanUniversePreset, string> = {
+  MARKET: "Market",
+  MY_WATCHLIST: "Watchlist",
   INDIAN_EQUITIES: "NSE / BSE Equities",
   MCX_FUTURES: "MCX Futures",
-  MY_WATCHLIST: "Watchlist",
   ECB_DAILY: "ECB Reference FX",
   CUSTOM_CSV: "Private Daily CSV",
 };
@@ -40,13 +46,13 @@ export function validateScanRequestScope(input: Record<string, unknown>) {
   if (input.scanRequestVersion !== SCAN_REQUEST_VERSION)
     throw new Error("Unsupported scan request version.");
   if (!isScanUniversePreset(input.universePreset))
-    throw new Error("Choose a scan market before continuing.");
+    throw new Error("Choose a scan source before continuing.");
   if (input.universe !== scanUniverseForPreset(input.universePreset))
-    throw new Error("The selected market and requested source do not agree.");
+    throw new Error("The selected source and requested dataset do not agree.");
   if (input.interval !== undefined && !["30m", "1h", "1d", "1wk", "1mo"].includes(String(input.interval)))
     throw new Error("Choose a supported scan timeframe.");
   if (input.universePreset !== "CUSTOM_CSV" && input.customCsv !== undefined)
-    throw new Error("Select Private CSV to submit imported bars.");
+    throw new Error("Custom bar uploads are not enabled for this scan source.");
   if (input.watchlistId !== undefined && (input.universePreset !== "MY_WATCHLIST" ||
     typeof input.watchlistId !== "string" || !/^[A-Za-z0-9_-]{1,80}$/.test(input.watchlistId)))
     throw new Error("Choose an active watchlist.");
@@ -59,6 +65,15 @@ export function matchesScanMarketPreset(
   expiry?: string | null,
   now = Date.now(),
 ) {
+  if (preset === "MARKET") {
+    if ((exchange === "NSE" || exchange === "BSE") && (assetClass === "EQUITY" || assetClass === "INDEX")) {
+      return true;
+    }
+    if (exchange === "MCX" && assetClass === "FUTURE") {
+      return !!expiry && Date.parse(`${expiry}T23:59:59+05:30`) >= now;
+    }
+    return false;
+  }
   if (preset === "INDIAN_EQUITIES")
     return (exchange === "NSE" || exchange === "BSE") && assetClass === "EQUITY";
   if (preset === "MCX_FUTURES")

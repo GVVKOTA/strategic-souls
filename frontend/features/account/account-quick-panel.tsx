@@ -18,9 +18,13 @@ import AvatarBadge from "./avatar-badge";
 
 export type SettingsSection =
   | "profile"
-  | "appearance"
-  | "notifications"
+  | "security"
   | "privacy"
+  | "notifications"
+  | "sessions"
+  | "appearance"
+  | "help"
+  | "about"
   | "account";
 
 type Props = {

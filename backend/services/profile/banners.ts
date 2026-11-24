@@ -371,3 +371,271 @@ export function resolveBannerPreset(id?: string | null): BannerPreset {
     typeof id === "string" ? id.trim().toLowerCase() : DEFAULT_BANNER_ID;
   return BANNER_PRESETS.find((b) => b.id === key) ?? BANNER_PRESETS[0];
 }
+
+// ============================================================================
+// DISTINCT CURATED PORTFOLIO BACKDROP LIBRARY (p01–p08)
+// Visually separate from Profile cover banners (b01–b08) and persisted independently.
+// ============================================================================
+
+export const DEFAULT_PORTFOLIO_BACKDROP_ID = "p01";
+
+const P01_SVG = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="pbg1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A1019"/>
+      <stop offset="55%" stop-color="#111824"/>
+      <stop offset="100%" stop-color="#07080B"/>
+    </linearGradient>
+    <linearGradient id="parc1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#76C0FF" stop-opacity="0.06"/>
+      <stop offset="50%" stop-color="#76C0FF" stop-opacity="0.46"/>
+      <stop offset="100%" stop-color="#94D0FF" stop-opacity="0.08"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="300" fill="url(#pbg1)"/>
+  <path d="M-40,250 Q260,70 520,175 T1000,90" fill="none" stroke="url(#parc1)" stroke-width="2"/>
+  <path d="M-40,285 Q300,120 560,210 T1000,140" fill="none" stroke="#76C0FF" stroke-opacity="0.24" stroke-width="1.2"/>
+  <circle cx="520" cy="175" r="3.5" fill="#94D0FF" fill-opacity="0.8"/>
+  <circle cx="770" cy="132" r="2.4" fill="#E8EDF2" fill-opacity="0.7"/>
+</svg>`);
+
+const P02_SVG = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="pbg2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#101319"/>
+      <stop offset="50%" stop-color="#171C24"/>
+      <stop offset="100%" stop-color="#080A0D"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="300" fill="url(#pbg2)"/>
+  <path d="M0,215 L220,155 L460,192 L720,120 L960,162 L960,300 L0,300 Z" fill="#1B2432" fill-opacity="0.75"/>
+  <path d="M0,248 L260,202 L510,235 L780,176 L960,212 L960,300 L0,300 Z" fill="#0F141D" fill-opacity="0.9"/>
+  <path d="M0,215 L220,155 L460,192 L720,120 L960,162" fill="none" stroke="#76C0FF" stroke-opacity="0.42" stroke-width="1.5"/>
+</svg>`);
+
+const P03_SVG = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" preserveAspectRatio="xMidYMid slice">
+  <rect width="960" height="300" fill="#090C11"/>
+  <g stroke="#76C0FF" stroke-opacity="0.14" stroke-width="1">
+    <path d="M0,60 L960,60 M0,120 L960,120 M0,180 L960,180 M0,240 L960,240"/>
+    <path d="M120,0 L120,300 M240,0 L240,300 M360,0 L360,300 M480,0 L480,300 M600,0 L600,300 M720,0 L720,300 M840,0 L840,300"/>
+  </g>
+  <polyline points="120,240 240,180 360,180 480,120 600,145 720,85 840,60" fill="none" stroke="#76C0FF" stroke-opacity="0.58" stroke-width="2"/>
+  <circle cx="720" cy="85" r="4" fill="#94D0FF"/>
+  <circle cx="840" cy="60" r="4" fill="#6EE7B7"/>
+</svg>`);
+
+const P04_SVG = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="pbg4" cx="80%" cy="24%" r="85%">
+      <stop offset="0%" stop-color="#1E2942"/>
+      <stop offset="50%" stop-color="#0F1524"/>
+      <stop offset="100%" stop-color="#07090F"/>
+    </radialGradient>
+  </defs>
+  <rect width="960" height="300" fill="url(#pbg4)"/>
+  <line x1="0" y1="196" x2="960" y2="196" stroke="#76C0FF" stroke-opacity="0.38" stroke-width="1.4"/>
+  <circle cx="760" cy="196" r="92" fill="none" stroke="#94D0FF" stroke-opacity="0.28" stroke-width="1.3"/>
+  <circle cx="760" cy="196" r="142" fill="none" stroke="#76C0FF" stroke-opacity="0.14" stroke-width="1"/>
+</svg>`);
+
+const P05_SVG = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="pbg5" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#071311"/>
+      <stop offset="55%" stop-color="#0C211C"/>
+      <stop offset="100%" stop-color="#070A0B"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="300" fill="url(#pbg5)"/>
+  <path d="M-20,90 C220,140 420,40 680,115 C800,150 900,110 980,85" fill="none" stroke="#6EE7B7" stroke-opacity="0.35" stroke-width="1.5"/>
+  <path d="M-20,155 C240,210 460,95 720,175 C830,208 910,168 980,142" fill="none" stroke="#34D399" stroke-opacity="0.26" stroke-width="1.3"/>
+  <path d="M-20,220 C260,265 490,165 760,232 C855,255 925,222 980,200" fill="none" stroke="#6EE7B7" stroke-opacity="0.18" stroke-width="1.1"/>
+</svg>`);
+
+const P06_SVG = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" preserveAspectRatio="xMidYMid slice">
+  <rect width="960" height="300" fill="#0B0D11"/>
+  <g fill="none" stroke="#CAD3DC" stroke-opacity="0.18" stroke-width="1.2">
+    <ellipse cx="260" cy="175" rx="220" ry="74"/>
+    <ellipse cx="260" cy="175" rx="160" ry="52"/>
+    <ellipse cx="260" cy="175" rx="102" ry="32"/>
+    <ellipse cx="730" cy="125" rx="210" ry="68" stroke="#76C0FF" stroke-opacity="0.24"/>
+    <ellipse cx="730" cy="125" rx="135" ry="42" stroke="#76C0FF" stroke-opacity="0.32"/>
+  </g>
+</svg>`);
+
+const P07_SVG = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="pbg7" cx="30%" cy="50%" r="80%">
+      <stop offset="0%" stop-color="#172742"/>
+      <stop offset="52%" stop-color="#0C1422"/>
+      <stop offset="100%" stop-color="#07080B"/>
+    </radialGradient>
+  </defs>
+  <rect width="960" height="300" fill="url(#pbg7)"/>
+  <circle cx="290" cy="150" r="108" fill="#07090F" stroke="#76C0FF" stroke-opacity="0.52" stroke-width="1.8"/>
+  <circle cx="290" cy="150" r="144" fill="none" stroke="#94D0FF" stroke-opacity="0.2" stroke-width="1.1" stroke-dasharray="5 7"/>
+  <line x1="435" y1="150" x2="900" y2="150" stroke="#76C0FF" stroke-opacity="0.22" stroke-width="1"/>
+</svg>`);
+
+const P08_SVG = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="pbg8" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#181C22"/>
+      <stop offset="55%" stop-color="#101318"/>
+      <stop offset="100%" stop-color="#07080A"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="300" fill="url(#pbg8)"/>
+  <polygon points="0,300 320,0 440,0 120,300" fill="#1F2530" fill-opacity="0.52"/>
+  <polygon points="480,300 780,0 910,0 610,300" fill="#182130" fill-opacity="0.46"/>
+  <line x1="320" y1="0" x2="0" y2="300" stroke="#CAD3DC" stroke-opacity="0.22" stroke-width="1"/>
+  <line x1="780" y1="0" x2="480" y2="300" stroke="#76C0FF" stroke-opacity="0.32" stroke-width="1.2"/>
+</svg>`);
+
+export const PORTFOLIO_BACKDROP_PRESETS: readonly BannerPreset[] = Object.freeze([
+  {
+    id: "p01",
+    name: "Carbon Meridian",
+    legacyName: "Carbon Meridian",
+    category: "Obsidian",
+    theme: "dark",
+    description: "Deep matte obsidian ledger surface with sweeping sapphire meridian arcs.",
+    artworkDataUrl: P01_SVG,
+    gradient: `url("${P01_SVG}"), linear-gradient(135deg, #0a1019 0%, #111824 55%, #07080b 100%)`,
+    accentLine: "rgba(118, 192, 255, 0.36)",
+    safeZoneScrim: "linear-gradient(180deg, rgba(7, 8, 11, 0.18) 0%, rgba(7, 8, 11, 0.72) 100%)",
+    badgeBg: "rgba(10, 14, 21, 0.84)",
+    badgeText: "#E8EDF2",
+  },
+  {
+    id: "p02",
+    name: "Vault Strata",
+    legacyName: "Vault Strata",
+    category: "Obsidian",
+    theme: "dark",
+    description: "Layered architectural slate planes framed by a subtle SS blue ridge.",
+    artworkDataUrl: P02_SVG,
+    gradient: `url("${P02_SVG}"), linear-gradient(135deg, #101319 0%, #171c24 50%, #080a0d 100%)`,
+    accentLine: "rgba(118, 192, 255, 0.32)",
+    safeZoneScrim: "linear-gradient(180deg, rgba(8, 10, 13, 0.16) 0%, rgba(8, 10, 13, 0.72) 100%)",
+    badgeBg: "rgba(12, 15, 20, 0.84)",
+    badgeText: "#E8EDF2",
+  },
+  {
+    id: "p03",
+    name: "Midnight Lattice",
+    legacyName: "Midnight Lattice",
+    category: "Quant Grid",
+    theme: "dark",
+    description: "Precision charcoal ledger grid with restrained upward signal trace.",
+    artworkDataUrl: P03_SVG,
+    gradient: `url("${P03_SVG}"), linear-gradient(135deg, #090c11 0%, #10151d 100%)`,
+    accentLine: "rgba(118, 192, 255, 0.38)",
+    safeZoneScrim: "linear-gradient(180deg, rgba(9, 12, 17, 0.16) 0%, rgba(9, 12, 17, 0.72) 100%)",
+    badgeBg: "rgba(9, 12, 17, 0.86)",
+    badgeText: "#E8EDF2",
+  },
+  {
+    id: "p04",
+    name: "Indigo Horizon",
+    legacyName: "Indigo Horizon",
+    category: "Celestial",
+    theme: "dark",
+    description: "Deep midnight indigo vault backdrop with calm concentric horizon arcs.",
+    artworkDataUrl: P04_SVG,
+    gradient: `url("${P04_SVG}"), radial-gradient(110% 90% at 80% 24%, #1e2942 0%, #0f1524 52%, #07090f 100%)`,
+    accentLine: "rgba(148, 208, 255, 0.36)",
+    safeZoneScrim: "linear-gradient(180deg, rgba(7, 9, 15, 0.16) 0%, rgba(7, 9, 15, 0.72) 100%)",
+    badgeBg: "rgba(11, 15, 26, 0.86)",
+    badgeText: "#E8EDF2",
+  },
+  {
+    id: "p05",
+    name: "Emerald Depth",
+    legacyName: "Emerald Depth",
+    category: "Quant Grid",
+    theme: "dark",
+    description: "Subtle nocturnal emerald bathymetry lines crafted for private wealth clarity.",
+    artworkDataUrl: P05_SVG,
+    gradient: `url("${P05_SVG}"), linear-gradient(135deg, #071311 0%, #0c211c 55%, #070a0b 100%)`,
+    accentLine: "rgba(110, 231, 183, 0.34)",
+    safeZoneScrim: "linear-gradient(180deg, rgba(7, 13, 12, 0.18) 0%, rgba(7, 10, 11, 0.72) 100%)",
+    badgeBg: "rgba(7, 19, 17, 0.86)",
+    badgeText: "#E8EDF2",
+  },
+  {
+    id: "p06",
+    name: "Basalt Topography",
+    legacyName: "Basalt Topography",
+    category: "Obsidian",
+    theme: "dark",
+    description: "Matte volcanic charcoal with quiet concentric elevation rings.",
+    artworkDataUrl: P06_SVG,
+    gradient: `url("${P06_SVG}"), linear-gradient(135deg, #0b0d11 0%, #141820 100%)`,
+    accentLine: "rgba(202, 211, 220, 0.28)",
+    safeZoneScrim: "linear-gradient(180deg, rgba(11, 13, 17, 0.16) 0%, rgba(11, 13, 17, 0.72) 100%)",
+    badgeBg: "rgba(11, 13, 17, 0.86)",
+    badgeText: "#E8EDF2",
+  },
+  {
+    id: "p07",
+    name: "Cobalt Eclipse",
+    legacyName: "Cobalt Eclipse",
+    category: "Celestial",
+    theme: "dark",
+    description: "Restrained dark sapphire orbital ring anchored on deep obsidian.",
+    artworkDataUrl: P07_SVG,
+    gradient: `url("${P07_SVG}"), radial-gradient(110% 90% at 30% 50%, #172742 0%, #0c1422 52%, #07080b 100%)`,
+    accentLine: "rgba(118, 192, 255, 0.42)",
+    safeZoneScrim: "linear-gradient(180deg, rgba(7, 8, 11, 0.16) 0%, rgba(7, 8, 11, 0.72) 100%)",
+    badgeBg: "rgba(10, 16, 28, 0.86)",
+    badgeText: "#E8EDF2",
+  },
+  {
+    id: "p08",
+    name: "Graphite Vault",
+    legacyName: "Graphite Vault",
+    category: "Obsidian",
+    theme: "dark",
+    description: "Brushed dark graphite geometric facets with clean silver-blue edge lighting.",
+    artworkDataUrl: P08_SVG,
+    gradient: `url("${P08_SVG}"), linear-gradient(135deg, #181c22 0%, #101318 55%, #07080a 100%)`,
+    accentLine: "rgba(202, 211, 220, 0.3)",
+    safeZoneScrim: "linear-gradient(180deg, rgba(10, 12, 16, 0.16) 0%, rgba(7, 8, 10, 0.72) 100%)",
+    badgeBg: "rgba(12, 14, 18, 0.86)",
+    badgeText: "#E8EDF2",
+  },
+]);
+
+export const PORTFOLIO_BACKDROP_IDS = new Set(
+  PORTFOLIO_BACKDROP_PRESETS.map((b) => b.id),
+);
+
+export function isValidPortfolioBackdropId(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const key = value.trim().toLowerCase();
+  return PORTFOLIO_BACKDROP_IDS.has(key) || BANNER_IDS.has(key);
+}
+
+export function resolvePortfolioBackdropPreset(
+  id?: string | null,
+): BannerPreset {
+  const key =
+    typeof id === "string"
+      ? id.trim().toLowerCase()
+      : DEFAULT_PORTFOLIO_BACKDROP_ID;
+  const match = PORTFOLIO_BACKDROP_PRESETS.find((b) => b.id === key);
+  if (match) return match;
+  // Backward compatibility for accounts with legacy b01–b08 portfolio backdrop saved.
+  const legacy = BANNER_PRESETS.find((b) => b.id === key);
+  if (legacy) return legacy;
+  return PORTFOLIO_BACKDROP_PRESETS[0];
+}

@@ -100,6 +100,27 @@ export const number = (value: number | null | undefined, digits = 2) =>
         maximumFractionDigits: digits,
         minimumFractionDigits: digits,
       }).format(value);
+
+/** Formats quantities concisely without trailing .0000 noise while preserving true fractional precision. */
+export const formatQuantity = (value: number | null | undefined, maxDigits = 4) =>
+  value === null || value === undefined || !Number.isFinite(value)
+    ? "—"
+    : new Intl.NumberFormat("en-IN", {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: maxDigits,
+      }).format(value);
+
+/** Formats ledger money cleanly (e.g. ₹10,049.00 for INR, USD 1,250.00 for others). */
+export const formatCurrency = (
+  value: number | null | undefined,
+  currency = "INR",
+) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  const sign = value < 0 ? "-" : "";
+  const formatted = number(Math.abs(value), 2);
+  if (currency.toUpperCase() === "INR") return `${sign}₹${formatted}`;
+  return `${sign}${currency.toUpperCase()} ${formatted}`;
+};
 export const day = (value: string | null | undefined) =>
   value
     ? new Intl.DateTimeFormat("en-IN", {
@@ -374,6 +395,7 @@ export type WorkspaceState = {
   scanHistoryNextBefore?: string | null;
   scanEventsHasMore?: boolean;
   scanQuota?: import("../../../backend/services/research/scan-quota").ScanQuotaSummary;
+  pinnedFormulaIds?: string[];
   portfolios: (WorkspaceRecord & { summary: PortfolioSummary })[];
   transactions: {
     id: string;

@@ -9,9 +9,6 @@ import {
   useState,
 } from "react";
 import {
-  Globe2,
-  SlidersHorizontal,
-  Users,
   ArrowUpRight,
   Check,
   AlertCircle,
@@ -19,12 +16,13 @@ import {
   Info,
   ArrowRight,
   FolderArchive,
-  Settings2,
   UserRound,
   MoreVertical,
   Bell,
   Search,
 } from "lucide-react";
+import { APP_RELEASE } from "../../../backend/services/release-meta";
+import type { ScanUniversePreset } from "../../../backend/services/research/research";
 import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import type {
   DensityPreference,
@@ -44,9 +42,10 @@ import AccountQuickPanel, {
   type SettingsSection,
 } from "../../features/account/account-quick-panel";
 import EclipseIntro from "./eclipse-intro";
+import GoFeedbackHost from "./go-feedback";
+import { IconCommunity, IconGlobal, IconStrategy } from "./ss-icons";
 import UniversalSearch from "./universal-search";
 import PrivateHoldingsTicker from "./private-ticker";
-const DataControl = lazy(() => import("../../features/global/data-control"));
 import AuthPanel, {
   type AuthSessionResponse,
 } from "../../features/auth/auth-panel";
@@ -106,13 +105,12 @@ export default function X1Workspace() {
     [initialFormula, setInitialFormula] = useState(""),
     [initialInstrument, setInitialInstrument] = useState(""),
     [initialUniversePreset, setInitialUniversePreset] = useState<
-      "INDIAN_EQUITIES" | "MCX_FUTURES" | "MY_WATCHLIST" | "ECB_DAILY" | "CUSTOM_CSV" | undefined
+      ScanUniversePreset | undefined
     >(undefined),
     [sharedFormula, setSharedFormula] = useState(""),
     [strategyPanel, setStrategyPanel] = useState("Soul Scan"),
     [busy, setBusy] = useState(false),
     [sessionError, setSessionError] = useState(""),
-    [dataControl, setDataControl] = useState(false),
     [isOwner, setIsOwner] = useState(false),
     [refreshing, setRefreshing] = useState(false),
     [motionPref, setMotionPref] = useState<MotionPreference>("system"),
@@ -567,20 +565,20 @@ export default function X1Workspace() {
     {
       name: "Global",
       index: "01",
-      icon: Globe2,
+      icon: IconGlobal,
       detail: "Markets & your world",
     },
     {
       name: "Strategy",
       index: "02",
-      icon: SlidersHorizontal,
-      detail: "Questions into evidence",
+      icon: IconStrategy,
+      detail: "Rules & Soul Scans",
     },
     {
       name: "Community",
       index: "03",
-      icon: Users,
-      detail: "Research, together",
+      icon: IconCommunity,
+      detail: "Souls, Chats & Rooms",
     },
   ] as const;
 
@@ -685,15 +683,6 @@ export default function X1Workspace() {
                 />
               </div>
               <div className="x51-topbar-right">
-                {isOwner && (
-                  <button
-                    className="x1-icon-button"
-                    aria-label="Data Control Center"
-                    onClick={() => setDataControl(true)}
-                  >
-                    <Settings2 size={18} />
-                  </button>
-                )}
                 <button
                   type="button"
                   className="x51-help-btn"
@@ -1149,6 +1138,10 @@ export default function X1Workspace() {
                     setCommunityTabNonce((n) => n + 1);
                     navigate("Community");
                   }}
+                  onOpenWatchlist={() => {
+                    navigate("Global");
+                    selectGlobalView("WATCHLISTS");
+                  }}
                   share={(formula) => {
                     setSharedFormula(formula);
                     setCommunityTab("groups");
@@ -1219,19 +1212,21 @@ export default function X1Workspace() {
               )}
             </div>
           </Suspense>
-          <footer className="x1-footer">
-            <span>STRATEGIC SOULS / GLOBAL VERTEX VECTORS</span>
-            <p>
-              Private research and education. Daily data is not a live trading
-              quote.
-            </p>
-            <div>
-              <a href="/trust">Privacy</a>
-              <a href="/terms">Terms</a>
-              <a href="/help">Help</a>
-              <button onClick={() => setAbout(true)}>About Strategic Souls</button>
-            </div>
-          </footer>
+          {!(view === "Community" && (communityTab === "chats" || mobileChatActive)) && (
+            <footer className="x1-footer">
+              <span>STRATEGIC SOULS / GLOBAL VERTEX VECTORS</span>
+              <p>
+                Private research and education. Market views are not live order
+                execution or investment advice.
+              </p>
+              <div>
+                <a href="/trust">Privacy</a>
+                <a href="/terms">Terms</a>
+                <a href="/help">Help</a>
+                <button onClick={() => setAbout(true)}>About Strategic Souls</button>
+              </div>
+            </footer>
+          )}
         </main>
       </div>
       <nav className="x1-mobile-nav" aria-label="Main mobile dashboards">
@@ -1250,6 +1245,7 @@ export default function X1Workspace() {
           </a>
         ))}
       </nav>
+      <GoFeedbackHost />
       {message && (
         <div
           className={"x1-toast " + (message.error ? "x1-toast-error" : "")}
@@ -1330,23 +1326,6 @@ export default function X1Workspace() {
               );
             }}
           />
-        </Modal>
-      )}
-      {dataControl && isOwner && (
-        <Modal
-          title="Data Control Center"
-          onClose={() => setDataControl(false)}
-        >
-          <Suspense
-            fallback={
-              <WorkspaceSkeleton
-                label="Opening Data Control Center…"
-                kind="panel"
-              />
-            }
-          >
-            <DataControl notify={notify} />
-          </Suspense>
         </Modal>
       )}
       {/* Left Section Navigation Drawer (Global exact 4-item contract / Strategy 2-item contract) */}
@@ -1510,12 +1489,12 @@ export default function X1Workspace() {
           ) : (
             <dl className="x1-details">
               <div>
-                <dt>9-Card Markets Grid</dt>
+                <dt>8-Tile Markets Grid</dt>
                 <dd>
-                  Always 3×3 across desktop and mobile. Tap Customize 9 to
-                  reorder or swap any canonical instrument. Quality badges
-                  separate official/delayed/not-connected feeds from exchange
-                  open/closed sessions.
+                  Displays the 8 core instruments (NIFTY 50, SENSEX, BANK NIFTY,
+                  NIFTY MIDCAP, GOLD, SILVER MCX, CL, and USD/INR) in a balanced
+                  2×4 desktop and 2-column mobile grid. Tap Reorder to arrange
+                  your view.
                 </dd>
               </div>
               <div>
@@ -1546,18 +1525,6 @@ export default function X1Workspace() {
             </dl>
           )}
           <div className="x1-actions">
-            {view === "Global" && (
-              <button
-                type="button"
-                className="x1-secondary"
-                onClick={() => {
-                  setContextHelpOpen(false);
-                  selectGlobalView("MARKET_EXPLORER");
-                }}
-              >
-                Data Coverage &amp; Sources
-              </button>
-            )}
             <button
               type="button"
               className="x1-secondary"
@@ -1566,7 +1533,7 @@ export default function X1Workspace() {
                 setAbout(true);
               }}
             >
-              About Strategic Souls X5.5
+              About {APP_RELEASE.productName} {APP_RELEASE.releaseTrack}
             </button>
           </div>
         </Modal>
@@ -1575,38 +1542,43 @@ export default function X1Workspace() {
       {about && (
         <Modal title="About Strategic Souls" onClose={() => setAbout(false)}>
           <p>
-            A financial research workspace and Soul Network by Global Vertex Vectors.
+            A financial research workspace and Soul Network by{" "}
+            {APP_RELEASE.organization}.
           </p>
           <dl className="x1-details">
             <div>
               <dt>Release</dt>
+              <dd>{APP_RELEASE.versionLabel}</dd>
+            </div>
+            <div>
+              <dt>Support</dt>
               <dd>
-                X5.5 · Reliability, Mobile &amp; Desktop Polish, Brand Language
-                Clarity &amp; Market-Data Readiness
+                <a href={`mailto:${APP_RELEASE.supportEmail}`}>
+                  {APP_RELEASE.supportEmailDisplay}
+                </a>
               </dd>
             </div>
             <div>
               <dt>Data</dt>
               <dd>
-                ECB daily FX, US Treasury daily yields, USGS earthquakes, NASA
-                EONET natural events, and NASA Blue/Black Marble historical
-                textures (public domain), plus owner-gated broker/EOD and
-                licensed news/conflict adapters when configured.
+                Official ECB daily FX, US Treasury yields, USGS earthquakes,
+                NASA EONET events, NASA Blue/Black Marble 3D Earth textures, and
+                configured exchange feeds when entitled.
               </dd>
             </div>
             <div>
               <dt>Authentication</dt>
               <dd>
-                Session-authenticated accounts with HttpOnly cookies. Private
-                portfolios, drafts, GRAVEYARD scans, and direct messages are
-                never exposed publicly.
+                Session-authenticated accounts with HttpOnly cookies, active
+                session controls, and password recovery. Private portfolios,
+                GRAVEYARD scans, and direct messages are never exposed publicly.
               </dd>
             </div>
             <div>
               <dt>Research</dt>
               <dd>
-                Deterministic formulas evaluated on eligible historical bars.
-                No fabricated live quotes or unverified probability claims.
+                Deterministic formulas evaluated strictly on completed historical
+                bars. Never fabricates prices, candles, or performance claims.
               </dd>
             </div>
           </dl>
