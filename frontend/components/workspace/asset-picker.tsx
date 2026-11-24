@@ -51,6 +51,12 @@ export function AssetPicker({ label, value, onChange, instruments, onlySectors =
         <div className="x1-form">
           <label htmlFor={queryId}>Search ticker, name or exchange</label>
           <input id={queryId} type="search" autoFocus value={query}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(false);
+            }}
             onChange={(event) => { setQuery(event.target.value); setVisible(30); }} />
           {!onlySectors && <div className="x1-actions" aria-label="Asset categories">{categories.map((item) =>
             <button key={item} type="button" className="x1-secondary" aria-pressed={category === item}
