@@ -74,11 +74,15 @@ function remoteMain() {
 async function smoke(version, sha, override) {
   const headers = override ? { "Cloudflare-Workers-Version-Overrides": `${worker}="${version}"` } : {};
   const get = (path) => fetch(origin + path, { headers, redirect: "error", signal: AbortSignal.timeout(15_000) });
-  const release = await get("/api/release");
-  verify(release.ok && /no-store/i.test(release.headers.get("Cache-Control") ?? ""), "Live build identity endpoint is unavailable or cacheable.");
-  const identity = await release.json();
-  verify(identity.buildCommit === sha && identity.workerVersionId === version && identity.provenance === "IDENTIFIED",
-    "The public hostname returned a different commit or Worker version.");
+  let identity;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const release = await get("/api/release");
+    verify(release.ok && /no-store/i.test(release.headers.get("Cache-Control") ?? ""), "Live build identity endpoint is unavailable or cacheable.");
+    identity = await release.json();
+    if (identity.buildCommit === sha && identity.workerVersionId === version && identity.provenance === "IDENTIFIED") break;
+    verify(attempt < 4, "The public hostname returned a different commit or Worker version after propagation checks.");
+    await new Promise((done) => setTimeout(done, 2_000));
+  }
 
   const [overview, home] = await Promise.all([get("/api/markets/overview"), get("/")]);
   verify(overview.ok && home.ok, "Overview or homepage smoke test failed.");

@@ -247,7 +247,7 @@ test("eight-card overview survives an absent adapter and unavailable official fe
   }
 });
 
-test("a timed-out sparkline leaves the genuine owner quote and never reaches members", async () => {
+test("malformed quotes and a timed-out sparkline leave the valid owner card private", async () => {
   let user = { userId: "alice" };
   let adapterCalls = 0;
   let timedOut = false;
@@ -260,11 +260,14 @@ test("a timed-out sparkline leaves the genuine owner quote and never reaches mem
         adapterCalls++;
         const { pathname } = new URL(url);
         if (pathname === "/internal/instruments") return Response.json({ instruments: [] });
-        if (pathname === "/internal/quote") return Response.json({ quotes: [{
+        if (pathname === "/internal/quote") return Response.json({ quotes: [null, {
+          id: "BSE:SENSEX", ltp: 456, quality: "MARKET_CLOSED_LAST", marketState: "UNRECOGNIZED",
+          sourceMode: "PRIVATE_OWNER_FEED", exchange: "BSE", currency: "INR", unit: "pts",
+        }, {
           id: "NSE:NIFTY", exchange: "NSE", segment: "INDEX", currency: "INR", unit: "pts",
           ltp: 123, change: null, changePct: null, prevClose: null, expiry: null, quality: "MARKET_CLOSED_LAST",
           sourceMode: "PRIVATE_OWNER_FEED", marketState: "CLOSED", isLive: false,
-          exchangeTimestampUTC: at, retrievalTimestampUTC: at, freshnessReason: "Fixture close",
+          exchangeTimestampUTC: at, retrievalTimestampUTC: at,
         }] });
         assert.equal(pathname, "/internal/candles");
         return new Promise((_, reject) => signal.addEventListener("abort", () => {
@@ -287,6 +290,8 @@ test("a timed-out sparkline leaves the genuine owner quote and never reaches mem
   assert.equal(cards.length, 8);
   const nifty = cards.find((card) => card.canonicalId === "NSE:NIFTY");
   assert.deepEqual([nifty.value, nifty.quality, nifty.sparkline, nifty.redistributable], [123, "LAST_AVAILABLE", null, false]);
+  assert.equal(nifty.reasonCode, "Exchange observation received.");
+  assert.equal(cards.find((card) => card.canonicalId === "BSE:SENSEX").value, null);
   assert.equal(timedOut, true);
   assert.equal(cards.filter((card) => card.value !== null).length, 1);
 });
