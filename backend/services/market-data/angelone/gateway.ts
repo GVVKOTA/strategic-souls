@@ -564,7 +564,7 @@ export async function gatewayCandles(options: {
     );
   }
   const interval: CandleInterval =
-    options.interval && ["1d", "1h", "15m", "5m"].includes(options.interval)
+    options.interval && ["1d", "1h", "30m", "15m", "5m"].includes(options.interval)
       ? options.interval
       : "1d";
   const days = Math.max(1, Math.min(

@@ -248,6 +248,8 @@ export default function EconomicCalendar({
         <label className="x53-cal-tz x52-zone-picker">
           <span className="x1-caption">Timezone</span>
           <select
+            id="ss-v31-calendar-tz"
+            name="calendarTimezone"
             aria-label="Calendar timezone"
             value={timeZone}
             onChange={(e) => setTimeZone(e.target.value)}

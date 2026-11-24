@@ -303,12 +303,13 @@ test("owner Classic coverage uses longer candle history and saves a daily scan o
     scanRequestVersion: 2, universePreset: "INDIAN_EQUITIES", universe: "ECB_DAILY",
   });
   assert.equal(wrongSource.status, 400);
-  const unsupportedRun = await call("run-scan", "NSE:SBIN", {
-    scanRequestVersion: 2, universePreset: "INDIAN_EQUITIES",
+  const unsupportedEcbIntraday = await call("run-scan", "ECB:USDINR", {
+    scanRequestVersion: 2, universePreset: "ECB_DAILY", universe: "ECB_DAILY",
     interval: "30m", requestId: webcrypto.randomUUID(),
   });
-  assert.equal(unsupportedRun.status, 422);
-  assert.equal((await env.DB.prepare("SELECT count(*) AS count FROM x51_scan_reservations").first()).count, 0);
+  assert.equal(unsupportedEcbIntraday.status, 503);
+  assert.match(unsupportedEcbIntraday.body.error, /30m|30-minute/i);
+  assert.equal((await env.DB.prepare("SELECT count(*) AS count FROM x51_scan_reservations WHERE state='COMPLETED'").first()).count, 0);
   assert.equal(requests.length, beforeScopeChecks);
 
   const short = await call("preflight-scan", "BSE:SBIN");
@@ -318,8 +319,8 @@ test("owner Classic coverage uses longer candle history and saves a daily scan o
   assert.match(unavailable.body.preflight.reason, /BROKER_TOTP_REQUIRED/);
 
   const requestCount = requests.length;
-  const intraday = await call("preflight-scan", "NSE:SBIN", { interval: "30m" });
-  assert.match(intraday.body.preflight.reason, /30m/);
+  const intraday = await call("preflight-scan", "ECB:USDINR", { universe: "ECB_DAILY", universePreset: "ECB_DAILY", interval: "30m" });
+  assert.match(intraday.body.preflight.reason, /30m|30-minute/i);
   const mislabeledCsv = await call("preflight-scan", "CSV:SBIN", {
     interval: "1h",
     customCsv: "symbol,date,close\nSBIN,2026-11-20,500",

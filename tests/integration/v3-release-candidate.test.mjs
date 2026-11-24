@@ -383,24 +383,24 @@ test("V3 S01/S05/S07: Unentitled ordinary user Market scan fails closed honestly
     },
   );
 
-  // Verify ZERO quota consumed on failed unentitled scan
+  // Verify ZERO quota consumed on failed unentitled scan (V3.1 Classic daily limit = 20)
   const quotaA = await scanQuotaMod.getScanQuotaSummary(DB, alice.userId);
   assert.equal(quotaA.classic.used, 0);
-  assert.equal(quotaA.classic.remaining, 8);
+  assert.equal(quotaA.classic.remaining, 20);
 
-  // 30m is strictly rejected with zero quota consumed
+  // 30m on daily-only ECB is rejected cleanly with zero quota consumed; unentitled Market also fails closed
   await assert.rejects(
     () =>
       workspaceMod.mutateWorkspace(bob.userId, {
         action: "run-scan",
         scanRequestVersion: 2,
         scanTier: "CLASSIC",
-        name: "Rejected 30m",
-        description: "30m timeframe must be rejected cleanly.",
+        name: "Rejected 30m ECB",
+        description: "30m timeframe on daily-only ECB must be rejected cleanly.",
         formula: "close > sma(close, 20)",
         mode: "SIMPLE",
-        universe: "CONNECTED_MARKETS",
-        universePreset: "MARKET",
+        universe: "ECB_DAILY",
+        universePreset: "ECB_DAILY",
         interval: "30m",
         partialPolicy: "ALLOW_UNKNOWN",
         outcome: { family: "POSITIVE_RETURN", horizon: 10, threshold: 0, target: 5, stop: 3, costBps: 0 },

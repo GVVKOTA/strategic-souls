@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -34,73 +34,215 @@ type Props = {
 
 const GUEST_STORAGE_KEY = "ss-v3-guest-market-grid-v2";
 
-function qualityBadgeLabel(quality: MarketOverviewCard["quality"]): string {
-  switch (quality) {
-    case "REAL_TIME":
-      return "Live";
-    case "DELAYED":
-      return "Delayed";
-    case "LAST_AVAILABLE":
-      return "Last available";
-    case "PUBLISHED_EOD":
-      return "EOD";
-    case "REFERENCE":
-      return "Daily reference";
-    case "STALE":
-      return "Stale";
-    case "RESTRICTED":
-    case "NOT_CONNECTED":
-    default:
-      return "Data unavailable";
-  }
+function cardIsGenuinelyLive(card: MarketOverviewCard): boolean {
+  return (
+    card.value !== null &&
+    card.quality === "REAL_TIME" &&
+    card.marketSession === "OPEN" &&
+    card.isLive !== false
+  );
 }
 
-function formatObservedShort(card: MarketOverviewCard): string {
-  if (!card.sourceObservedAtUTC) return "";
-  if (
-    card.sourceObservedPrecision === "DATE_ONLY" ||
-    !card.sourceObservedAtUTC.includes("T")
-  ) {
-    return card.sourceObservedAtUTC;
+function formatPriceWithUnit(card: MarketOverviewCard): string {
+  if (card.value === null || !Number.isFinite(card.value)) return "—";
+  if (card.assetClass === "FX") {
+    return `₹${number(card.value, 4)}`;
   }
-  const d = new Date(card.sourceObservedAtUTC);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (card.assetClass === "INDEX") {
+    return number(card.value, 2);
+  }
+  if (card.currency === "USD") {
+    return `$${number(card.value, 2)}`;
+  }
+  if (card.currency === "INR") {
+    return `₹${number(card.value, 2)}`;
+  }
+  return number(card.value, 2);
 }
 
-function MiniSpark({ values, positive }: { values: number[]; positive: boolean }) {
-  if (values.length < 2) return null;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  const pts = values
-    .map(
-      (v, i) =>
-        `${((i / (values.length - 1)) * 120).toFixed(1)},${(20 - ((v - min) / span) * 16).toFixed(1)}`,
-    )
+function formatCompactObservation(
+  card: MarketOverviewCard,
+  serverNowIso: string | null,
+): { text: string; statusKind: "live" | "closed" | "delayed" | "reference" | "stale" | "unavailable"; statusText: string } {
+  if (card.value === null || card.quality === "UNAVAILABLE" || card.quality === "NOT_CONNECTED" || card.quality === "RESTRICTED") {
+    return {
+      text: card.sessionLabel && card.sessionLabel !== "Market hours" ? card.sessionLabel : "Unavailable",
+      statusKind: "unavailable",
+      statusText: "Unavailable",
+    };
+  }
+
+  if (card.quality === "REFERENCE") {
+    const datePart = card.sourceObservedAtUTC
+      ? card.sourceObservedAtUTC.slice(0, 10)
+      : "";
+    return {
+      text: datePart ? `${datePart} · Reference` : "Reference",
+      statusKind: "reference",
+      statusText: "Reference",
+    };
+  }
+
+  const tz = card.marketTimezone || (["NSE", "BSE", "MCX"].includes(card.venue) ? "Asia/Kolkata" : "UTC");
+  const tzTag = tz === "Asia/Kolkata" ? "IST" : tz === "America/New_York" ? "ET" : "";
+  const rawObs = card.sourceObservedAtUTC;
+
+  let obsLabel = "";
+  if (rawObs) {
+    if (card.sourceObservedPrecision === "DATE_ONLY" || !rawObs.includes("T")) {
+      obsLabel = rawObs.slice(0, 10);
+    } else {
+      const obsDate = new Date(rawObs);
+      if (!Number.isNaN(obsDate.getTime())) {
+        const refDate = serverNowIso ? new Date(serverNowIso) : new Date();
+        const dayFmt = new Intl.DateTimeFormat("en-CA", {
+          timeZone: tz,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        });
+        const sameDay =
+          !Number.isNaN(refDate.getTime()) &&
+          dayFmt.format(obsDate) === dayFmt.format(refDate);
+        const timeStr = new Intl.DateTimeFormat("en-GB", {
+          timeZone: tz,
+          hour: "2-digit",
+          minute: "2-digit",
+          hourCycle: "h23",
+        }).format(obsDate);
+        if (sameDay) {
+          obsLabel = tzTag ? `${timeStr} ${tzTag}` : timeStr;
+        } else {
+          const shortDay = new Intl.DateTimeFormat("en-IN", {
+            timeZone: tz,
+            day: "numeric",
+            month: "short",
+          }).format(obsDate);
+          obsLabel = `${shortDay}, ${timeStr}`;
+        }
+      }
+    }
+  }
+
+  if (cardIsGenuinelyLive(card)) {
+    return {
+      text: obsLabel || "Live tick",
+      statusKind: "live",
+      statusText: "LIVE",
+    };
+  }
+  if (card.quality === "DELAYED") {
+    return {
+      text: obsLabel ? `${obsLabel} · Delayed` : "Delayed",
+      statusKind: "delayed",
+      statusText: "Delayed",
+    };
+  }
+  if (card.quality === "STALE") {
+    return {
+      text: obsLabel ? `${obsLabel} · Stale` : "Stale",
+      statusKind: "stale",
+      statusText: "Stale",
+    };
+  }
+  if (card.quality === "PUBLISHED_EOD") {
+    return {
+      text: obsLabel ? `${obsLabel} · EOD` : "EOD",
+      statusKind: "closed",
+      statusText: "EOD",
+    };
+  }
+  // Closed or prior-session verified observation — displays truthful date/time + Closed/Holiday suffix
+  const suffix = card.sessionLabel === "Holiday" ? "Holiday" : "Closed";
+  return {
+    text: obsLabel ? `${obsLabel} · ${suffix}` : suffix,
+    statusKind: "closed",
+    statusText: suffix,
+  };
+}
+
+function MiniSpark({
+  values,
+  windowReturnPct,
+}: {
+  values: number[];
+  windowReturnPct: number | null;
+}) {
+  const clean = values.filter((v) => Number.isFinite(v));
+  if (clean.length < 2) return null;
+  const min = Math.min(...clean);
+  const max = Math.max(...clean);
+  const flat = max - min <= 1e-12;
+  const span = flat ? 1 : max - min;
+  const pts = clean
+    .map((v, i) => {
+      const px = (i / (clean.length - 1)) * 120;
+      const py = flat ? 12 : 21 - ((v - min) / span) * 17;
+      return `${px.toFixed(1)},${py.toFixed(1)}`;
+    })
     .join(" ");
+  const delta =
+    windowReturnPct !== null
+      ? windowReturnPct
+      : clean[clean.length - 1] - clean[0];
+  const stroke =
+    delta > 1e-9 ? "#42CF91" : delta < -1e-9 ? "#EF666A" : "#929CA7";
   return (
     <svg
       className="x51-mcard-spark ss-v3-colored-svg"
-      viewBox="0 0 120 22"
+      viewBox="0 0 120 24"
       preserveAspectRatio="none"
       aria-hidden="true"
     >
       <polyline
         points={pts}
         fill="none"
-        stroke={positive ? "#6ee7b7" : "#a7b1bc"}
-        strokeWidth="1.6"
+        stroke={stroke}
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
         vectorEffect="non-scaling-stroke"
       />
     </svg>
   );
 }
 
+/** Single shared market clock shown ONLY while at least one entitled venue is genuinely LIVE. */
+function SharedLiveClock({ active }: { active: boolean }) {
+  const [clockText, setClockText] = useState("");
+
+  useEffect(() => {
+    if (!active) return;
+    const fmt = () =>
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Kolkata",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+      }).format(new Date()) + " IST";
+    queueMicrotask(() => setClockText(fmt()));
+    const timer = window.setInterval(() => setClockText(fmt()), 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+
+  if (!active || !clockText) return null;
+  return (
+    <span
+      className="ss-v31-live-clock"
+      aria-label={`Live market clock ${clockText}`}
+    >
+      <span className="ss-v31-live-dot" aria-hidden="true" />
+      <span>LIVE</span>
+      <span className="ss-v31-live-clock-time">{clockText}</span>
+    </span>
+  );
+}
+
 /**
- * Strategic Souls V3 — Strict 8-Tile Global Market Overview Grid.
+ * Strategic Souls V3.1 — Strict 8-Tile Global Market Overview Grid.
  * Displays NIFTY 50, SENSEX, BANK NIFTY, NIFTY MIDCAP, GOLD, SILVER MCX, CL, and USD/INR
- * in a balanced 2-col mobile / 4-col desktop grid with equal card heights and honest data states.
+ * in a balanced 2-col mobile / 4-col desktop grid with truthful timestamps and semantic sparklines.
  */
 export default function MarketOverviewGrid({
   authenticated,
@@ -126,6 +268,7 @@ export default function MarketOverviewGrid({
   const [saving, setSaving] = useState(false);
   const [saveBadge, setSaveBadge] = useState("");
   const overviewRequest = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!saveBadge) return;
@@ -134,11 +277,16 @@ export default function MarketOverviewGrid({
   }, [saveBadge]);
 
   const loadOverview = useCallback(async () => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     const request = ++overviewRequest.current;
     setLoading(true);
     setError("");
     try {
-      const res = await api<OverviewResponse>("/api/markets/overview");
+      const res = await api<OverviewResponse>("/api/markets/overview", undefined, {
+        signal: ctrl.signal,
+      });
       if (request !== overviewRequest.current) return;
       setAsOfUTC(res.asOf);
       setLayout(res.layout);
@@ -168,11 +316,12 @@ export default function MarketOverviewGrid({
       setCards(res.cards);
       setDraftIds(res.layout.ids);
     } catch (err) {
-      if (request === overviewRequest.current) {
+      if (request === overviewRequest.current && !ctrl.signal.aborted) {
+        // Preserve any previously valid cached cards rather than wiping them on refresh error
         setError(
           err instanceof Error
             ? err.message
-            : "Could not load market overview.",
+            : "Could not refresh market overview. Showing last loaded state.",
         );
       }
     } finally {
@@ -187,9 +336,15 @@ export default function MarketOverviewGrid({
     });
     return () => {
       alive = false;
+      abortRef.current?.abort();
       overviewRequest.current += 1;
     };
   }, [loadOverview]);
+
+  const hasAnyLiveFeed = useMemo(
+    () => cards.some((c) => cardIsGenuinelyLive(c)),
+    [cards],
+  );
 
   function openCustomize() {
     setDraftIds(
@@ -271,15 +426,16 @@ export default function MarketOverviewGrid({
   return (
     <section className="x53-dashboard-hero" aria-labelledby="x53-dashboard-title">
       <div className="x53-dashboard-head">
-        <h1 id="x53-dashboard-title" className="x53-dashboard-title">
+        <h1 id="x53-dashboard-title" className="x53-dashboard-title ss-v31-page-title">
           Strategic Dashboard
         </h1>
         <div className="x53-dashboard-bar">
           <div className="x53-dashboard-meta" aria-live="polite">
+            <SharedLiveClock active={hasAnyLiveFeed} />
             {saveBadge ? (
-              <span className="x54-ephemeral-pill">{saveBadge}</span>
+              <span className="x54-ephemeral-pill ss-v31-teal-pill">{saveBadge}</span>
             ) : asOfUTC ? (
-              <span className="x1-caption">
+              <span className="x1-caption" title="Latest retrieval check time (distinct from quote observation time)">
                 Checked{" "}
                 {new Date(asOfUTC).toLocaleTimeString([], {
                   hour: "2-digit",
@@ -301,7 +457,7 @@ export default function MarketOverviewGrid({
             </button>
             <button
               type="button"
-              className="x51-accent-btn x53-toolbar-btn"
+              className="x1-secondary x53-toolbar-btn ss-v31-teal-btn"
               onClick={openCustomize}
               aria-label="Reorder 8 market tiles"
             >
@@ -314,7 +470,14 @@ export default function MarketOverviewGrid({
 
       {error && (
         <div role="alert" className="x1-callout" style={{ marginBottom: 10 }}>
-          {error}
+          <span>{error}</span>
+          <button
+            type="button"
+            className="x1-text-button"
+            onClick={() => void loadOverview()}
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -337,13 +500,12 @@ export default function MarketOverviewGrid({
               >
                 <span className="x51-mcard-name">Loading…</span>
                 <span className="x51-mcard-price">—</span>
-                <span className="x51-mcard-badge">Checking</span>
+                <span className="ss-v31-mcard-time">Checking…</span>
               </div>
             );
           }
 
           const hasValue = card.value !== null && Number.isFinite(card.value);
-          const digits = card.assetClass === "FX" ? 4 : 2;
           const deltaClass =
             card.percentChange === null
               ? "is-flat"
@@ -352,56 +514,73 @@ export default function MarketOverviewGrid({
                 : card.percentChange < 0
                   ? "is-neg"
                   : "is-flat";
-          const isOfficial =
-            card.quality === "REFERENCE" ||
-            card.quality === "REAL_TIME" ||
-            card.quality === "PUBLISHED_EOD";
-          const observedShort = formatObservedShort(card);
+          const obs = formatCompactObservation(card, asOfUTC);
+          const sparkReturn = card.sparklineReturnPct ?? null;
+
+          const venueInName = card.name.toUpperCase().includes(`(${card.venue.toUpperCase()})`);
+          const cardTitle = `${card.name}${venueInName ? "" : ` (${card.venue})`}${card.contractLabel ? ` · ${card.contractLabel}` : ""} · ${obs.text}`;
 
           return (
             <button
               key={card.canonicalId}
               type="button"
               role="listitem"
-              className="x51-mcard ss-v3-mcard"
+              className="x51-mcard ss-v3-mcard ss-v31-mcard"
               onClick={() => onOpenAsset(card.canonicalId)}
-              title={`${card.name} (${card.venue}) · ${qualityBadgeLabel(card.quality)}${observedShort ? ` · As of ${observedShort}` : ""}`}
+              title={cardTitle}
             >
               <div className="x51-mcard-top">
                 <div style={{ minWidth: 0 }}>
                   <div className="x51-mcard-name">{card.shortLabel}</div>
-                  <div className="x51-mcard-venue">{card.venue}</div>
+                  <div className="x51-mcard-venue">
+                    {card.venue}
+                    {card.contractLabel ? ` · ${card.contractLabel}` : ""}
+                  </div>
                 </div>
-                {observedShort && (
-                  <span className="ss-v3-mcard-asof">{observedShort}</span>
+                {obs.statusKind === "live" && (
+                  <span className="ss-v31-live-badge" aria-label="Live quote">
+                    <span className="ss-v31-live-dot" aria-hidden="true" />
+                    <span>LIVE</span>
+                  </span>
                 )}
               </div>
 
-              <div className="x51-mcard-price">
-                {hasValue ? number(card.value, digits) : "—"}
+              <div className="x51-mcard-price ss-v31-mcard-price">
+                {formatPriceWithUnit(card)}
               </div>
 
-              {card.sparkline && card.sparkline.length >= 2 && (
-                <MiniSpark
-                  values={card.sparkline}
-                  positive={(card.percentChange ?? 0) >= 0}
-                />
-              )}
-
-              <div className={`x51-mcard-delta ${deltaClass}`}>
-                {card.percentChange !== null
-                  ? `${card.percentChange > 0 ? "+" : ""}${card.percentChange.toFixed(2)}${card.changeUnit}`
-                  : card.sessionLabel}
+              <div className="ss-v31-mcard-mid">
+                <span className={`x51-mcard-delta ss-v31-delta ${deltaClass}`}>
+                  {card.percentChange !== null
+                    ? `${card.percentChange > 0 ? "+" : ""}${card.percentChange.toFixed(2)}${card.changeUnit}`
+                    : hasValue
+                      ? "Change —"
+                      : "—"}
+                </span>
+                {card.sparkline && card.sparkline.length >= 2 && (
+                  <div className="ss-v31-spark-wrap">
+                    <MiniSpark
+                      values={card.sparkline}
+                      windowReturnPct={sparkReturn}
+                    />
+                  </div>
+                )}
               </div>
 
-              <div className="x51-mcard-foot">
+              <div className="ss-v31-mcard-foot">
                 <span
                   className={
-                    "x51-mcard-badge" + (isOfficial ? " is-official" : "")
+                    "ss-v31-mcard-time" +
+                    (obs.statusKind === "unavailable" ? " is-muted" : "")
                   }
                 >
-                  {qualityBadgeLabel(card.quality)}
+                  {obs.text}
                 </span>
+                {card.sparklinePeriodLabel && card.sparkline && card.sparkline.length >= 2 && (
+                  <span className="ss-v31-spark-period" aria-hidden="true">
+                    {card.sparklinePeriodLabel}
+                  </span>
+                )}
               </div>
             </button>
           );
@@ -452,7 +631,7 @@ export default function MarketOverviewGrid({
                     setDragIndex(null);
                   }}
                   className={
-                    "x51-slot-item" + (activeSlot === idx ? " is-selected" : "")
+                    "x51-slot-item" + (activeSlot === idx ? " is-selected ss-v31-teal-selected" : "")
                   }
                   onClick={() => setActiveSlot(idx)}
                 >

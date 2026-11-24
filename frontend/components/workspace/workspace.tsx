@@ -506,6 +506,61 @@ export default function X1Workspace() {
     }
   }
 
+  const [watchlistToggleBusy, setWatchlistToggleBusy] = useState(false);
+
+  const primaryWatchlist =
+    workspace?.records.find((r) => r.kind === "watchlist") ?? null;
+  const primaryWatchlistItems = primaryWatchlist?.payload.items ?? [];
+
+  async function toggleAssetWatchlist(instrumentId: string) {
+    if (!(authenticated === true && accepted === true)) {
+      setAsset("");
+      setAuthModal("signin");
+      return;
+    }
+    if (watchlistToggleBusy) return;
+    setWatchlistToggleBusy(true);
+    try {
+      const targetList = primaryWatchlist;
+      if (!targetList) {
+        const created = await api<{ id: string }>("/api/x1/workspace", {
+          action: "create-list",
+          name: "Watchlist",
+          requestId: crypto.randomUUID(),
+        });
+        await api("/api/x1/workspace", {
+          action: "list-items",
+          id: created.id,
+          version: 1,
+          items: [instrumentId],
+        });
+        await reload();
+        notify("Added to Watchlist.");
+        return;
+      }
+      const existing = targetList.payload.items ?? [];
+      const has = existing.includes(instrumentId);
+      const nextItems = has
+        ? existing.filter((x) => x !== instrumentId)
+        : [...existing, instrumentId];
+      await api("/api/x1/workspace", {
+        action: "list-items",
+        id: targetList.id,
+        version: targetList.version,
+        items: nextItems,
+      });
+      await reload();
+      notify(has ? "Removed from Watchlist." : "Saved to Watchlist.");
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : "Could not update Watchlist.",
+        true,
+      );
+    } finally {
+      setWatchlistToggleBusy(false);
+    }
+  }
+
   const analyze = (
     formula = "close > sma(close, 20)",
     instrumentId = "",
@@ -732,6 +787,8 @@ export default function X1Workspace() {
                 <label className="x51-body-search">
                   <Search size={16} aria-hidden="true" />
                   <input
+                    id="ss-v31-community-search"
+                    name="communitySearch"
                     type="search"
                     aria-label="Search Body ID or Souls"
                     value={communitySearch}
@@ -1117,6 +1174,8 @@ export default function X1Workspace() {
                     "strategy-" +
                     initialFormula +
                     "-" +
+                    initialInstrument +
+                    "-" +
                     (initialUniversePreset ?? "") +
                     "-" +
                     strategyPanel
@@ -1286,6 +1345,9 @@ export default function X1Workspace() {
           data={data}
           authenticated={isSignedIn && accepted === true}
           isOwner={isOwner}
+          inWatchlist={primaryWatchlistItems.includes(asset)}
+          watchlistBusy={watchlistToggleBusy}
+          onToggleWatchlist={(sym) => void toggleAssetWatchlist(sym)}
           eventContext={assetEventContext}
           onSelectAsset={(nextId) => {
             setAssetEventContext(null);
@@ -1458,7 +1520,8 @@ export default function X1Workspace() {
                 <dd>
                   50 deterministic technical presets across RSI, Moving
                   Averages, MACD, Volatility &amp; Breakouts, and Trend &amp;
-                  Volume. 8 completed scans per IST civil day (00:00 IST reset).
+                  Volume — with live parameter and expression editing. 20
+                  completed scans per IST civil day (00:00 IST reset).
                 </dd>
               </div>
               <div>

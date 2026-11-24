@@ -141,8 +141,12 @@ export function assetName(id: string, data: MarketSnapshot | null) {
 }
 export function AssetDialog({
   id,
+  data,
   authenticated = true,
   isOwner = false,
+  inWatchlist = false,
+  watchlistBusy = false,
+  onToggleWatchlist,
   eventContext = null,
   onSelectAsset,
   onRequireAuth,
@@ -154,6 +158,9 @@ export function AssetDialog({
   data: MarketSnapshot | null;
   authenticated?: boolean;
   isOwner?: boolean;
+  inWatchlist?: boolean;
+  watchlistBusy?: boolean;
+  onToggleWatchlist?: (instrumentId: string) => void;
   eventContext?: EconomicEventChartContext | null;
   onSelectAsset?: (nextId: string) => void;
   onRequireAuth?: () => void;
@@ -161,28 +168,65 @@ export function AssetDialog({
   analyze: (formula?: string, instrumentId?: string) => void;
   notify: Notice;
 }) {
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    sheetRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+      previousFocusRef.current?.focus?.();
+    };
+  }, [onClose]);
+
   return (
-    <Modal title="Asset research" onClose={onClose}>
-      <Suspense
-        fallback={
-          <WorkspaceSkeleton
-            label="Loading asset research terminal…"
-            kind="terminal"
-          />
-        }
+    <div
+      className="ss-v31-asset-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={sheetRef}
+        className="ss-v31-asset-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${assetName(id, data)} research`}
+        tabIndex={-1}
       >
-        <AssetTerminal
-          id={id}
-          authenticated={authenticated}
-          isOwner={isOwner}
-          eventContext={eventContext}
-          onSelectAsset={onSelectAsset}
-          onRequireAuth={onRequireAuth}
-          onAnalyze={analyze}
-          notify={notify}
-        />
-      </Suspense>
-    </Modal>
+        <Suspense
+          fallback={
+            <WorkspaceSkeleton
+              label="Loading asset research terminal…"
+              kind="terminal"
+            />
+          }
+        >
+          <AssetTerminal
+            id={id}
+            authenticated={authenticated}
+            isOwner={isOwner}
+            inWatchlist={inWatchlist}
+            watchlistBusy={watchlistBusy}
+            onToggleWatchlist={onToggleWatchlist}
+            eventContext={eventContext}
+            onSelectAsset={onSelectAsset}
+            onRequireAuth={onRequireAuth}
+            onClose={onClose}
+            onAnalyze={analyze}
+            notify={notify}
+          />
+        </Suspense>
+      </div>
+    </div>
   );
 }
 

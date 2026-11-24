@@ -46,7 +46,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const user = await getAuthenticatedUser(request);
     if (!user) {
-      throw new HttpError(401, "Sign in to save your customized 9-card market grid.");
+      throw new HttpError(401, "Sign in to save your customized 8-card market grid.");
     }
     protectMutation(request, 8192);
     const input = await body(request, 8192);

@@ -367,6 +367,101 @@ export function getAllIndianExchangeSessions(
   };
 }
 
+/** 2026 CME Globex NYMEX Energy full-day holidays (YYYY-MM-DD in America/New_York). */
+const NYMEX_FULL_HOLIDAYS_2026: Readonly<Record<string, string>> = {
+  "2026-01-01": "New Year's Day",
+  "2026-04-03": "Good Friday",
+  "2026-12-25": "Christmas Day",
+};
+
+/**
+ * Computes schedule-based session status for NYMEX WTI Crude (CME Globex energy hours)
+ * using IANA America/New_York DST rules:
+ * - Opens Sunday 18:00 ET, closes Friday 17:00 ET
+ * - Daily maintenance break 17:00–18:00 ET Mon–Thu
+ * Never uses NYSE cash-equity hours or Indian equity hours.
+ */
+export function getNymexGlobexSession(nowMs = Date.now()): {
+  state: ExchangeSessionState;
+  label: string;
+  timezone: string;
+  reason: string;
+} {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(nowMs));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const year = get("year");
+  const dateEt = `${year}-${get("month")}-${get("day")}`;
+  const weekday = get("weekday");
+  const minutes = Number(get("hour")) * 60 + Number(get("minute"));
+
+  if (year !== "2026") {
+    return {
+      state: "SCHEDULE_UNKNOWN",
+      label: "Schedule unverified",
+      timezone: "America/New_York",
+      reason: "Verified NYMEX Globex holiday schedule covers 2026 only.",
+    };
+  }
+  const holiday = NYMEX_FULL_HOLIDAYS_2026[dateEt];
+  if (holiday) {
+    return {
+      state: "HOLIDAY",
+      label: `Closed (${holiday})`,
+      timezone: "America/New_York",
+      reason: `NYMEX Globex is closed for ${holiday}.`,
+    };
+  }
+  if (weekday === "Sat") {
+    return {
+      state: "CLOSED",
+      label: "Closed (weekend)",
+      timezone: "America/New_York",
+      reason: "NYMEX Globex WTI Crude is closed on Saturday.",
+    };
+  }
+  if (weekday === "Sun") {
+    const open = minutes >= 18 * 60;
+    return {
+      state: open ? "OPEN" : "CLOSED",
+      label: open ? "Globex open" : "Closed (weekend)",
+      timezone: "America/New_York",
+      reason: open
+        ? "NYMEX Globex electronic energy session open (Sun 18:00–Fri 17:00 ET)."
+        : "NYMEX Globex opens Sunday at 18:00 ET.",
+    };
+  }
+  if (weekday === "Fri") {
+    const open = minutes < 17 * 60;
+    return {
+      state: open ? "OPEN" : "CLOSED",
+      label: open ? "Globex open" : "Market closed",
+      timezone: "America/New_York",
+      reason: open
+        ? "NYMEX Globex electronic energy session open until 17:00 ET."
+        : "NYMEX Globex closed for the weekend at 17:00 ET.",
+    };
+  }
+  // Mon–Thu: open except daily 17:00–18:00 ET maintenance window
+  const maintenance = minutes >= 17 * 60 && minutes < 18 * 60;
+  return {
+    state: maintenance ? "CLOSED" : "OPEN",
+    label: maintenance ? "Daily break" : "Globex open",
+    timezone: "America/New_York",
+    reason: maintenance
+      ? "NYMEX Globex daily 60-minute maintenance break (17:00–18:00 ET)."
+      : "NYMEX Globex electronic energy session open (Mon–Fri, 17:00–18:00 ET daily break).",
+  };
+}
+
 export function qualityDisplayLabel(quality: DataQualityState): string {
   switch (quality) {
     case "VERIFIED_REAL_LIVE":

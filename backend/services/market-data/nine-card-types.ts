@@ -83,6 +83,11 @@ export type MarketOverviewCard = {
   previousClose: number | null;
   changeUnit: "%" | "bp";
   sparkline: number[] | null;
+  sparklinePeriodLabel?: string | null;
+  sparklineReturnPct?: number | null;
+  contractLabel?: string | null;
+  marketTimezone?: string;
+  isLive?: boolean;
   provider: string;
   sourceUrl: string;
   sourceObservedAtUTC: string | null;

@@ -1,6 +1,6 @@
 /**
- * Strategic Souls X5.1 — Atomic, Race-Safe Scan Quota State Machine.
- * - Classic: 8 SUCCESSFULLY COMPLETED scans per account per Asia/Kolkata civil day (resets 00:00 IST).
+ * Strategic Souls V3.1 — Atomic, Race-Safe Scan Quota State Machine.
+ * - Classic: 20 SUCCESSFULLY COMPLETED scans per account per Asia/Kolkata civil day (resets 00:00 IST).
  * - Advanced: 1 SUCCESSFULLY COMPLETED scan per rolling 60 minutes (no midnight reset).
  * - Failed/blocked runs release reservation and NEVER deduct user allowance.
  * - Valid completed scans with zero matching stocks DO count toward allowance.
@@ -10,7 +10,7 @@ import { HttpError } from "../../middleware/security";
 
 export type QuotaDb = ReturnType<typeof database>;
 
-export const CLASSIC_DAILY_LIMIT = 8;
+export const CLASSIC_DAILY_LIMIT = 20;
 export const ADVANCED_ROLLING_LIMIT = 1;
 export const ADVANCED_ROLLING_WINDOW_MS = 60 * 60 * 1000;
 export const RESERVATION_LEASE_MS = 90 * 1000;

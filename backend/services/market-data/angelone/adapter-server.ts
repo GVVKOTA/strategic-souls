@@ -305,7 +305,7 @@ export async function startMarketAdapterServer(options: {
           });
           return;
         }
-        if (!["1d", "1h", "15m", "5m"].includes(intervalRaw)) {
+        if (!["1d", "1h", "30m", "15m", "5m"].includes(intervalRaw)) {
           sendJson(res, 400, { error: "Unsupported candle interval.", errorCode: "UPSTREAM_ERROR" });
           return;
         }

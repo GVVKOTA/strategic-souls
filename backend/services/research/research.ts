@@ -651,7 +651,7 @@ export function preflightResearch(
     results: result,
     accounting,
     batchPlan,
-    quota: "30 daily scan requests; zero paid credits",
+    quota: "Classic: 20 completed scans / IST day · Advanced: 1 / rolling 60 min · Zero paid credits",
     sourceMode:
       definition.universe === "ECB_DAILY"
         ? "DAILY REFERENCE"

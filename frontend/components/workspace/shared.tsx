@@ -388,9 +388,22 @@ export type ScanRun = {
     knownAtPolicy: string;
   };
 };
+export type SavedPatternRecord = {
+  id: string;
+  kind: "pattern-template";
+  name: string;
+  version: number;
+  payload: {
+    points: { x: number; y: number }[];
+    windowBars?: number;
+    minPatternFit?: number;
+  };
+  created_at: string;
+};
 export type WorkspaceState = {
   records: WorkspaceRecord[];
   archivedRecords?: WorkspaceRecord[];
+  savedPatterns?: SavedPatternRecord[];
   scanHistoryHasMore?: boolean;
   scanHistoryNextBefore?: string | null;
   scanEventsHasMore?: boolean;

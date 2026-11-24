@@ -2,17 +2,20 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
+  BookmarkPlus,
   Check,
-  ChevronRight,
   Compass,
   Info,
+  Layers,
   PenTool,
   RefreshCw,
+  RotateCcw,
   Send,
   SlidersHorizontal,
   Sparkles,
+  X,
 } from "lucide-react";
-import { compileFormula } from "../../../backend/engines/scan";
+import { compileFormula, requiredScanBars } from "../../../backend/engines/scan";
 import {
   CLASSIC_50_PRESETS,
   CLASSIC_CATEGORY_COUNTS,
@@ -82,10 +85,26 @@ type Props = {
 type StrategyTab = "scan" | "lab";
 type ScanTierMode = "CLASSIC" | "ADVANCED";
 type AdvancedEntryMode = "BUILD" | "DISCOVER" | "DRAW";
-type UserScanSource = "MY_WATCHLIST" | "MARKET";
-type UserTimeframe = "1h" | "1d" | "1wk" | "1mo";
+type UserTimeframe = "30m" | "1h" | "1d" | "1wk" | "1mo";
+type ScanPhase =
+  | "IDLE"
+  | "RUNNING"
+  | "COMPLETE"
+  | "NO_MATCHES"
+  | "BLOCKED"
+  | "FAILED"
+  | "CANCELED";
+
+type FormulaParamToken = {
+  id: string;
+  label: string;
+  value: string;
+  start: number;
+  end: number;
+};
 
 const TIMEFRAME_OPTIONS: readonly { value: UserTimeframe; label: string }[] = [
+  { value: "30m", label: "30m" },
   { value: "1h", label: "1 Hour" },
   { value: "1d", label: "Daily" },
   { value: "1wk", label: "Weekly" },
@@ -93,11 +112,19 @@ const TIMEFRAME_OPTIONS: readonly { value: UserTimeframe; label: string }[] = [
 ];
 
 const TIMEFRAME_LABEL: Record<string, string> = {
+  "30m": "30m",
   "1h": "1 Hour",
   "1d": "Daily",
   "1wk": "Weekly",
   "1mo": "Monthly",
 };
+
+const EXTRA_SCOPES: readonly { id: ScanUniversePreset; label: string }[] = [
+  { id: "INDIAN_EQUITIES", label: "NSE / BSE" },
+  { id: "MCX_FUTURES", label: "MCX Futures" },
+  { id: "ECB_DAILY", label: "ECB FX (Daily)" },
+  { id: "CUSTOM_CSV", label: "Private CSV" },
+];
 
 const DEFAULT_OUTCOME: OutcomeDefinition = {
   family: "POSITIVE_RETURN",
@@ -125,25 +152,75 @@ function defaultSoulNameForPreset(preset: ClassicPreset): string {
 
 function sourceBadgeLabel(rawPreset?: string, rawSource?: string): string {
   if (rawPreset === "MY_WATCHLIST" || rawSource === "Watchlist") return "Watchlist";
-  if (
-    rawPreset === "MARKET" ||
-    rawPreset === "INDIAN_EQUITIES" ||
-    rawPreset === "MCX_FUTURES"
-  ) {
-    return "Market";
-  }
+  if (rawPreset === "MARKET") return "Market";
   if (rawPreset && rawPreset in SCAN_UNIVERSE_LABEL) {
     return SCAN_UNIVERSE_LABEL[rawPreset as ScanUniversePreset];
   }
-  return "Market";
+  return rawSource || "Market";
 }
 
-function formatScanBarTimestamp(iso: string | null | undefined, interval?: string): string {
+function formatScanBarTimestamp(
+  iso: string | null | undefined,
+  interval?: string,
+): string {
   if (!iso) return "";
-  if (interval === "1h" || (iso.includes("T") && !iso.endsWith("T00:00:00.000Z"))) {
+  if (
+    interval === "30m" ||
+    interval === "1h" ||
+    (iso.includes("T") && !iso.endsWith("T00:00:00.000Z"))
+  ) {
     return moment(iso);
   }
   return iso.slice(0, 10);
+}
+
+/**
+ * Extracts editable numeric tokens from a Classic AST formula expression so users can
+ * adjust indicator periods or thresholds directly without losing AST syntax.
+ */
+function extractFormulaParameters(formula: string): FormulaParamToken[] {
+  const out: FormulaParamToken[] = [];
+  const regex = /\b\d+(?:\.\d+)?\b/g;
+  let match: RegExpExecArray | null;
+  let idx = 0;
+  while ((match = regex.exec(formula)) !== null && out.length < 4) {
+    const start = match.index;
+    const end = start + match[0].length;
+    const before = formula.slice(Math.max(0, start - 24), start).toLowerCase();
+    // Skip numbers embedded inside identifier names like rsi14 or sma20
+    if (start > 0 && /[a-z_]/i.test(formula[start - 1])) continue;
+    let label = `Param ${idx + 1}`;
+    if (/ema\([^)]*,\s*$/.test(before)) label = "EMA period";
+    else if (/sma\([^)]*,\s*$/.test(before)) label = "SMA period";
+    else if (/rsi\([^)]*,\s*$/.test(before)) label = "RSI period";
+    else if (/atr\(\s*$/.test(before)) label = "ATR period";
+    else if (/highest\([^)]*,\s*$/.test(before)) label = "High lookback";
+    else if (/lowest\([^)]*,\s*$/.test(before)) label = "Low lookback";
+    else if (/bb(?:upper|lower)\([^)]*,\s*$/.test(before)) label = "BB param";
+    else if (/macd\([^)]*,\s*$/.test(before)) label = "MACD period";
+    else if (/change\([^)]*,\s*$/.test(before)) label = "Lookback";
+    else if (/[<>!=]=?\s*$/.test(before)) label = "Threshold";
+    else if (/[*/+-]\s*$/.test(before)) label = "Multiplier";
+    out.push({
+      id: `p-${idx}-${start}`,
+      label,
+      value: match[0],
+      start,
+      end,
+    });
+    idx++;
+  }
+  return out;
+}
+
+function replaceFormulaToken(
+  formula: string,
+  token: FormulaParamToken,
+  nextRaw: string,
+): string {
+  const trimmed = nextRaw.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return formula;
+  return formula.slice(0, token.start) + trimmed + formula.slice(token.end);
 }
 
 export function FinancialCalendar() {
@@ -182,6 +259,7 @@ export default function Strategy({
   onOpenCommunityWeb,
   onOpenWatchlist,
   initialFormula,
+  initialInstrument,
   initialUniversePreset,
   initialPanel,
 }: Props) {
@@ -191,16 +269,17 @@ export default function Strategy({
   const [scanTier, setScanTier] = useState<ScanTierMode>("CLASSIC");
   const [advancedEntry, setAdvancedEntry] = useState<AdvancedEntryMode>("BUILD");
 
-  // Classic preset state (default-ready in 1 click)
+  // Classic preset + editable formula state (presets themselves stay immutable!)
   const initialClassic = CLASSIC_50_PRESETS[0];
   const [classicPresetId, setClassicPresetId] = useState<string>(initialClassic.id);
+  const [classicFormula, setClassicFormula] = useState<string>(initialClassic.formula);
   const [formulaPickerOpen, setFormulaPickerOpen] = useState(false);
   const [formulaQuery, setFormulaQuery] = useState("");
   const [formulaCategory, setFormulaCategory] = useState<"ALL" | ClassicPresetCategory>("ALL");
   const [expandedFormulaId, setExpandedFormulaId] = useState<string | null>(null);
   const [activeInfoOpen, setActiveInfoOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
-  const [policyOpen, setPolicyOpen] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
 
   // Per-user D1 formula pins (optimistic with rollback)
   const [pinnedIds, setPinnedIds] = useState<string[]>(
@@ -208,7 +287,7 @@ export default function Strategy({
   );
   const [pinningId, setPinningId] = useState<string | null>(null);
 
-  // Soul name (sensible prefilled editable default so 1 click runs immediately)
+  // Soul name (sensible prefilled editable default; persists custom typing across preset switches)
   const [name, setName] = useState<string>(defaultSoulNameForPreset(initialClassic));
   const [nameEditedManually, setNameEditedManually] = useState(false);
 
@@ -219,20 +298,37 @@ export default function Strategy({
   const [discoverBlueprint, setDiscoverBlueprint] = useState<DiscoverBlueprint | null>(null);
   const [discoverLoading, setDiscoverLoading] = useState(false);
 
-  // Scan Source (EXACTLY Watchlist or Market; default Market)
-  const [scanSource, setScanSource] = useState<UserScanSource>(
-    initialUniversePreset === "MY_WATCHLIST" ? "MY_WATCHLIST" : "MARKET",
+  // Scan Source (Market default; Watchlist + expandable scopes + single-asset deep-link scope)
+  const [scopedInstrument, setScopedInstrument] = useState<string>(
+    initialInstrument?.trim() ?? "",
+  );
+  const [scanSource, setScanSource] = useState<ScanUniversePreset>(
+    initialInstrument?.trim().startsWith("ECB:")
+      ? "ECB_DAILY"
+      : initialUniversePreset ?? "MARKET",
+  );
+  const [moreScopesOpen, setMoreScopesOpen] = useState(
+    !!initialUniversePreset &&
+      initialUniversePreset !== "MARKET" &&
+      initialUniversePreset !== "MY_WATCHLIST",
   );
   const [watchlistId, setWatchlistId] = useState<string>("");
+  const [customCsv, setCustomCsv] = useState<string>("");
 
-  // Timeframe (EXACTLY 1 Hour, Daily, Weekly, Monthly; default Daily)
+  // Timeframe (30m, 1h, Daily, Weekly, Monthly; default Daily)
   const [interval, setInterval] = useState<UserTimeframe>("1d");
 
-  // Scan execution & results state
+  // Explicit scan execution lifecycle & cancellation
+  const [scanPhase, setScanPhase] = useState<ScanPhase>("IDLE");
   const [busy, setBusy] = useState(false);
   const [scanError, setScanError] = useState("");
   const [selectedScanId, setSelectedScanId] = useState<string | null>(null);
   const [justCompletedId, setJustCompletedId] = useState<string | null>(null);
+  const [runningContext, setRunningContext] = useState<{
+    name: string;
+    sourceLabel: string;
+    timeframeLabel: string;
+  } | null>(null);
 
   // GRAVEYARD filters & actions
   const [graveyardFilter, setGraveyardFilter] = useState<
@@ -245,8 +341,16 @@ export default function Strategy({
 
   const lock = useRef(false);
   const runSeqRef = useRef(0);
+  const scanAbortRef = useRef<AbortController | null>(null);
   const reviewKeyRef = useRef<{ sig: string; id: string } | null>(null);
   const resultsRef = useRef<HTMLElement>(null);
+
+  // Cleanup any in-flight scan abort controller on unmount
+  useEffect(() => {
+    return () => {
+      scanAbortRef.current?.abort();
+    };
+  }, []);
 
   // Sync D1 formula pins from workspace payload
   useEffect(() => {
@@ -273,6 +377,28 @@ export default function Strategy({
     };
   }, [initialPanel]);
 
+  // Sync single-asset scope when launched via "Scan Asset"
+  useEffect(() => {
+    const clean = (initialInstrument ?? "").trim();
+    if (!clean) return;
+    let alive = true;
+    queueMicrotask(() => {
+      if (!alive) return;
+      setSection("scan");
+      setScopedInstrument(clean);
+      if (clean.startsWith("ECB:")) {
+        setScanSource("ECB_DAILY");
+        setMoreScopesOpen(true);
+        setInterval((cur) => (cur === "30m" || cur === "1h" ? "1d" : cur));
+      } else {
+        setScanSource("MARKET");
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [initialInstrument]);
+
   // Handle "Try this formula" handoff from Community (never auto-runs!)
   useEffect(() => {
     const clean = initialFormula.trim();
@@ -285,6 +411,7 @@ export default function Strategy({
       if (matched) {
         setScanTier("CLASSIC");
         setClassicPresetId(matched.id);
+        setClassicFormula(matched.formula);
         setName(defaultSoulNameForPreset(matched));
         setNameEditedManually(false);
       } else {
@@ -327,16 +454,31 @@ export default function Strategy({
     return { pinned, unpinned, total: matches.length };
   }, [formulaQuery, formulaCategory, pinnedSet]);
 
+  const isClassicCustomized =
+    classicFormula.trim() !== activePreset.formula.trim();
+
+  const editableClassicParams = useMemo(
+    () => extractFormulaParameters(classicFormula),
+    [classicFormula],
+  );
+
   const effectiveFormula =
-    scanTier === "CLASSIC" ? activePreset.formula : advancedFormula;
+    scanTier === "CLASSIC" ? classicFormula : advancedFormula;
 
   const formulaCompile = useMemo(() => {
     try {
-      return { ok: true as const, compiled: compileFormula(effectiveFormula) };
+      const compiled = compileFormula(effectiveFormula);
+      return {
+        ok: true as const,
+        compiled,
+        minBars: requiredScanBars(compiled.ast),
+      };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message };
     }
   }, [effectiveFormula]);
+
+  const dailyOnlyScope = scanSource === "ECB_DAILY" || scanSource === "CUSTOM_CSV";
 
   // Select latest scan cleanly, prioritizing explicit completed scan
   const scans = useMemo(() => workspace?.scans ?? [], [workspace?.scans]);
@@ -363,6 +505,18 @@ export default function Strategy({
     return () => window.clearTimeout(timer);
   }, [justCompletedId]);
 
+  function invalidatePendingRun() {
+    if (busy) {
+      runSeqRef.current += 1;
+      scanAbortRef.current?.abort();
+      scanAbortRef.current = null;
+      lock.current = false;
+      setBusy(false);
+      setRunningContext(null);
+      setScanPhase("CANCELED");
+    }
+  }
+
   function selectMode(nextTier: ScanTierMode) {
     setScanTier(nextTier);
     setScanError("");
@@ -379,9 +533,70 @@ export default function Strategy({
 
   function applyClassicPreset(preset: ClassicPreset) {
     setClassicPresetId(preset.id);
+    setClassicFormula(preset.formula);
     setScanError("");
     if (!nameEditedManually) {
       setName(defaultSoulNameForPreset(preset));
+    }
+  }
+
+  function handleScopeChange(nextScope: ScanUniversePreset) {
+    invalidatePendingRun();
+    setScanSource(nextScope);
+    setScanError("");
+    if (
+      (nextScope === "ECB_DAILY" || nextScope === "CUSTOM_CSV") &&
+      (interval === "30m" || interval === "1h")
+    ) {
+      setInterval("1d");
+    }
+  }
+
+  async function saveClassicCopy() {
+    if (!authenticated) {
+      onRequireAuth?.();
+      return;
+    }
+    if (!formulaCompile.ok) {
+      setScanError(formulaCompile.error);
+      return;
+    }
+    if (savingDraft) return;
+    const cleanName =
+      name.trim().length >= 3
+        ? name.trim()
+        : `${defaultSoulNameForPreset(activePreset)} Copy`;
+    setSavingDraft(true);
+    try {
+      await api("/api/x1/workspace", {
+        action: "save-scan-draft",
+        requestId: crypto.randomUUID(),
+        definition: {
+          name: cleanName,
+          description: `Saved private rule copy based on ${activePreset.label}: ${classicFormula}`.slice(
+            0,
+            1900,
+          ),
+          formula: classicFormula,
+          mode: "SIMPLE",
+          universe: scanUniverseForPreset(scanSource),
+          universePreset: scanSource,
+          interval,
+          partialPolicy: "ALLOW_UNKNOWN",
+          outcome: DEFAULT_OUTCOME,
+          instrumentIds: scopedInstrument ? [scopedInstrument] : [],
+        },
+      });
+      await reload();
+      triggerGoFeedback("Formula saved", `draft-${crypto.randomUUID()}`, true);
+      notify("Saved private formula copy to your account.");
+    } catch (err) {
+      notify(
+        err instanceof Error ? err.message : "Could not save formula copy.",
+        true,
+      );
+    } finally {
+      setSavingDraft(false);
     }
   }
 
@@ -413,7 +628,6 @@ export default function Strategy({
         true,
       );
     } catch (err) {
-      // Roll back optimistic state cleanly on failure
       setPinnedIds(pinnedIds);
       notify(
         err instanceof Error ? err.message : "Could not update formula pin.",
@@ -455,6 +669,14 @@ export default function Strategy({
     }
   }
 
+  function handleCancelScan() {
+    if (!busy) return;
+    invalidatePendingRun();
+    setScanError(
+      "Stopped waiting in this tab. If the server had already finished saving the scan, it will appear in GRAVEYARD after refresh.",
+    );
+  }
+
   async function executeScan() {
     if (!authenticated) {
       onRequireAuth?.();
@@ -470,20 +692,27 @@ export default function Strategy({
     if (cleanName !== name) setName(cleanName);
 
     if (scanSource === "MY_WATCHLIST" && watchlistItems.length === 0) {
+      setScanPhase("BLOCKED");
       setScanError(
         "Your Watchlist is empty. Add instruments to your Watchlist or switch Scan Source to Market.",
       );
       return;
     }
+    if (scanSource === "CUSTOM_CSV" && !customCsv.trim()) {
+      setScanPhase("BLOCKED");
+      setScanError("Paste or upload dated daily CSV bars before running a Private CSV scan.");
+      return;
+    }
 
     if (!formulaCompile.ok) {
+      setScanPhase("BLOCKED");
       setScanError(formulaCompile.error);
       return;
     }
 
     const autoDescription =
       scanTier === "CLASSIC"
-        ? `${activePreset.label}: ${activePreset.shortDescription}`
+        ? `${activePreset.label}${isClassicCustomized ? " (Customized)" : ""}: ${effectiveFormula}`
         : `Advanced rule evaluation for ${cleanName}: ${effectiveFormula}`.slice(0, 1900);
 
     const requestDef: ResearchDefinition = {
@@ -502,35 +731,56 @@ export default function Strategy({
       interval,
       partialPolicy: "ALLOW_UNKNOWN",
       outcome: DEFAULT_OUTCOME,
-      instrumentIds: [],
+      instrumentIds: scopedInstrument ? [scopedInstrument] : [],
     };
 
     try {
       validateResearch(requestDef as unknown as Record<string, unknown>);
     } catch (err) {
+      setScanPhase("BLOCKED");
       setScanError((err as Error).message);
       return;
     }
 
     lock.current = true;
     setBusy(true);
+    setScanPhase("RUNNING");
     setScanError("");
+    setRunningContext({
+      name: requestDef.name,
+      sourceLabel: scopedInstrument || sourceBadgeLabel(scanSource),
+      timeframeLabel: TIMEFRAME_LABEL[interval] ?? interval,
+    });
     const seq = ++runSeqRef.current;
+    scanAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    scanAbortRef.current = ctrl;
 
     try {
-      const res = await api<{ id: string }>("/api/x1/workspace", {
-        action: "run-scan",
-        scanRequestVersion: SCAN_REQUEST_VERSION,
-        scanTier,
-        origin: scanTier === "CLASSIC" ? "CLASSIC" : advancedEntry,
-        ...requestDef,
-        requestId: crypto.randomUUID(),
-      });
+      const res = await api<{
+        id: string;
+        results?: { matches?: number };
+      }>(
+        "/api/strategy/scan",
+        {
+          action: "run-scan",
+          scanRequestVersion: SCAN_REQUEST_VERSION,
+          scanTier,
+          origin: scanTier === "CLASSIC" ? "CLASSIC" : advancedEntry,
+          ...requestDef,
+          ...(scanSource === "CUSTOM_CSV" ? { customCsv } : {}),
+          requestId: crypto.randomUUID(),
+        },
+        { signal: ctrl.signal },
+      );
       if (seq !== runSeqRef.current) return;
       await reload();
       if (seq !== runSeqRef.current) return;
       setSelectedScanId(res.id);
       setJustCompletedId(res.id);
+      setScanPhase(
+        (res.results?.matches ?? 0) > 0 ? "COMPLETE" : "NO_MATCHES",
+      );
       notify("Scan completed and archived to GRAVEYARD.");
     } catch (err) {
       if (seq !== runSeqRef.current) return;
@@ -538,11 +788,19 @@ export default function Strategy({
         err instanceof Error
           ? err.message
           : "Scan could not complete right now. Please try again.";
+      setScanPhase(
+        /allowance|not yet active|unavailable|requires|does not publish/i.test(msg)
+          ? "BLOCKED"
+          : "FAILED",
+      );
       setScanError(msg);
       notify(msg, true);
     } finally {
-      lock.current = false;
-      setBusy(false);
+      if (seq === runSeqRef.current) {
+        lock.current = false;
+        setBusy(false);
+        setRunningContext(null);
+      }
     }
   }
 
@@ -595,6 +853,215 @@ export default function Strategy({
   }, [scans, graveyardFilter, graveyardQuery]);
 
   const quota = workspace?.scanQuota;
+  const classicRemaining = quota?.classic.remaining ?? 20;
+  const classicLimit = quota?.classic.limit ?? 20;
+  const isDrawMode = scanTier === "ADVANCED" && advancedEntry === "DRAW";
+
+  const scopeAndTimeframeControls = (
+    <>
+      {/* Scan Source: Market default + Watchlist + expandable scopes */}
+      <div className="x54-field-group">
+        <div className="x54-field-label">
+          <span>Scan Source</span>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span className="x1-caption">
+              {scopedInstrument
+                ? scopedInstrument
+                : scanSource === "MARKET"
+                  ? "NSE · BSE · MCX"
+                  : scanSource === "MY_WATCHLIST"
+                    ? `${watchlistItems.length} symbol${watchlistItems.length === 1 ? "" : "s"}`
+                    : SCAN_UNIVERSE_LABEL[scanSource]}
+            </span>
+            <button
+              type="button"
+              className="x1-text-button"
+              style={{ padding: "2px 4px", fontSize: "0.78rem" }}
+              aria-expanded={moreScopesOpen}
+              onClick={() => setMoreScopesOpen((v) => !v)}
+            >
+              {moreScopesOpen ? "Fewer scopes" : "More scopes"}
+            </button>
+          </div>
+        </div>
+
+        {scopedInstrument && (
+          <div className="ss-v31-scope-chip" role="status">
+            <span>Scoped to <strong>{scopedInstrument}</strong></span>
+            <button
+              type="button"
+              className="x1-text-button"
+              style={{ padding: "2px 6px", fontSize: "0.78rem" }}
+              onClick={() => {
+                setScopedInstrument("");
+                if (scanSource === "ECB_DAILY") setScanSource("MARKET");
+              }}
+            >
+              Scan all
+            </button>
+          </div>
+        )}
+
+        <div
+          className="ss-v3-source-grid"
+          role="group"
+          aria-label="Primary scan source"
+        >
+          <button
+            type="button"
+            aria-pressed={scanSource === "MY_WATCHLIST"}
+            className={
+              "ss-v3-seg-btn" +
+              (scanSource === "MY_WATCHLIST" ? " is-active" : "")
+            }
+            onClick={() => handleScopeChange("MY_WATCHLIST")}
+          >
+            Watchlist
+          </button>
+          <button
+            type="button"
+            aria-pressed={scanSource === "MARKET"}
+            className={
+              "ss-v3-seg-btn" + (scanSource === "MARKET" ? " is-active" : "")
+            }
+            onClick={() => handleScopeChange("MARKET")}
+          >
+            Market
+          </button>
+        </div>
+
+        {moreScopesOpen && (
+          <div
+            className="ss-v31-extra-scopes"
+            role="group"
+            aria-label="Additional scan scopes"
+          >
+            {EXTRA_SCOPES.map((sc) => (
+              <button
+                key={sc.id}
+                type="button"
+                aria-pressed={scanSource === sc.id}
+                className={
+                  "ss-v31-scope-pill" + (scanSource === sc.id ? " is-active" : "")
+                }
+                onClick={() => handleScopeChange(sc.id)}
+              >
+                {sc.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {scanSource === "MY_WATCHLIST" && watchlists.length > 1 && (
+          <select
+            id="ss-v31-watchlist-select"
+            name="watchlistId"
+            aria-label="Choose watchlist"
+            className="x54-name-input"
+            value={activeWatchlist?.id ?? ""}
+            onChange={(e) => setWatchlistId(e.target.value)}
+          >
+            {watchlists.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name} ({w.payload.items?.length ?? 0})
+              </option>
+            ))}
+          </select>
+        )}
+
+        {scanSource === "MY_WATCHLIST" && watchlistItems.length === 0 && (
+          <div className="x54-quota-popover" role="note">
+            <div>
+              Your Watchlist is empty. Add instruments to scan your Watchlist, or
+              switch directly to Market.
+            </div>
+            <div className="x1-actions" style={{ marginTop: 8, gap: 8 }}>
+              <button
+                type="button"
+                className="x1-secondary"
+                onClick={() => handleScopeChange("MARKET")}
+              >
+                Switch to Market
+              </button>
+              {onOpenWatchlist && (
+                <button
+                  type="button"
+                  className="x1-secondary"
+                  onClick={onOpenWatchlist}
+                >
+                  Open Watchlist
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {scanSource === "CUSTOM_CSV" && (
+          <div className="x54-field-group" style={{ marginTop: 6 }}>
+            <label className="x1-caption" htmlFor="ss-v31-custom-csv">
+              Paste daily OHLCV CSV (columns: symbol,date,open,high,low,close,volume)
+            </label>
+            <textarea
+              id="ss-v31-custom-csv"
+              name="customCsv"
+              rows={3}
+              className="x54-name-input"
+              style={{
+                fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
+                fontSize: "0.8rem",
+              }}
+              value={customCsv}
+              onChange={(e) => setCustomCsv(e.target.value)}
+              placeholder="symbol,date,open,high,low,close,volume"
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Timeframe: 30m, 1 Hour, Daily, Weekly, Monthly */}
+      <div className="x54-field-group">
+        <div className="x54-field-label">
+          <span>Timeframe</span>
+          {dailyOnlyScope && (
+            <span className="x1-caption">Daily bars only for this source</span>
+          )}
+        </div>
+        <div
+          className="ss-v31-tf-grid"
+          role="group"
+          aria-label="Scan timeframe"
+        >
+          {TIMEFRAME_OPTIONS.map((tf) => {
+            const disabled =
+              dailyOnlyScope && (tf.value === "30m" || tf.value === "1h");
+            return (
+              <button
+                key={tf.value}
+                type="button"
+                disabled={disabled}
+                aria-pressed={interval === tf.value}
+                title={
+                  disabled
+                    ? `${tf.label} requires an intraday exchange feed`
+                    : tf.label
+                }
+                className={
+                  "ss-v3-seg-btn" + (interval === tf.value ? " is-active" : "")
+                }
+                onClick={() => {
+                  invalidatePendingRun();
+                  setInterval(tf.value);
+                  setScanError("");
+                }}
+              >
+                {tf.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  );
 
   return (
     <div className="x53-focused-stack">
@@ -634,7 +1101,7 @@ export default function Strategy({
         </Suspense>
       ) : (
         <>
-          {/* 1. STRATEGY BUILDER */}
+          {/* 1. SOUL SCAN BUILDER */}
           <section
             className="ss-v3-strategy-card"
             aria-labelledby="ss-v3-strategy-heading"
@@ -645,45 +1112,25 @@ export default function Strategy({
                   <IconStrategy size={20} />
                 </span>
                 <div>
-                  <h2 id="ss-v3-strategy-heading">Strategy Builder</h2>
-                  <p className="x1-caption" style={{ margin: 0 }}>
-                    Pick a rule, source, and timeframe — then tap Run Scan.
+                  <h2 id="ss-v3-strategy-heading" className="ss-v31-heading-white">
+                    Soul Scan
+                  </h2>
+                  <p className="ss-v31-quota-inline" aria-live="polite">
+                    {scanTier === "CLASSIC"
+                      ? `${classicRemaining} of ${classicLimit} scans left today`
+                      : `Advanced: ${quota?.advanced.remaining ?? 1}/${quota?.advanced.limit ?? 1} available this hour`}
                   </p>
                 </div>
               </div>
-              <div className="x1-actions" style={{ gap: 6 }}>
-                <button
-                  type="button"
-                  className="x54-quota-info-btn"
-                  onClick={() => setGuideOpen(true)}
-                >
-                  <Info size={14} aria-hidden="true" />
-                  <span>Guide</span>
-                </button>
-                <button
-                  type="button"
-                  className="x54-quota-info-btn"
-                  aria-expanded={policyOpen}
-                  onClick={() => setPolicyOpen((v) => !v)}
-                >
-                  <span>Limits</span>
-                </button>
-              </div>
+              <button
+                type="button"
+                className="x54-quota-info-btn"
+                onClick={() => setGuideOpen(true)}
+              >
+                <Info size={14} aria-hidden="true" />
+                <span>Guide &amp; Limits</span>
+              </button>
             </div>
-
-            {policyOpen && (
-              <div className="x54-quota-popover" role="note">
-                <strong>Daily scan allowance</strong>
-                <div style={{ marginTop: 4 }}>
-                  {quota
-                    ? `Classic: ${quota.classic.remaining}/${quota.classic.limit} remaining today · Advanced: ${quota.advanced.remaining}/${quota.advanced.limit} available this hour.`
-                    : "Classic: 8 scans per IST day · Advanced: 1 scan per rolling 60 minutes."}
-                </div>
-                <div className="x1-caption" style={{ marginTop: 4 }}>
-                  Failed or unavailable scans never consume your scan allowance.
-                </div>
-              </div>
-            )}
 
             {/* 2. Classic / Advanced */}
             <div
@@ -714,13 +1161,14 @@ export default function Strategy({
               </button>
             </div>
 
-            {/* 3. Soul Name (prefilled editable default) */}
+            {/* 3. Soul Name (prefilled editable default; never blocks or steals focus) */}
             <div className="x54-field-group">
               <label className="x54-field-label" htmlFor="ss-v3-soul-name">
                 <span>Soul Name</span>
               </label>
               <input
                 id="ss-v3-soul-name"
+                name="soulName"
                 type="text"
                 className="x54-name-input"
                 value={name}
@@ -733,7 +1181,7 @@ export default function Strategy({
               />
             </div>
 
-            {/* 4. Formula Picker (Classic) OR Rule Tree + Expression (Advanced) */}
+            {/* 4. Classic Editable Formula + Full-Width Browse Button OR Advanced Mode */}
             {scanTier === "CLASSIC" ? (
               <div className="x54-field-group">
                 <div className="x54-field-label">
@@ -743,13 +1191,11 @@ export default function Strategy({
                     50 Classic rules
                   </span>
                 </div>
-                <div className="ss-v3-formula-row">
-                  <button
-                    type="button"
-                    className="x54-formula-card"
-                    onClick={() => setFormulaPickerOpen(true)}
-                  >
-                    <div className="x54-formula-card-main">
+
+                {/* Active Rule Summary Card with compact Pin & Info icons */}
+                <div className="ss-v31-classic-box">
+                  <div className="ss-v31-classic-box-head">
+                    <div className="ss-v31-classic-meta">
                       <div className="x54-formula-card-head">
                         <span className="x54-formula-rank-badge">
                           {activePreset.rankCode}
@@ -765,54 +1211,152 @@ export default function Strategy({
                         <span className="x56-rule-type-pill">
                           {activePreset.ruleType}
                         </span>
+                        {isClassicCustomized && (
+                          <span className="ss-v31-teal-pill">Customized</span>
+                        )}
                       </div>
                     </div>
-                    <span className="x54-formula-card-cue">
-                      <span>Browse</span>
-                      <ChevronRight size={14} aria-hidden="true" />
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className={
-                      "ss-v3-pin-btn" +
-                      (pinnedSet.has(activePreset.id) ? " is-pinned" : "")
-                    }
-                    aria-label={
-                      pinnedSet.has(activePreset.id)
-                        ? `Unpin ${activePreset.label}`
-                        : `Pin ${activePreset.label}`
-                    }
-                    aria-pressed={pinnedSet.has(activePreset.id)}
-                    disabled={pinningId === activePreset.id}
-                    onClick={() => void togglePin(activePreset.id)}
-                  >
-                    <IconPin size={18} active={pinnedSet.has(activePreset.id)} />
-                  </button>
-                  <button
-                    type="button"
-                    className="ss-v3-pin-btn"
-                    aria-label="Inspect formula details"
-                    aria-expanded={activeInfoOpen}
-                    onClick={() => setActiveInfoOpen((v) => !v)}
-                  >
-                    <Info size={18} aria-hidden="true" />
-                  </button>
-                </div>
-                {activeInfoOpen && (
-                  <div className="x56-formula-drawer" role="note">
-                    <p className="x56-formula-meaning" style={{ margin: 0 }}>
-                      {activePreset.shortDescription}
-                    </p>
-                    <code className="x56-formula-drawer-code">
-                      {activePreset.formula}
-                    </code>
-                    <div className="x56-formula-drawer-grid">
-                      <span>Minimum bars: {activePreset.minBars}</span>
-                      <span>Requires: {activePreset.prerequisites.join(", ")}</span>
+                    <div className="ss-v31-classic-icon-col">
+                      <button
+                        type="button"
+                        className={
+                          "ss-v3-pin-btn" +
+                          (pinnedSet.has(activePreset.id) ? " is-pinned" : "")
+                        }
+                        aria-label={
+                          pinnedSet.has(activePreset.id)
+                            ? `Unpin ${activePreset.label}`
+                            : `Pin ${activePreset.label}`
+                        }
+                        aria-pressed={pinnedSet.has(activePreset.id)}
+                        disabled={pinningId === activePreset.id}
+                        onClick={() => void togglePin(activePreset.id)}
+                      >
+                        <IconPin size={17} active={pinnedSet.has(activePreset.id)} />
+                      </button>
+                      <button
+                        type="button"
+                        className="ss-v3-pin-btn"
+                        aria-label="Inspect formula details"
+                        aria-expanded={activeInfoOpen}
+                        onClick={() => setActiveInfoOpen((v) => !v)}
+                      >
+                        <Info size={17} aria-hidden="true" />
+                      </button>
                     </div>
                   </div>
-                )}
+
+                  {/* Quick numeric parameter controls synced live to the actual AST expression */}
+                  {editableClassicParams.length > 0 && (
+                    <div
+                      className="ss-v31-param-grid"
+                      aria-label="Quick formula parameters"
+                    >
+                      {editableClassicParams.map((param) => (
+                        <label
+                          key={param.id}
+                          className="ss-v31-param-field"
+                          htmlFor={`ss-v31-${param.id}`}
+                        >
+                          <span>{param.label}</span>
+                          <input
+                            id={`ss-v31-${param.id}`}
+                            name={param.id}
+                            type="number"
+                            step="any"
+                            value={param.value}
+                            onChange={(e) => {
+                              const nextVal = e.target.value;
+                              if (/^\d+(?:\.\d+)?$/.test(nextVal)) {
+                                setClassicFormula((cur) =>
+                                  replaceFormulaToken(cur, param, nextVal),
+                                );
+                                setScanError("");
+                              }
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Editable validated Classic Formula input */}
+                  <div className="ss-v31-formula-editor">
+                    <div className="ss-v31-formula-editor-head">
+                      <label htmlFor="ss-v31-classic-formula">
+                        Active rule expression
+                      </label>
+                      <span className="x1-caption">
+                        {formulaCompile.ok
+                          ? `Valid · ${formulaCompile.minBars} bars min`
+                          : "Check syntax"}
+                      </span>
+                    </div>
+                    <input
+                      id="ss-v31-classic-formula"
+                      name="classicFormula"
+                      type="text"
+                      className="x54-name-input ss-v31-mono-input"
+                      value={classicFormula}
+                      aria-invalid={!formulaCompile.ok ? "true" : undefined}
+                      onChange={(e) => {
+                        setClassicFormula(e.target.value);
+                        setScanError("");
+                      }}
+                    />
+                    {!formulaCompile.ok && (
+                      <p className="x54-inline-error" role="alert" style={{ margin: 0 }}>
+                        {formulaCompile.error}
+                      </p>
+                    )}
+                    {isClassicCustomized && (
+                      <div className="ss-v31-formula-edit-actions">
+                        <button
+                          type="button"
+                          className="ss-v31-tool-btn"
+                          onClick={() => {
+                            setClassicFormula(activePreset.formula);
+                            setScanError("");
+                          }}
+                        >
+                          <RotateCcw size={13} aria-hidden="true" />
+                          <span>Reset to template</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="ss-v31-tool-btn"
+                          disabled={savingDraft || !formulaCompile.ok}
+                          onClick={() => void saveClassicCopy()}
+                        >
+                          <BookmarkPlus size={13} aria-hidden="true" />
+                          <span>{savingDraft ? "Saving…" : "Save copy"}</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {activeInfoOpen && (
+                    <div className="x56-formula-drawer" role="note">
+                      <p className="x56-formula-meaning" style={{ margin: 0 }}>
+                        {activePreset.shortDescription}
+                      </p>
+                      <div className="x56-formula-drawer-grid">
+                        <span>Template default: {activePreset.formula}</span>
+                        <span>Requires: {activePreset.prerequisites.join(", ")}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Large full-width Strategic Blue Browse button (zero truncation at 320px) */}
+                <button
+                  type="button"
+                  className="ss-v31-browse-cta"
+                  onClick={() => setFormulaPickerOpen(true)}
+                >
+                  <Layers size={16} aria-hidden="true" />
+                  <span>Browse all 50 formulas</span>
+                </button>
               </div>
             ) : (
               <div className="x54-advanced-pane">
@@ -856,7 +1400,7 @@ export default function Strategy({
                     onClick={() => setAdvancedEntry("DRAW")}
                   >
                     <PenTool size={15} aria-hidden="true" />
-                    <span>Draw</span>
+                    <span>Pattern</span>
                   </button>
                 </div>
 
@@ -868,6 +1412,7 @@ export default function Strategy({
                     <div style={{ display: "flex", gap: 8 }}>
                       <input
                         id="ss-v3-discover"
+                        name="discoverQuery"
                         type="text"
                         className="x54-name-input"
                         value={discoverQuery}
@@ -907,32 +1452,45 @@ export default function Strategy({
                   </div>
                 )}
 
-                {advancedEntry === "DRAW" ? (
-                  <Suspense
-                    fallback={
-                      <WorkspaceSkeleton label="Opening Draw canvas…" kind="panel" />
-                    }
-                  >
-                    <PatternDrawCanvas
-                      authenticated={authenticated}
-                      onRequireAuth={onRequireAuth}
-                      scanName={name}
-                      universe={scanUniverseForPreset(scanSource)}
-                      universePreset={scanSource}
-                      watchlistId={
-                        scanSource === "MY_WATCHLIST" ? activeWatchlist?.id : undefined
+                {isDrawMode ? (
+                  <>
+                    {/* In Pattern Scan mode, Source & Timeframe sit above Canvas so Find Similar Patterns is the final bottom CTA */}
+                    {scopeAndTimeframeControls}
+                    <Suspense
+                      fallback={
+                        <WorkspaceSkeleton label="Opening Pattern Scan…" kind="panel" />
                       }
-                      interval={interval}
-                      busy={busy}
-                      onScanComplete={async (res) => {
-                        await reload();
-                        setSelectedScanId(res.id);
-                        setJustCompletedId(res.id);
-                      }}
-                      onOpenAsset={openAsset}
-                      notify={notify}
-                    />
-                  </Suspense>
+                    >
+                      <PatternDrawCanvas
+                        authenticated={authenticated}
+                        onRequireAuth={onRequireAuth}
+                        scanName={name}
+                        universe={scanUniverseForPreset(scanSource)}
+                        universePreset={scanSource}
+                        watchlistId={
+                          scanSource === "MY_WATCHLIST" ? activeWatchlist?.id : undefined
+                        }
+                        interval={interval}
+                        customCsv={scanSource === "CUSTOM_CSV" ? customCsv : undefined}
+                        instrumentIds={scopedInstrument ? [scopedInstrument] : undefined}
+                        savedPatterns={workspace?.savedPatterns ?? []}
+                        onPatternSaved={reload}
+                        busy={busy}
+                        onScanComplete={async (res) => {
+                          await reload();
+                          setSelectedScanId(res.id);
+                          setJustCompletedId(res.id);
+                          setScanPhase(
+                            (res.drawReport?.matches?.length ?? 0) > 0
+                              ? "COMPLETE"
+                              : "NO_MATCHES",
+                          );
+                        }}
+                        onOpenAsset={openAsset}
+                        notify={notify}
+                      />
+                    </Suspense>
+                  </>
                 ) : (
                   <>
                     <RuleEditor
@@ -955,12 +1513,9 @@ export default function Strategy({
                       </label>
                       <textarea
                         id="ss-v3-adv-formula"
+                        name="advancedFormula"
                         rows={2}
-                        className="x54-name-input"
-                        style={{
-                          fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
-                          fontSize: "0.88rem",
-                        }}
+                        className="x54-name-input ss-v31-mono-input"
                         value={advancedFormula}
                         onChange={(e) => {
                           setAdvancedFormula(e.target.value);
@@ -978,129 +1533,21 @@ export default function Strategy({
               </div>
             )}
 
-            {/* 5. Scan Source: EXACTLY Watchlist or Market */}
-            <div className="x54-field-group">
-              <div className="x54-field-label">
-                <span>Scan Source</span>
-                <span className="x1-caption">
-                  {scanSource === "MARKET"
-                    ? "NSE · BSE · MCX"
-                    : `${watchlistItems.length} symbol${watchlistItems.length === 1 ? "" : "s"}`}
-                </span>
-              </div>
-              <div
-                className="ss-v3-source-grid"
-                role="group"
-                aria-label="Scan source"
-              >
-                <button
-                  type="button"
-                  aria-pressed={scanSource === "MY_WATCHLIST"}
-                  className={
-                    "ss-v3-seg-btn" +
-                    (scanSource === "MY_WATCHLIST" ? " is-active" : "")
-                  }
-                  onClick={() => {
-                    setScanSource("MY_WATCHLIST");
-                    setScanError("");
-                  }}
-                >
-                  Watchlist
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={scanSource === "MARKET"}
-                  className={
-                    "ss-v3-seg-btn" +
-                    (scanSource === "MARKET" ? " is-active" : "")
-                  }
-                  onClick={() => {
-                    setScanSource("MARKET");
-                    setScanError("");
-                  }}
-                >
-                  Market
-                </button>
-              </div>
-
-              {scanSource === "MY_WATCHLIST" && watchlists.length > 1 && (
-                <select
-                  aria-label="Choose watchlist"
-                  className="x54-name-input"
-                  value={activeWatchlist?.id ?? ""}
-                  onChange={(e) => setWatchlistId(e.target.value)}
-                >
-                  {watchlists.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name} ({w.payload.items?.length ?? 0})
-                    </option>
-                  ))}
-                </select>
-              )}
-
-              {scanSource === "MY_WATCHLIST" && watchlistItems.length === 0 && (
-                <div className="x54-quota-popover" role="note">
-                  <div>
-                    Your Watchlist is empty. Add instruments to scan your
-                    Watchlist, or switch directly to Market.
-                  </div>
-                  <div className="x1-actions" style={{ marginTop: 8, gap: 8 }}>
-                    <button
-                      type="button"
-                      className="x1-secondary"
-                      onClick={() => {
-                        setScanSource("MARKET");
-                        setScanError("");
-                      }}
-                    >
-                      Switch to Market
-                    </button>
-                    {onOpenWatchlist && (
-                      <button
-                        type="button"
-                        className="x1-secondary"
-                        onClick={onOpenWatchlist}
-                      >
-                        Open Watchlist
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* 6. Timeframe: EXACTLY 1 Hour, Daily, Weekly, Monthly */}
-            <div className="x54-field-group">
-              <div className="x54-field-label">
-                <span>Timeframe</span>
-              </div>
-              <div
-                className="ss-v3-tf-grid"
-                role="group"
-                aria-label="Scan timeframe"
-              >
-                {TIMEFRAME_OPTIONS.map((tf) => (
-                  <button
-                    key={tf.value}
-                    type="button"
-                    aria-pressed={interval === tf.value}
-                    className={
-                      "ss-v3-seg-btn" + (interval === tf.value ? " is-active" : "")
-                    }
-                    onClick={() => {
-                      setInterval(tf.value);
-                      setScanError("");
-                    }}
-                  >
-                    {tf.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* 5 & 6. Scope & Timeframe (placed here for Classic, Build & Discover) */}
+            {!isDrawMode && scopeAndTimeframeControls}
 
             {scanError && (
               <div className="x1-callout" role="alert" style={{ margin: 0 }}>
-                <div style={{ marginBottom: 8 }}>{scanError}</div>
+                <div style={{ marginBottom: 8 }}>
+                  <strong>
+                    {scanPhase === "BLOCKED"
+                      ? "Scan unavailable · 0 quota charged"
+                      : scanPhase === "CANCELED"
+                        ? "Scan wait canceled"
+                        : "Scan could not complete"}
+                  </strong>
+                  <div style={{ marginTop: 4 }}>{scanError}</div>
+                </div>
                 <button
                   type="button"
                   className="x1-secondary"
@@ -1113,32 +1560,52 @@ export default function Strategy({
               </div>
             )}
 
-            {/* 7. Primary Run Scan CTA (hidden in Draw mode since Draw canvas has its own submit) */}
-            {!(scanTier === "ADVANCED" && advancedEntry === "DRAW") && (
-              <button
-                type="button"
-                className="ss-v3-run-cta"
-                disabled={busy}
-                aria-busy={busy}
-                onClick={() => void executeScan()}
-              >
-                <span>{busy ? "Scanning…" : "Run Scan"}</span>
-                {!busy && <ArrowRight size={17} aria-hidden="true" />}
-              </button>
+            {/* 7. Primary Run Scan CTA + Cancel during active request */}
+            {!isDrawMode && (
+              <div className="ss-v31-run-row">
+                <button
+                  type="button"
+                  className="ss-v3-run-cta"
+                  disabled={busy}
+                  aria-busy={busy}
+                  onClick={() => void executeScan()}
+                >
+                  <span>{busy ? "Scanning completed bars…" : "Run Scan"}</span>
+                  {!busy && <ArrowRight size={17} aria-hidden="true" />}
+                </button>
+                {busy && (
+                  <button
+                    type="button"
+                    className="x1-secondary ss-v31-cancel-btn"
+                    onClick={handleCancelScan}
+                  >
+                    <X size={15} aria-hidden="true" />
+                    <span>Cancel</span>
+                  </button>
+                )}
+              </div>
             )}
           </section>
 
-          {/* 2. SCAN RESULTS (Simple, Minimal, Uncluttered — Sec 06) */}
+          {/* 2. SCAN RESULTS (Explicit Loading State + Truthful Disjoint Breakdown) */}
           <section
             ref={resultsRef}
             className="ss-v3-results-card"
             aria-labelledby="ss-v3-results-heading"
           >
             <div>
-              <h2 id="ss-v3-results-heading" className="ss-v3-results-title">
+              <h2
+                id="ss-v3-results-heading"
+                className="ss-v3-results-title ss-v31-heading-white"
+              >
                 Scan Results
               </h2>
-              {activeScan ? (
+              {busy && runningContext ? (
+                <p className="ss-v3-results-context" role="status" aria-live="polite">
+                  Evaluating {runningContext.name} · {runningContext.sourceLabel} ·{" "}
+                  {runningContext.timeframeLabel}…
+                </p>
+              ) : activeScan ? (
                 <p className="ss-v3-results-context">
                   {activeScan.name} ·{" "}
                   {activeScan.mode === "SIMPLE" ? "Classic" : "Advanced"} ·{" "}
@@ -1163,13 +1630,36 @@ export default function Strategy({
               )}
             </div>
 
-            {activeScan ? (
+            {busy ? (
+              <WorkspaceSkeleton
+                label="Fetching authorized bars and evaluating rule…"
+                kind="panel"
+              />
+            ) : activeScan ? (
               (() => {
                 const res = activeScan.payload.results;
                 const matched = (res?.results ?? []).filter(
                   (r) => r.status === "PASS",
                 );
+                const nonMatchCount = res?.failed ?? 0;
                 const unknownCount = res?.unknown ?? 0;
+                const accounting = (
+                  activeScan.payload as {
+                    preflight?: {
+                      accounting?: {
+                        discovered?: number;
+                        deferred?: number;
+                        excluded?: number;
+                        coveragePct?: number;
+                      };
+                    };
+                  }
+                ).preflight?.accounting;
+                const deferredCount = accounting?.deferred ?? 0;
+                const excludedCount = Math.max(
+                  0,
+                  (accounting?.excluded ?? 0) - deferredCount,
+                );
                 const scanInterval =
                   (activeScan.payload as { research?: { interval?: string } })
                     .research?.interval ??
@@ -1181,8 +1671,41 @@ export default function Strategy({
                   <>
                     <div className="ss-v3-results-count">
                       {matched.length === 0
-                        ? "No instruments matched"
+                        ? "0 instruments matched"
                         : `${matched.length} instrument${matched.length === 1 ? "" : "s"} matched`}
+                    </div>
+
+                    {/* Truthful Disjoint Breakdown (never labels non-matches as "Failed"!) */}
+                    <div className="ss-v31-breakdown-row" aria-label="Scan coverage breakdown">
+                      <span className="ss-v31-stat-chip is-pos">
+                        Matched: {matched.length}
+                      </span>
+                      <span className="ss-v31-stat-chip">
+                        Did not match: {nonMatchCount}
+                      </span>
+                      {unknownCount > 0 && (
+                        <span className="ss-v31-stat-chip">
+                          Insufficient data: {unknownCount}
+                        </span>
+                      )}
+                      {deferredCount > 0 && (
+                        <span className="ss-v31-stat-chip">
+                          Deferred: {deferredCount}
+                        </span>
+                      )}
+                      {excludedCount > 0 && (
+                        <span className="ss-v31-stat-chip">
+                          Unavailable: {excludedCount}
+                        </span>
+                      )}
+                      {typeof accounting?.coveragePct === "number" &&
+                        accounting.discovered &&
+                        accounting.discovered > 0 && (
+                          <span className="ss-v31-stat-chip">
+                            Coverage: {accounting.coveragePct.toFixed(0)}% (
+                            {res?.eligible ?? 0}/{accounting.discovered})
+                          </span>
+                        )}
                     </div>
 
                     {matched.length > 0 ? (
@@ -1245,18 +1768,10 @@ export default function Strategy({
                       </div>
                     ) : (
                       <p className="x1-caption" style={{ margin: 0 }}>
-                        Evaluated {res?.eligible ?? 0} instrument
-                        {(res?.eligible ?? 0) === 1 ? "" : "s"} on closed bars —
-                        none satisfied the rule on the latest bar.
-                      </p>
-                    )}
-
-                    {unknownCount > 0 && (
-                      <p className="x1-caption" style={{ margin: 0 }}>
-                        {unknownCount} instrument
-                        {unknownCount === 1 ? " had" : "s had"} insufficient
-                        history for the selected lookback and{" "}
-                        {unknownCount === 1 ? "was" : "were"} skipped cleanly.
+                        Checked {res?.eligible ?? 0} eligible instrument
+                        {(res?.eligible ?? 0) === 1 ? "" : "s"} on completed bars
+                        — none satisfied the rule as of{" "}
+                        {moment(res?.asOf ?? activeScan.created_at)}.
                       </p>
                     )}
                   </>
@@ -1270,7 +1785,7 @@ export default function Strategy({
             )}
           </section>
 
-          {/* 3. GRAVEYARD (Preserved Approved Visual DNA, Immediately Below Scan Results — Sec 07) */}
+          {/* 3. GRAVEYARD (Preserved Approved Visual DNA, Standalone Heading, Zero Subtitle) */}
           <section
             className="x53-graveyard-shell"
             aria-labelledby="ss-v3-graveyard-heading"
@@ -1312,6 +1827,8 @@ export default function Strategy({
             </div>
 
             <input
+              id="ss-v31-graveyard-search"
+              name="graveyardSearch"
               type="search"
               className="x56-formula-search-input"
               aria-label="Search GRAVEYARD scans"
@@ -1367,6 +1884,7 @@ export default function Strategy({
                         </code>
                         <span className="x1-caption">
                           {s.payload.results?.matches ?? 0} matched ·{" "}
+                          {s.payload.results?.eligible ?? 0} evaluated ·{" "}
                           {moment(s.created_at)}
                         </span>
                       </button>
@@ -1412,13 +1930,14 @@ export default function Strategy({
       {/* 50-Formula Picker Modal with Pinned Section First */}
       {formulaPickerOpen && (
         <Modal
-          title="Select Classic Formula"
+          title="Browse all 50 Classic Formulas"
           onClose={() => setFormulaPickerOpen(false)}
         >
           <div className="x56-formula-modal-shell">
             <div className="x56-formula-modal-subhead">
               <p className="x56-formula-modal-subtitle">
-                Pin your favorite formulas to keep them at the top.
+                Select any formula to load and customize its parameters. Pin
+                favorites to keep them on top.
               </p>
               <span className="x56-formula-count-badge">
                 {filteredPresets.total} of {CLASSIC_50_PRESETS.length}
@@ -1427,6 +1946,8 @@ export default function Strategy({
 
             <div className="x56-formula-search-row">
               <input
+                id="ss-v31-formula-picker-search"
+                name="formulaSearch"
                 type="search"
                 className="x56-formula-search-input"
                 aria-label="Search 50 Classic formulas"
@@ -1630,9 +2151,22 @@ export default function Strategy({
         </Modal>
       )}
 
-      {/* Formula Guide Modal (replaces inline Drafts & Glossary card) */}
+      {/* Consolidated Guide & Limits Modal */}
       {guideOpen && (
-        <Modal title="Formula & Scan Guide" onClose={() => setGuideOpen(false)}>
+        <Modal title="Soul Scan Guide & Limits" onClose={() => setGuideOpen(false)}>
+          <div className="x54-quota-popover" style={{ marginBottom: 14 }}>
+            <strong>Daily scan allowance</strong>
+            <div style={{ marginTop: 4 }}>
+              Classic: {classicRemaining}/{classicLimit} scans remaining today
+              (resets 00:00 IST) · Advanced: {quota?.advanced.remaining ?? 1}/
+              {quota?.advanced.limit ?? 1} available per rolling 60 minutes.
+            </div>
+            <div className="x1-caption" style={{ marginTop: 4 }}>
+              Failed, invalid, or unentitled scans release their reservation and
+              never deduct quota. Valid completed scans with 0 matches count as
+              1 completed scan.
+            </div>
+          </div>
           <p className="x1-caption" style={{ marginTop: 0 }}>
             All scans evaluate strictly on completed closed bars across your
             selected source and timeframe.

@@ -252,6 +252,23 @@ export const VERIFIED_SEED_INSTRUMENTS: readonly InstrumentMasterEntry[] = Objec
     instrumentType: "AMXIDX",
   },
   {
+    id: "NSE:NIFTYMIDCAP100",
+    exchange: "NSE",
+    segment: "INDEX",
+    tradingSymbol: "NIFTY MIDCAP 100",
+    symbol: "NIFTYMIDCAP100",
+    token: "99926011",
+    name: "NIFTY Midcap 100 Index (NSE)",
+    mic: "XNSE",
+    currency: "INR",
+    unit: "index points",
+    timezone: "Asia/Kolkata",
+    expiry: null,
+    lotSize: 1,
+    tickSize: null,
+    instrumentType: "AMXIDX",
+  },
+  {
     id: "BSE:HDFCBANK",
     exchange: "BSE",
     segment: "EQUITY",
@@ -337,6 +354,57 @@ export const VERIFIED_SEED_INSTRUMENTS: readonly InstrumentMasterEntry[] = Objec
     instrumentType: "FUTCOM",
   },
   {
+    id: "MCX:GOLD05FEB27FUT",
+    exchange: "MCX",
+    segment: "FUTURE",
+    tradingSymbol: "GOLD05FEB27FUT",
+    symbol: "GOLD",
+    token: "559933",
+    name: "MCX Gold Futures (05 Feb 2027)",
+    mic: "XMCX",
+    currency: "INR",
+    unit: "INR per 10g (1 kg contract lot)",
+    timezone: "Asia/Kolkata",
+    expiry: "2027-02-05",
+    lotSize: 1,
+    tickSize: 1,
+    instrumentType: "FUTCOM",
+  },
+  {
+    id: "MCX:SILVER04DEC26FUT",
+    exchange: "MCX",
+    segment: "FUTURE",
+    tradingSymbol: "SILVER04DEC26FUT",
+    symbol: "SILVER",
+    token: "495214",
+    name: "MCX Silver Futures (04 Dec 2026)",
+    mic: "XMCX",
+    currency: "INR",
+    unit: "INR per kg (30 kg contract lot)",
+    timezone: "Asia/Kolkata",
+    expiry: "2026-12-04",
+    lotSize: 30,
+    tickSize: 1,
+    instrumentType: "FUTCOM",
+  },
+  {
+    id: "MCX:SILVER05MAR27FUT",
+    exchange: "MCX",
+    segment: "FUTURE",
+    tradingSymbol: "SILVER05MAR27FUT",
+    symbol: "SILVER",
+    token: "564619",
+    name: "MCX Silver Futures (05 Mar 2027)",
+    mic: "XMCX",
+    currency: "INR",
+    unit: "INR per kg (30 kg contract lot)",
+    timezone: "Asia/Kolkata",
+    expiry: "2027-03-05",
+    lotSize: 30,
+    tickSize: 1,
+    instrumentType: "FUTCOM",
+  },
+  {
     id: "MCX:CRUDEOIL18DEC26FUT",
     exchange: "MCX",
     segment: "FUTURE",
@@ -405,18 +473,21 @@ export function normalizeScripMasterRow(
 
   if (exch === "NSE") {
     if (instType === "AMXIDX") {
+      const compactRoot = rootName.replace(/\s+/g, "");
       const canonical =
         rootName === "NIFTY" && tradingSymbol === "Nifty 50"
           ? "NSE:NIFTY"
           : rootName === "BANKNIFTY" && tradingSymbol === "Nifty Bank"
             ? "NSE:BANKNIFTY"
-            : `NSE:${rootName}`;
+            : compactRoot === "NIFTYMIDCAP100" || tradingSymbol.toUpperCase() === "NIFTY MIDCAP 100"
+              ? "NSE:NIFTYMIDCAP100"
+              : `NSE:${compactRoot}`;
       return {
         id: canonical,
         exchange: "NSE",
         segment: "INDEX",
         tradingSymbol,
-        symbol: rootName,
+        symbol: compactRoot,
         token,
         name: `${tradingSymbol} Index (NSE)`,
         mic: "XNSE",
@@ -586,6 +657,12 @@ export class InstrumentMaster {
 
     const exact = this.byId.get(clean);
     if (exact) return exact;
+
+    // Normalize whitespace inside NSE/BSE index IDs (e.g. "NSE:NIFTY MIDCAP 100" -> "NSE:NIFTYMIDCAP100")
+    if (clean.includes(" ")) {
+      const compact = this.byId.get(clean.replace(/\s+/g, ""));
+      if (compact) return compact;
+    }
 
     const byToken = this.byExchangeToken.get(clean);
     if (byToken) return byToken;

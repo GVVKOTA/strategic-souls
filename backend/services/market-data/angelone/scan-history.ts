@@ -7,6 +7,7 @@ import {
   getIstDateAndMinutes,
 } from "./calendar";
 import {
+  MAX_30M_CANDLE_DAYS,
   MAX_DAILY_CANDLE_DAYS,
   MAX_HOURLY_CANDLE_DAYS,
   type ExchangeCode,
@@ -15,8 +16,10 @@ import {
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
+const HALF_HOUR_MS = 1_800_000;
 const MINUTE_MS = 60_000;
 const PERIOD_DAYS: Record<Interval, number> = {
+  "30m": 1,
   "1h": 1,
   "1d": 1,
   "1wk": 7,
@@ -52,6 +55,14 @@ function validOhlcv(c: {
 }
 
 export function brokerScanLookbackDays(interval: Interval, minimumBars?: number) {
+  if (interval === "30m") {
+    const reqBars = minimumBars === undefined ? 120 : minimumBars;
+    // NSE/BSE produces 13 30-minute bars per trading day (12 full 30m + 15m terminal 15:15-15:30 IST).
+    const targetBars = reqBars + Math.max(18, Math.ceil(reqBars * 0.15));
+    const tradingDays = Math.ceil(targetBars / 12);
+    const calendarDays = Math.ceil(tradingDays * 1.65) + 4;
+    return Math.min(MAX_30M_CANDLE_DAYS, Math.max(10, calendarDays));
+  }
   if (interval === "1h") {
     const reqBars = minimumBars === undefined ? 120 : minimumBars;
     // NSE/BSE produces 7 hourly bars per trading day (6 full 60m + 15m terminal 15:15-15:30 IST).
@@ -72,17 +83,17 @@ export function brokerScanLookbackDays(interval: Interval, minimumBars?: number)
 }
 
 /**
- * Computes the completion instant (UTC ms) for a genuine 1-hour bar starting at `startMs`
+ * Computes the completion instant (UTC ms) for a genuine intraday bar (`30m` or `1h`) starting at `startMs`
  * on an Indian exchange (`NSE`, `BSE`, or `MCX`).
- * - NSE / BSE regular session: 09:15–15:30 IST. Bars starting 09:15..14:15 last 60 minutes;
- *   the terminal 15:15 IST bar completes cleanly at 15:30 IST (15 minutes).
+ * - NSE / BSE regular session: 09:15–15:30 IST. Terminal 15:15 IST bar completes cleanly at 15:30 IST (15 minutes).
  * - MCX regular session: 09:00–23:30/23:55 IST (DST & partial-holiday aware via calendar.ts).
  *   The terminal bar completes cleanly at the scheduled session close.
  * Returns null if the bar falls outside regular scheduled trading hours (e.g., weekend/holiday/stray tick).
  */
-export function hourlyBarCloseMs(
+export function intradayBarCloseMs(
   exchange: ExchangeCode,
   startMs: number,
+  interval: "30m" | "1h",
 ): number | null {
   const { dateIST, minutesIST } = getIstDateAndMinutes(startMs);
   const window = getExchangeSessionWindowMinutes(exchange, dateIST);
@@ -91,37 +102,54 @@ export function hourlyBarCloseMs(
     return null;
   }
   const remainingMinutes = window.closeMinutes - minutesIST;
-  const barDurationMs = Math.min(HOUR_MS, remainingMinutes * MINUTE_MS);
+  const maxBarMs = interval === "30m" ? HALF_HOUR_MS : HOUR_MS;
+  const barDurationMs = Math.min(maxBarMs, remainingMinutes * MINUTE_MS);
   return startMs + barDurationMs;
 }
 
+export function hourlyBarCloseMs(
+  exchange: ExchangeCode,
+  startMs: number,
+): number | null {
+  return intradayBarCloseMs(exchange, startMs, "1h");
+}
+
+export function thirtyMinBarCloseMs(
+  exchange: ExchangeCode,
+  startMs: number,
+): number | null {
+  return intradayBarCloseMs(exchange, startMs, "30m");
+}
+
 /**
- * Filters and validates genuine 1-hour candles from a commercial shared feed (`TrueData` / `EODHD`)
- * without ever synthesizing 1h bars from daily candles or forward-filling gaps.
+ * Filters and validates genuine intraday (`30m` or `1h`) candles from a commercial shared feed
+ * without ever synthesizing intraday bars from daily candles or forward-filling gaps.
  */
 export function completedCommercialIntradayObservations(
   candles: readonly Candle[],
   exchange: ExchangeCode | "GLOBAL",
   retrievalIso: string,
+  interval: "30m" | "1h" = "1h",
 ): ScanObservation[] {
   const retrievalMs = Date.parse(retrievalIso);
   if (!Number.isFinite(retrievalMs)) return [];
+  const stepMs = interval === "30m" ? HALF_HOUR_MS : HOUR_MS;
   const byTs = new Map<number, Candle>();
   const duplicates = new Set<number>();
   for (const c of candles) {
-    // Reject date-only strings strictly: genuine 1h bars must carry an explicit intraday timestamp.
+    // Reject date-only strings strictly: genuine intraday bars must carry an explicit timestamp.
     if (!c.date.includes("T") || !validOhlcv(c)) continue;
     const startMs = Date.parse(c.date);
     if (!Number.isFinite(startMs) || startMs > retrievalMs) continue;
     let closeMs: number;
     if (exchange === "NSE" || exchange === "BSE" || exchange === "MCX") {
-      const computed = hourlyBarCloseMs(exchange, startMs);
+      const computed = intradayBarCloseMs(exchange, startMs, interval);
       if (computed === null) continue;
       closeMs = computed;
     } else {
-      closeMs = startMs + HOUR_MS;
+      closeMs = startMs + stepMs;
     }
-    // Never include developing/in-progress hourly candle.
+    // Never include developing/in-progress intraday candle.
     if (closeMs > retrievalMs) continue;
     if (byTs.has(startMs)) duplicates.add(startMs);
     byTs.set(startMs, c);
@@ -150,17 +178,17 @@ export function completedBrokerObservations(
   if (!Number.isFinite(retrievalMs)) return [];
   const exchange = series.instrument.exchange;
 
-  // Genuine 1 Hour (60-minute) candles — NEVER synthesized from daily bars.
-  if (interval === "1h") {
-    if (series.interval !== "1h") return [];
+  // Genuine 30m or 1h candles — NEVER synthesized from daily bars or interpolated.
+  if (interval === "1h" || interval === "30m") {
+    if (series.interval !== interval) return [];
     const byTs = new Map<number, (typeof series.candles)[number]>();
     const duplicates = new Set<number>();
     for (const candle of series.candles) {
       if (!validOhlcv(candle)) continue;
       const startMs = Date.parse(candle.timestampUTC);
       if (!Number.isFinite(startMs) || startMs > retrievalMs) continue;
-      const closeMs = hourlyBarCloseMs(exchange, startMs);
-      // Exclude out-of-session stray bars and developing current hourly bar.
+      const closeMs = intradayBarCloseMs(exchange, startMs, interval);
+      // Exclude out-of-session stray bars and developing current intraday bar.
       if (closeMs === null || closeMs > retrievalMs) continue;
       if (byTs.has(startMs)) duplicates.add(startMs);
       byTs.set(startMs, candle);

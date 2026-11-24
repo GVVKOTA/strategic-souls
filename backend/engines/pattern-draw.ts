@@ -152,22 +152,43 @@ export const PATTERN_TEMPLATES: readonly PatternTemplate[] = Object.freeze([
   },
 ]);
 
+/**
+ * Validates user-drawn stroke geometry before evaluation or quota consumption.
+ * Rejects <2 finite points, nonfinite coordinates, or flat zero-variance horizontal lines.
+ */
+export function validateStrokePoints(points: readonly DrawPoint[]): DrawPoint[] {
+  if (!Array.isArray(points) || points.length < 2) {
+    throw new Error("Draw at least 2 points or choose a pattern template.");
+  }
+  const clean = points.filter(
+    (p) =>
+      p &&
+      typeof p.x === "number" &&
+      typeof p.y === "number" &&
+      Number.isFinite(p.x) &&
+      Number.isFinite(p.y),
+  );
+  if (clean.length < 2) {
+    throw new Error("Valid finite stroke points are required.");
+  }
+  const meanY = clean.reduce((s, p) => s + p.y, 0) / clean.length;
+  const varianceY =
+    clean.reduce((s, p) => s + (p.y - meanY) ** 2, 0) / clean.length;
+  if (Math.sqrt(varianceY) <= 1e-6) {
+    throw new Error(
+      "Draw a pattern with clear upward or downward movement; flat lines cannot be matched.",
+    );
+  }
+  return clean;
+}
+
 /** Resamples an ordered polyline of (x, y) points into `length` evenly spaced y values along x. */
 export function resampleStroke(
   points: readonly DrawPoint[],
   length: number,
 ): number[] {
-  if (!Array.isArray(points) || points.length < 2) {
-    throw new Error("Draw at least 2 points or choose a pattern template.");
-  }
+  const clean = validateStrokePoints(points).slice().sort((a, b) => a.x - b.x);
   const n = Math.max(8, Math.min(120, Math.round(length)));
-  const clean = points
-    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
-    .slice()
-    .sort((a, b) => a.x - b.x);
-  if (clean.length < 2) {
-    throw new Error("Valid finite stroke points are required.");
-  }
   const minX = clean[0].x;
   const maxX = clean[clean.length - 1].x;
   const spanX = maxX - minX;
@@ -286,6 +307,8 @@ export type DrawScanReport = {
 /**
  * Matches a drawn normalized shape against the latest trailing `windowBars` closed prices
  * of each eligible dataset. Strictly descriptive; never fabricates matches when bars are missing.
+ * Complexity: O(N * B * w) where N = eligible instruments, B = bounded windowBars (8..80),
+ * and w = Sakoe-Chiba band width (~0.2 * B). Memory O(B^2) per instrument (<= 6,561 Float64s).
  */
 export function matchDrawnPattern(
   strokePoints: readonly DrawPoint[],
@@ -299,11 +322,17 @@ export function matchDrawnPattern(
   const windowBars = Math.max(8, Math.min(80, Math.round(options.windowBars ?? 20)));
   const minPatternFit = Math.max(
     30,
-    Math.min(98, Math.round(options.minPatternFit ?? 62)),
+    Math.min(98, Math.round(options.minPatternFit ?? 75)),
   );
   const cutoffMs = options.asOf ? Date.parse(options.asOf) : Date.now();
   const resampledQuery = resampleStroke(strokePoints, windowBars);
   const zQuery = zNormalize(resampledQuery);
+  const queryEnergy = zQuery.reduce((s, v) => s + v * v, 0);
+  if (!Number.isFinite(queryEnergy) || queryEnergy <= 1e-9) {
+    throw new Error(
+      "Draw a pattern with clear upward or downward movement; flat lines cannot be matched.",
+    );
+  }
 
   const matches: DrawMatchResult[] = [];
   const excluded: { instrumentId: string; reason: string }[] = [];
@@ -345,13 +374,24 @@ export function matchDrawnPattern(
     const slice = eligibleObs.slice(-windowBars);
     const closes = slice.map((o) => o.close as number);
     const zSeries = zNormalize(closes);
+    const seriesEnergy = zSeries.reduce((s, v) => s + v * v, 0);
+    if (!Number.isFinite(seriesEnergy) || seriesEnergy <= 1e-9) {
+      // Constant flat market series has zero shape variance; cannot produce a geometric pattern match.
+      continue;
+    }
     const corr = pearsonCorrelation(zQuery, zSeries);
     const dtw = boundedDtwDistance(zQuery, zSeries, 0.2);
+    if (!Number.isFinite(corr) || !Number.isFinite(dtw)) {
+      continue;
+    }
 
     // Combine correlation (in [0, 1] for positive correlation) and DTW proximity exp(-0.65 * dtw)
-    const corrScore = Math.max(0, (corr + 1) / 2);
-    const dtwScore = Math.exp(-0.65 * dtw);
-    const fit = Math.round((0.55 * corrScore + 0.45 * dtwScore) * 1000) / 10;
+    const corrScore = Math.max(0, Math.min(1, (corr + 1) / 2));
+    const dtwScore = Math.max(0, Math.min(1, Math.exp(-0.65 * dtw)));
+    const fit = Math.max(
+      0,
+      Math.min(100, Math.round((0.55 * corrScore + 0.45 * dtwScore) * 1000) / 10),
+    );
 
     if (fit >= minPatternFit) {
       matches.push({

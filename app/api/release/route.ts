@@ -1,6 +1,9 @@
 import { resolveGatewayConfig } from "../../../backend/services/market-data/angelone/gateway";
-import { PROVIDER_READINESS_MATRIX } from "../../../backend/services/intelligence/news-and-disasters";
 import { APP_RELEASE } from "../../../backend/services/release-meta";
+import {
+  ADVANCED_ROLLING_LIMIT,
+  CLASSIC_DAILY_LIMIT,
+} from "../../../backend/services/research/scan-quota";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +17,7 @@ export function GET(request: Request) {
       releaseName: APP_RELEASE.versionLabel,
       supportEmail: APP_RELEASE.supportEmail,
       targetLaunchDate: APP_RELEASE.targetLaunchDate,
-      revisionMarker: "v3-rc1-2026-11-24",
+      revisionMarker: APP_RELEASE.revisionMarker,
       buildCommit:
         typeof process === "undefined"
           ? null
@@ -23,29 +26,29 @@ export function GET(request: Request) {
       globalMarketTiles: 8,
       exchangeVenues: 24,
       classicPresets: 50,
+      classicDailyLimit: CLASSIC_DAILY_LIMIT,
+      advancedRollingLimit: ADVANCED_ROLLING_LIMIT,
       avatarPresets: 50,
       profileBannerPresets: 8,
       portfolioBackdropPresets: 8,
       indianStatesAndUts: 36,
       earthMapBasemap:
         "NASA Blue Marble Next Generation & VIIRS Black Marble 3D Perspective Earth (Public Domain)",
-      auth: "Cloudflare Workers D1 session authentication (email/password)",
+      auth: "Session authentication (email/password)",
+      capabilities: {
+        publicOfficialReferences: true,
+        sharedCommercialMarketData:
+          gw.flags.mode === "public_licensed" &&
+          gw.flags.enablePublicExchangeQuotes,
+        intradayIntervalsSupported: ["30m", "1h"],
+        tradingExecutionEnabled: false,
+      },
       marketData: {
         publicSources:
           "ECB daily reference FX, US Treasury daily par yields, USGS M4.5+ earthquakes, and NASA EONET open natural events.",
-        mode: gw.flags.mode,
-        publicExchangeQuotesEnabled: gw.flags.enablePublicExchangeQuotes,
-        demoMode: gw.flags.demoMode,
         readOnlyOnly: true,
       },
-      providerReadiness: PROVIDER_READINESS_MATRIX.map((p) => ({
-        id: p.id,
-        provider: p.provider,
-        currentStatus: p.currentStatus,
-        requiresPaidOrCommercialLicense: p.requiresPaidOrCommercialLicense,
-        requiresStaticIp: p.requiresStaticIp,
-      })),
-      data: "ECB daily reference FX, US Treasury daily par yields, USGS/NASA EONET official public feeds. Shared NSE, BSE, and MCX historical feeds require verified commercial data entitlements.",
+      data: "ECB daily reference FX, US Treasury daily par yields, USGS/NASA EONET official public feeds. Shared NSE, BSE, MCX, and global futures feeds require verified commercial data entitlements.",
     },
     { headers: { "Cache-Control": "private, no-store" } },
   );

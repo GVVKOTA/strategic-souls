@@ -410,7 +410,7 @@ test("8-Tile Global Market Grid persists per user, enforces 409 optimistic concu
   assert.equal(dB.layout.ids[0], "NSE:NIFTY");
 });
 
-test("Classic Quota enforces 8 completed scans per IST civil day, counts valid 0-match runs, releases failed runs, and resets at 00:00 IST", async () => {
+test("Classic Quota enforces 20 completed scans per IST civil day, counts valid 0-match runs, releases failed runs, and resets at 00:00 IST", async () => {
   currentUser = { userId: "user-a", displayName: "Alice Quant", email: "a@test.local", authProvider: "email" };
 
   // Failed/blocked intraday 30m scan on daily-only ECB must NOT deduct quota
@@ -433,9 +433,9 @@ test("Classic Quota enforces 8 completed scans per IST civil day, counts valid 0
   const qAfterFail = await scanQuotaMod.getScanQuotaSummary(DB, "user-a", nowMs);
   assert.equal(qAfterFail.classic.used, 0);
 
-  // Run 8 valid Classic scans (including #8 with impossible threshold -> valid 0-match completed scan!)
-  for (let i = 1; i <= 8; i++) {
-    const formula = i === 8 ? "close > 999999" : "close > sma(close, 20)";
+  // Run 20 valid Classic scans (including #20 with impossible threshold -> valid 0-match completed scan!)
+  for (let i = 1; i <= 20; i++) {
+    const formula = i === 20 ? "close > 999999" : "close > sma(close, 20)";
     const r = await strategyScanRoute.POST(
       makeReq("/api/strategy/scan", "POST", {
         action: "run-scan",
@@ -453,17 +453,17 @@ test("Classic Quota enforces 8 completed scans per IST civil day, counts valid 0
     );
     assert.equal(r.status, 200, `Expected scan #${i} to succeed`);
     const body = await r.json();
-    if (i === 8) assert.equal(body.results.matches, 0);
+    if (i === 20) assert.equal(body.results.matches, 0);
   }
 
-  // 9th Classic scan on the same IST day MUST fail with 429
-  const r9 = await strategyScanRoute.POST(
+  // 21st Classic scan on the same IST day MUST fail with 429
+  const r21 = await strategyScanRoute.POST(
     makeReq("/api/strategy/scan", "POST", {
       action: "run-scan",
       scanTier: "CLASSIC",
-      requestId: "classic_run_9_blocked",
-      name: "Classic Scan #9",
-      description: "Must be blocked because 8/8 IST daily allowance was consumed.",
+      requestId: "classic_run_21_blocked",
+      name: "Classic Scan #21",
+      description: "Must be blocked because 20/20 IST daily allowance was consumed.",
       formula: "close > sma(close, 20)",
       mode: "SIMPLE",
       universe: "ECB_DAILY",
@@ -472,7 +472,7 @@ test("Classic Quota enforces 8 completed scans per IST civil day, counts valid 0
       outcome: { family: "POSITIVE_RETURN", horizon: 10, threshold: 0, target: 5, stop: 3, costBps: 0 },
     }),
   );
-  assert.equal(r9.status, 429);
+  assert.equal(r21.status, 429);
 
   // Advance clock across 00:00 Asia/Kolkata (2026-11-21T18:35:00Z = 2026-11-22 00:05 IST) -> quota resets!
   nowMs = Date.parse("2026-11-21T18:35:00.000Z");

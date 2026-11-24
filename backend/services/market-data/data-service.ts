@@ -410,7 +410,7 @@ async function sourceResearch(
   pinnedProvider?: ProviderId,
 ): Promise<AssetResearch> {
   if (
-    !["1h", "1d", "1wk", "1mo"].includes(interval) ||
+    !["30m", "1h", "1d", "1wk", "1mo"].includes(interval) ||
     typeof id !== "string" ||
     id.length > 80
   )
@@ -422,11 +422,11 @@ async function sourceResearch(
     id.startsWith("TREASURY:") ||
     id.startsWith("UST:")
   ) {
-    if (interval === "1h") {
+    if (interval === "30m" || interval === "1h") {
       return {
         ...result,
         limitations: [
-          "Official daily reference feed does not publish 1-hour intraday bars. Never synthesized from daily closes.",
+          `Official daily reference feed does not publish ${interval === "30m" ? "30-minute" : "1-hour"} intraday bars. Never synthesized from daily closes.`,
         ],
       };
     }
@@ -527,14 +527,20 @@ async function sourceResearch(
       };
       try {
         let raw: AssetResearch["candles"] = [];
+        const isIntraday = interval === "30m" || interval === "1h";
         if (c.datasets.includes("candles")) {
           await quota(c);
-          raw =
-            interval === "1h"
-              ? await providerIntradayCandles(c, instrument, secret, "1h", 45)
-              : await providerCandles(c, instrument, secret);
+          raw = isIntraday
+            ? await providerIntradayCandles(
+                c,
+                instrument,
+                secret,
+                interval,
+                interval === "30m" ? 30 : 45,
+              )
+            : await providerCandles(c, instrument, secret);
         }
-        out.candles = interval === "1h" ? raw : aggregateCandles(raw, interval);
+        out.candles = isIntraday ? raw : aggregateCandles(raw, interval);
         out.references = out.candles.map((b) => ({
           date: b.date,
           close: b.close,
@@ -543,7 +549,7 @@ async function sourceResearch(
         const latest = raw.at(-1);
         out.state =
           latest && Date.now() - Date.parse(latest.date) < 5 * 86400000
-            ? interval === "1h"
+            ? isIntraday
               ? "PUBLISHED_INTRADAY"
               : "PUBLISHED_EOD"
             : latest
@@ -660,17 +666,18 @@ async function sourceResearch(
     /^(NSE|BSE|MCX):/i.test(id)
   ) {
     try {
+      const isIntraday = interval === "30m" || interval === "1h";
       const series = await gatewayCandles({
         authenticated: true,
         isOwner: isDataOwner(subject),
         id,
-        interval: interval === "1h" ? "1h" : "1d",
-        days: interval === "1h" ? 45 : 180,
+        interval: isIntraday ? interval : "1d",
+        days: interval === "30m" ? 30 : interval === "1h" ? 45 : 180,
         runtimeEnv: environment(),
       });
       if (series.candles.length > 0) {
         const rawBars = series.candles.map((b) => ({
-          date: interval === "1h" ? b.timestampUTC : b.dateIST,
+          date: isIntraday ? b.timestampUTC : b.dateIST,
           open: b.open,
           high: b.high,
           low: b.low,
@@ -682,7 +689,7 @@ async function sourceResearch(
           adjustment: "RAW" as const,
           provider: feedLabel,
         }));
-        const aggregated = interval === "1h" ? rawBars : aggregateCandles(rawBars, interval);
+        const aggregated = isIntraday ? rawBars : aggregateCandles(rawBars, interval);
         return {
           ...result,
           id: series.instrument.id,
@@ -730,7 +737,7 @@ async function sourceResearch(
           },
           limitations: [
             ...series.limitations,
-            ...(interval === "1d" || interval === "1h"
+            ...(interval === "1d" || interval === "1h" || interval === "30m"
               ? []
               : [
                   "Aggregated daily bars may include a developing latest calendar group, not a completed period.",
@@ -842,7 +849,7 @@ function completedPublishedPeriods<T extends { date: string }>(
   interval: Interval,
   currentDate: string,
 ) {
-  if (interval === "1d" || interval === "1h" || !rows.length) return rows;
+  if (interval === "1d" || interval === "1h" || interval === "30m" || !rows.length) return rows;
   const first = calendarPeriodKey(rows[0].date, interval);
   const current = calendarPeriodKey(currentDate, interval);
   return rows.filter(({ date }) => {
@@ -869,10 +876,11 @@ export async function researchUniverse(
     traceId?: string;
   } = {},
 ): Promise<ResearchUniverse> {
-  if (options.interval && !["1h", "1d", "1wk", "1mo"].includes(options.interval))
+  if (options.interval && !["30m", "1h", "1d", "1wk", "1mo"].includes(options.interval))
     throw new HttpError(400, "Use a supported scan interval.");
   const maxLimit = Math.max(1, Math.min(24, options.limit ?? 24));
   const interval = options.interval ?? "1d";
+  const isIntraday = interval === "30m" || interval === "1h";
   const out: ResearchUniverse = {
     datasets: [],
     excluded: [],
@@ -894,14 +902,14 @@ export async function researchUniverse(
         !options.instrumentIds?.length || options.instrumentIds.includes(h.id),
     );
     out.discoveredCount = matchedHistory.length;
-    out.authorizedCount = interval === "1h" ? 0 : matchedHistory.length;
-    if (interval === "1h") {
+    out.authorizedCount = isIntraday ? 0 : matchedHistory.length;
+    if (isIntraday) {
       for (const h of matchedHistory) {
         out.excluded.push({
           id: h.id,
           kind: "scope",
           reason:
-            "Daily reference FX does not publish genuine 1-hour candles; daily bars are never fabricated into hourly bars.",
+            `Daily reference FX does not publish genuine ${interval === "30m" ? "30-minute (30m)" : "1-hour (1h)"} candles; daily bars are never fabricated into intraday bars.`,
         });
       }
       out.rights = { analysis: false, storage: false };
@@ -998,16 +1006,17 @@ export async function researchUniverse(
     const a = await sourceResearch(
       id,
       subject,
-      interval === "1h" ? "1h" : "1d",
+      isIntraday ? interval : "1d",
       false,
       "analysis",
       selected.provider,
     );
-    if (interval === "1h") {
+    if (isIntraday) {
       const observations = completedCommercialIntradayObservations(
         a.candles,
         mappedInst?.market ?? "GLOBAL",
         a.retrievedAt ?? out.asOf,
+        interval,
       );
       const latest = observations.at(-1);
       if (
@@ -1019,7 +1028,7 @@ export async function researchUniverse(
         out.excluded.push({
           id,
           reason:
-            "Genuine completed 1-hour candles or analysis rights are unavailable for this instrument.",
+            `Genuine completed ${interval === "30m" ? "30-minute (30m)" : "1-hour"} candles or analysis rights are unavailable for this instrument.`,
         });
         continue;
       }
@@ -1029,8 +1038,8 @@ export async function researchUniverse(
         currency: a.currency,
         source: a.provider,
         permitted: true,
-        frequency: "INTRADAY_1H",
-        maxAgeMs: brokerScanFreshnessMs("1h"),
+        frequency: interval === "30m" ? "INTRADAY_30M" : "INTRADAY_1H",
+        maxAgeMs: brokerScanFreshnessMs(interval),
         observations,
       });
       out.lineage.push({
@@ -1045,8 +1054,11 @@ export async function researchUniverse(
           selected.rights.derivedDisplay === true,
         rightsExpiresAt: selected.rights.expiresAt,
         configVersion: selected.version,
-        interval: "1h",
-        periodPolicy: "COMPLETED_1H_SESSION_BARS_WITH_TERMINAL_CLOSE",
+        interval,
+        periodPolicy:
+          interval === "30m"
+            ? "COMPLETED_30M_SESSION_BARS_WITH_TERMINAL_CLOSE"
+            : "COMPLETED_1H_SESSION_BARS_WITH_TERMINAL_CLOSE",
       });
       continue;
     }
@@ -1179,7 +1191,7 @@ export async function researchUniverse(
               authenticated: true,
               isOwner: isDataOwner(subject),
               id,
-              interval: interval === "1h" ? "1h" : "1d",
+              interval: isIntraday ? interval : "1d",
               days,
               traceId: options.traceId,
               runtimeEnv: environment(),
@@ -1225,7 +1237,12 @@ export async function researchUniverse(
           currency,
           source,
           permitted: true,
-          frequency: interval === "1h" ? "INTRADAY_1H" : "PUBLISHED_EOD",
+          frequency:
+            interval === "30m"
+              ? "INTRADAY_30M"
+              : interval === "1h"
+                ? "INTRADAY_1H"
+                : "PUBLISHED_EOD",
           maxAgeMs,
           observations,
         });
@@ -1240,11 +1257,13 @@ export async function researchUniverse(
           rightsExpiresAt: null,
           interval,
           periodPolicy:
-            interval === "1h"
-              ? "COMPLETED_1H_SESSION_BARS_WITH_TERMINAL_CLOSE"
-              : interval === "1d"
-                ? "PRIVATE_OWNER_COMPLETED_DAILY_CANDLES"
-                : "PRIVATE_OWNER_DAILY_CANDLES_IN_COMPLETED_CALENDAR_PERIODS",
+            interval === "30m"
+              ? "COMPLETED_30M_SESSION_BARS_WITH_TERMINAL_CLOSE"
+              : interval === "1h"
+                ? "COMPLETED_1H_SESSION_BARS_WITH_TERMINAL_CLOSE"
+                : interval === "1d"
+                  ? "PRIVATE_OWNER_COMPLETED_DAILY_CANDLES"
+                  : "PRIVATE_OWNER_DAILY_CANDLES_IN_COMPLETED_CALENDAR_PERIODS",
         });
       }
     }
@@ -1440,7 +1459,7 @@ export async function saveChartLayout(
     expected < 0 ||
     !payload ||
     !["line", "candles", "ohlc"].includes(payload.mode) ||
-    !["1d", "1wk", "1mo"].includes(payload.interval) ||
+    !["30m", "1h", "1d", "1wk", "1mo"].includes(payload.interval) ||
     !Array.isArray(payload.indicators) ||
     payload.indicators.length > 10 ||
     payload.indicators.some(

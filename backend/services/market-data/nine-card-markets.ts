@@ -6,11 +6,20 @@
  */
 import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
-import { EXCHANGES, exchangeSession } from "./exchanges";
-import { X2_INSTRUMENTS, registryInstrument } from "./instrument-registry";
+import { registryInstrument } from "./instrument-registry";
 import { marketSnapshot, type MarketSnapshot } from "./market-data";
-import { isDataOwner, PRIVATE_EXCHANGE_FEED_LABEL } from "./data-service";
-import { gatewayQuotes, gatewaySearchInstruments, resolveGatewayConfig } from "./angelone/gateway";
+import { isDataOwner } from "./data-service";
+import {
+  getIndianExchangeSession,
+  getNymexGlobexSession,
+} from "./angelone/calendar";
+import {
+  gatewayCandles,
+  gatewayQuotes,
+  gatewaySearchInstruments,
+  resolveGatewayConfig,
+} from "./angelone/gateway";
+import { VERIFIED_SEED_INSTRUMENTS } from "./angelone/instrument-master";
 import type {
   DataQualityState,
   ExchangeSessionState,
@@ -54,37 +63,68 @@ const BROKER_SESSIONS: Record<
   ExchangeSessionState,
   { state: MarketSessionState; label: string }
 > = {
-  OPEN: { state: "OPEN", label: "Session open" },
-  CLOSED: { state: "CLOSED", label: "Market closed" },
-  HOLIDAY: { state: "CLOSED", label: "Exchange holiday" },
+  OPEN: { state: "OPEN", label: "Open" },
+  CLOSED: { state: "CLOSED", label: "Closed" },
+  HOLIDAY: { state: "CLOSED", label: "Holiday" },
   PRE_OPEN: { state: "PREMARKET", label: "Pre-open" },
   SCHEDULE_UNKNOWN: { state: "UNKNOWN", label: "Market hours" },
-};
-
-const VENUE_EXCHANGE_MAP: Record<string, string> = {
-  NSE: "XNSE",
-  BSE: "XBOM",
-  MCX: "XNSE",
-  NYMEX: "XNYS",
-  "GLOBAL:CL": "XNYS",
-  ECB: "XETR",
 };
 
 function resolveSession(
   canonicalId: string,
   market: string,
   asOfIso: string,
-): { state: MarketSessionState; label: string } {
-  const exId = VENUE_EXCHANGE_MAP[canonicalId] ?? VENUE_EXCHANGE_MAP[market];
-  if (!exId) {
-    return { state: "UNKNOWN", label: "Market hours" };
+): { state: MarketSessionState; label: string; timezone: string } {
+  const nowMs = Date.parse(asOfIso);
+  const ts = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const upperMarket = market.toUpperCase();
+  const upperId = canonicalId.toUpperCase();
+
+  if (upperMarket === "NSE" || upperMarket === "BSE" || upperMarket === "MCX") {
+    const info = getIndianExchangeSession(upperMarket, ts);
+    const mapped = BROKER_SESSIONS[info.state];
+    return {
+      state: mapped.state,
+      label: info.holidayName ? "Holiday" : mapped.label,
+      timezone: "Asia/Kolkata",
+    };
   }
-  const ex = EXCHANGES.find((e) => e.id === exId);
-  if (!ex) return { state: "UNKNOWN", label: "Market hours" };
-  const s = exchangeSession(ex, asOfIso);
-  if (s.state === "OPEN") return { state: "OPEN", label: "Session open" };
-  if (s.state === "CLOSED") return { state: "CLOSED", label: "Market closed" };
-  return { state: "UNKNOWN", label: "Market hours" };
+  if (upperId === "GLOBAL:CL" || upperMarket === "NYMEX") {
+    const info = getNymexGlobexSession(ts);
+    const mapped = BROKER_SESSIONS[info.state];
+    return {
+      state: mapped.state,
+      label: info.label,
+      timezone: info.timezone,
+    };
+  }
+  if (upperMarket === "ECB" || upperId.startsWith("ECB:")) {
+    return {
+      state: "UNKNOWN",
+      label: "Daily reference",
+      timezone: "Europe/Frankfurt",
+    };
+  }
+  return { state: "UNKNOWN", label: "Market hours", timezone: "UTC" };
+}
+
+function sparklineReturn(points: readonly number[] | null): number | null {
+  if (!points || points.length < 2) return null;
+  const first = points[0];
+  const last = points[points.length - 1];
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first <= 0) return null;
+  return Math.round(((last - first) / first) * 10000) / 100;
+}
+
+function formatContractMonth(expiryIso: string | null | undefined): string | null {
+  if (!expiryIso || !/^\d{4}-\d{2}-\d{2}$/.test(expiryIso)) return null;
+  const ms = Date.parse(`${expiryIso}T00:00:00Z`);
+  if (!Number.isFinite(ms)) return null;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(ms));
 }
 
 function layoutRecordId(subject: string): string {
@@ -267,6 +307,7 @@ export function buildMarketOverviewCards(
   snapshot: MarketSnapshot,
   privateQuotes: readonly NormalizedMarketQuote[] = [],
   mcxAliasMap: ReadonlyMap<string, string> = new Map(),
+  privateSparklines: ReadonlyMap<string, number[]> = new Map(),
 ): MarketOverviewCard[] {
   const reconciled = reconcileGlobalMarketIds(ids);
   const allPoints = [...snapshot.quotes, ...snapshot.yields];
@@ -283,6 +324,11 @@ export function buildMarketOverviewCards(
       const quality = BROKER_QUOTE_QUALITY[privateQuote.quality];
       if (quality) {
         const session = BROKER_SESSIONS[privateQuote.marketState];
+        const rawSpark =
+          privateSparklines.get(canonicalId) ??
+          privateSparklines.get(resolvedQuoteId) ??
+          null;
+        const spark = rawSpark && rawSpark.length >= 2 ? rawSpark.slice(-30) : null;
         return {
           canonicalId,
           shortLabel: entry?.label ?? privateQuote.symbol,
@@ -296,8 +342,13 @@ export function buildMarketOverviewCards(
           percentChange: privateQuote.changePct,
           previousClose: privateQuote.prevClose,
           changeUnit: "%",
-          sparkline: null,
-          provider: PRIVATE_EXCHANGE_FEED_LABEL,
+          sparkline: spark,
+          sparklinePeriodLabel: spark ? `${spark.length}D` : null,
+          sparklineReturnPct: sparklineReturn(spark),
+          contractLabel: formatContractMonth(privateQuote.expiry),
+          marketTimezone: "Asia/Kolkata",
+          isLive: privateQuote.isLive && quality === "REAL_TIME" && session.state === "OPEN",
+          provider: "Exchange data",
           sourceUrl: entry?.sourceUrl ?? "",
           sourceObservedAtUTC: privateQuote.exchangeTimestampUTC,
           sourceObservedPrecision: privateQuote.exchangeTimestampUTC ? "TIMESTAMP" : "UNAVAILABLE",
@@ -317,6 +368,7 @@ export function buildMarketOverviewCards(
 
     if (point && point.value !== null) {
       const pts = hist?.points.map((p) => p.close) ?? null;
+      const spark = pts && pts.length >= 10 ? pts.slice(-30) : null;
       const prevClose =
         pts && pts.length >= 2
           ? pts[pts.length - 2]
@@ -351,7 +403,12 @@ export function buildMarketOverviewCards(
         previousClose:
           prevClose !== null ? Math.round(prevClose * 10000) / 10000 : null,
         changeUnit: point.changeUnit,
-        sparkline: pts && pts.length >= 10 ? pts.slice(-30) : null,
+        sparkline: spark,
+        sparklinePeriodLabel: spark ? `${spark.length}D` : null,
+        sparklineReturnPct: sparklineReturn(spark),
+        contractLabel: null,
+        marketTimezone: session.timezone,
+        isLive: false,
         provider: point.provider,
         sourceUrl: point.sourceUrl,
         sourceObservedAtUTC: point.sourceDate ? point.sourceDate : null,
@@ -373,7 +430,8 @@ export function buildMarketOverviewCards(
       const upper = (entry?.id ?? canonicalId).toUpperCase();
       if (entry?.assetClass === "INDEX") return "pts";
       if (upper === "GLOBAL:CL") return "USD/bbl";
-      if (upper === "MCX:GOLD" || upper === "MCX:SILVER") return "INR";
+      if (upper === "MCX:GOLD") return "INR / 10g";
+      if (upper === "MCX:SILVER") return "INR / kg";
       return entry?.currency ?? "pts";
     })();
     return {
@@ -390,7 +448,12 @@ export function buildMarketOverviewCards(
       previousClose: null,
       changeUnit: "%",
       sparkline: null,
-      provider: "Market data unavailable",
+      sparklinePeriodLabel: null,
+      sparklineReturnPct: null,
+      contractLabel: null,
+      marketTimezone: session.timezone,
+      isLive: false,
+      provider: "Market data",
       sourceUrl: entry?.sourceUrl ?? "",
       sourceObservedAtUTC: null,
       sourceObservedPrecision: "UNAVAILABLE",
@@ -398,7 +461,7 @@ export function buildMarketOverviewCards(
       quality: "UNAVAILABLE",
       marketSession: session.state,
       sessionLabel: session.label,
-      reasonCode: "Live quote feed is currently unavailable for this instrument.",
+      reasonCode: "Quote feed is currently unavailable for this instrument.",
       redistributable: false,
     };
   });
@@ -413,48 +476,100 @@ export async function getMarketOverviewPayload(
     const gw = resolveGatewayConfig();
     const ownerAllowed = !!subject && isDataOwner(subject) && gw.flags.enablePrivateBrokerData;
     const publicAllowed = gw.flags.mode === "public_licensed" && gw.flags.enablePublicExchangeQuotes;
+    const empty = {
+      quotes: [] as NormalizedMarketQuote[],
+      mcxAliasMap: new Map<string, string>(),
+      sparklines: new Map<string, number[]>(),
+    };
     if (!ownerAllowed && !publicAllowed) {
-      return { quotes: [] as NormalizedMarketQuote[], mcxAliasMap: new Map<string, string>() };
+      return empty;
     }
+    const nowMs = Date.now();
     const mcxAliasMap = new Map<string, string>();
     const fetchIds: string[] = [];
     for (const id of ids) {
       if (id === "MCX:GOLD" || id === "MCX:SILVER") {
+        const root = id.slice(4);
+        let mappedId: string | null = null;
         try {
-          const root = id.slice(4);
           const found = await gatewaySearchInstruments({
             isOwner: !!subject && isDataOwner(subject),
             q: root,
             exchange: "MCX",
             segment: "FUTURE",
-            limit: 6,
+            limit: 12,
           });
+          // Strictly match exact root symbol ("GOLD" / "SILVER"), NEVER mini/guinea/petal/micro variants or expired contracts
           const nearest = found.instruments
-            .filter((i) => i.symbol.toUpperCase().startsWith(root) && i.expiry)
+            .filter(
+              (i) =>
+                i.exchange === "MCX" &&
+                i.segment === "FUTURE" &&
+                i.symbol.toUpperCase() === root &&
+                !!i.expiry &&
+                Date.parse(`${i.expiry}T23:59:59+05:30`) >= nowMs,
+            )
             .sort((a, b) => (a.expiry ?? "").localeCompare(b.expiry ?? ""))[0];
-          if (nearest) {
-            mcxAliasMap.set(id, nearest.id);
-            fetchIds.push(nearest.id);
-          }
+          if (nearest) mappedId = nearest.id;
         } catch {
-          // Leave MCX contract unmapped if live search fails; never fabricate.
+          // Fall through to verified unexpired seed check below.
+        }
+        if (!mappedId) {
+          const seedFallback = VERIFIED_SEED_INSTRUMENTS.filter(
+            (i) =>
+              i.exchange === "MCX" &&
+              i.segment === "FUTURE" &&
+              i.symbol.toUpperCase() === root &&
+              !!i.expiry &&
+              Date.parse(`${i.expiry}T23:59:59+05:30`) >= nowMs,
+          ).sort((a, b) => (a.expiry ?? "").localeCompare(b.expiry ?? ""))[0];
+          if (seedFallback) mappedId = seedFallback.id;
+        }
+        if (mappedId) {
+          mcxAliasMap.set(id, mappedId);
+          fetchIds.push(mappedId);
         }
       } else if (/^(NSE|BSE|MCX):/.test(id)) {
         fetchIds.push(id);
       }
     }
     if (fetchIds.length === 0) {
-      return { quotes: [] as NormalizedMarketQuote[], mcxAliasMap };
+      return { quotes: [] as NormalizedMarketQuote[], mcxAliasMap, sparklines: new Map<string, number[]>() };
     }
+    const uniqueFetchIds = [...new Set(fetchIds)];
     try {
       const res = await gatewayQuotes({
         authenticated: !!subject,
         isOwner: !!subject && isDataOwner(subject),
-        ids: [...new Set(fetchIds)],
+        ids: uniqueFetchIds,
       });
-      return { quotes: res.quotes, mcxAliasMap };
+      // Fetch real bounded daily closes (last ~45 calendar days -> ~30 trading days) for sparklines without blocking quotes on failure
+      const sparklines = new Map<string, number[]>();
+      if (res.quotes.length > 0) {
+        const candleResults = await Promise.allSettled(
+          uniqueFetchIds.map(async (targetId) => {
+            const series = await gatewayCandles({
+              authenticated: !!subject,
+              isOwner: !!subject && isDataOwner(subject),
+              id: targetId,
+              interval: "1d",
+              days: 45,
+            });
+            const closes = series.candles
+              .map((c) => c.close)
+              .filter((v): v is number => Number.isFinite(v) && v > 0);
+            return { targetId, closes };
+          }),
+        );
+        for (const item of candleResults) {
+          if (item.status === "fulfilled" && item.value.closes.length >= 2) {
+            sparklines.set(item.value.targetId, item.value.closes.slice(-30));
+          }
+        }
+      }
+      return { quotes: res.quotes, mcxAliasMap, sparklines };
     } catch {
-      return { quotes: [] as NormalizedMarketQuote[], mcxAliasMap };
+      return { quotes: [] as NormalizedMarketQuote[], mcxAliasMap, sparklines: new Map<string, number[]>() };
     }
   });
   const [layout, snapshot, ownerData] = await Promise.all([
@@ -481,6 +596,7 @@ export async function getMarketOverviewPayload(
       snapshot,
       ownerData.quotes,
       ownerData.mcxAliasMap,
+      ownerData.sparklines,
     ),
     catalog: allowedCatalog,
     disclosure:

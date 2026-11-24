@@ -39,6 +39,7 @@ const CANDLE_PATH = "/rest/secure/angelbroking/historical/v1/getCandleData";
 const INTERVAL_MAP: Readonly<Record<CandleInterval, string>> = {
   "1d": "ONE_DAY",
   "1h": "ONE_HOUR",
+  "30m": "THIRTY_MINUTE",
   "15m": "FIFTEEN_MINUTE",
   "5m": "FIVE_MINUTE",
 };
@@ -46,6 +47,7 @@ const INTERVAL_MAP: Readonly<Record<CandleInterval, string>> = {
 const MAX_DAYS_BY_INTERVAL: Readonly<Record<CandleInterval, number>> = {
   "1d": MAX_DAILY_CANDLE_DAYS,
   "1h": 60,
+  "30m": 60,
   "15m": 30,
   "5m": 15,
 };

@@ -563,7 +563,7 @@ export async function providerIntradayCandles(
   config: ProviderConfig,
   instrument: Instrument,
   secret: string,
-  interval: "1h" = "1h",
+  interval: "30m" | "1h" = "1h",
   days = 45,
   fetcher: typeof fetch = fetch,
   now = Date.now(),
@@ -579,6 +579,12 @@ export async function providerIntradayCandles(
   let url: URL;
   let headers: Record<string, string> = {};
   if (config.provider === "EODHD") {
+    if (interval === "30m") {
+      throw new ProviderFailure(
+        "INVALID_DATA",
+        "EODHD does not publish native 30-minute bars; 30m bars are never synthesized from other intervals.",
+      );
+    }
     url = new URL(
       "https://eodhd.com/api/intraday/" +
         encodeURIComponent(instrument.providerSymbol),
@@ -600,7 +606,7 @@ export async function providerIntradayCandles(
       symbol: instrument.providerSymbol,
       from: td(fromDate, false),
       to: td(toDate, true),
-      interval: "60min",
+      interval: interval === "30m" ? "30min" : "60min",
       response: "json",
     }).toString();
     headers = { Authorization: "Bearer " + secret };

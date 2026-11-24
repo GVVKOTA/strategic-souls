@@ -18,7 +18,6 @@ import {
 import {
   validateResearch,
   validateScanRequestScope,
-  SCAN_REQUEST_VERSION,
   isScanUniversePreset,
   preflightResearch,
   parsePrivateCsvDataset,
@@ -36,7 +35,11 @@ import {
 } from "./scan-quota";
 import { parseDiscoverQuery } from "./discover-parser";
 import { CLASSIC_50_PRESETS } from "./classic-presets";
-import { matchDrawnPattern, type DrawPoint } from "../../engines/pattern-draw";
+import {
+  matchDrawnPattern,
+  validateStrokePoints,
+  type DrawPoint,
+} from "../../engines/pattern-draw";
 import { runSoulGenomeEvidence } from "../../engines/soul-genome";
 
 const VALID_CLASSIC_FORMULA_IDS = new Set(CLASSIC_50_PRESETS.map((p) => p.id));
@@ -247,6 +250,9 @@ export async function workspaceState(
     researchDrafts: records.results
       .filter((r) => r.kind === "scan-draft")
       .map(recordView),
+    savedPatterns: records.results
+      .filter((r) => r.kind === "pattern-template")
+      .map(recordView),
     researchPreferences: records.results.find(
       (r) => r.kind === "research-preferences",
     )
@@ -280,7 +286,7 @@ export async function workspaceState(
     advanced: {
       billingEnabled: false,
       allowance:
-        "Classic: 8 completed scans / IST day · Advanced: 1 completed scan / rolling 60 min · Zero paid credits.",
+        "Classic: 20 completed scans / IST day · Advanced: 1 completed scan / rolling 60 min · Zero paid credits.",
     },
     scanQuota,
     pinnedFormulaIds,
@@ -445,14 +451,6 @@ async function scanSource(
     asOf: new Date().toISOString(),
     lineage: [],
   });
-  if (definition.interval === "30m") {
-    const source = hasCsv || preset === "CUSTOM_CSV"
-      ? "Private CSV"
-      : preset === "ECB_DAILY" || (!preset && definition.universe === "ECB_DAILY")
-        ? "ECB Daily Reference FX"
-        : "Market";
-    return unavailable(source, "30-minute (30m) candles are not supported in Soul Scan. Choose 1 Hour, Daily, Weekly, or Monthly.");
-  }
   if (preset === "CUSTOM_CSV" && !hasCsv)
     return unavailable("Private CSV", "Upload a dated daily CSV to scan this universe.");
   if ((hasCsv || preset === "CUSTOM_CSV") && definition.interval !== "1d")
@@ -460,6 +458,13 @@ async function scanSource(
       "Private CSV",
       `Private CSV uploads supply daily bars and cannot run on ${definition.interval}. Select Daily (1d).`,
     );
+  const ecbOnly = preset === "ECB_DAILY" || (!preset && definition.universe === "ECB_DAILY");
+  if (ecbOnly && (definition.interval === "30m" || definition.interval === "1h")) {
+    return unavailable(
+      "ECB Daily Reference FX",
+      `ECB daily reference FX does not publish genuine ${definition.interval === "30m" ? "30-minute (30m)" : "1-hour (1h)"} candles. Select Daily, Weekly, or Monthly.`,
+    );
+  }
   if (hasCsv) {
     let parsed;
     try {
@@ -569,9 +574,6 @@ export async function mutateWorkspace(
     } catch (error) {
       throw new HttpError(400, (error as Error).message);
     }
-    if (action !== "preflight-scan" && input.scanRequestVersion === SCAN_REQUEST_VERSION &&
-      input.interval === "30m")
-      throw new HttpError(422, "30-minute candles are not supported in Soul Scan. Choose 1 Hour, Daily, Weekly, or Monthly.");
   }
   await rate(subject + ":x1write", 120, 60000);
   if (action === "pin-formula" || action === "unpin-formula") {
@@ -964,6 +966,59 @@ export async function mutateWorkspace(
     // Quota-free deterministic natural-language Blueprint parser
     return { blueprint: parseDiscoverQuery(String(input.query ?? "")) };
   }
+  if (action === "save-pattern") {
+    const key = retryKey(input.requestId);
+    const patternName = text(input.name, 60);
+    const rawPts = Array.isArray(input.strokePoints)
+      ? (input.strokePoints as DrawPoint[])
+      : [];
+    let validPts: DrawPoint[];
+    try {
+      validPts = validateStrokePoints(rawPts).slice(0, 240);
+    } catch (err) {
+      throw new HttpError(400, (err as Error).message);
+    }
+    const payload = JSON.stringify({
+      points: validPts.map((p) => ({
+        x: Math.round(p.x * 10000) / 10000,
+        y: Math.round(p.y * 10000) / 10000,
+      })),
+      windowBars: Math.max(8, Math.min(60, Math.round(Number(input.windowBars ?? 20)))),
+      minPatternFit: Math.max(35, Math.min(95, Math.round(Number(input.minPatternFit ?? 75)))),
+    });
+    const before = await db
+      .prepare("SELECT * FROM x1_records WHERE id=?")
+      .bind(key)
+      .first<RawRecord>();
+    if (before) {
+      if (
+        before.subject !== subject ||
+        before.kind !== "pattern-template" ||
+        before.name !== patternName ||
+        before.payload !== payload
+      ) {
+        throw new HttpError(409, "Request ID already used for different pattern.");
+      }
+      return { id: before.id, replayed: true };
+    }
+    await db
+      .prepare(
+        "INSERT OR IGNORE INTO x1_records (id,subject,kind,name,payload,version,archived,last_write,created_at,updated_at) SELECT ?,?,'pattern-template',?,?,1,0,?,?,? WHERE (SELECT count(*) FROM x1_records WHERE subject=? AND archived=0)<100",
+      )
+      .bind(key, subject, patternName, payload, key, now, now, subject)
+      .run();
+    const saved = await db
+      .prepare("SELECT * FROM x1_records WHERE id=?")
+      .bind(key)
+      .first<RawRecord>();
+    if (!saved) {
+      throw new HttpError(429, "Active private record limit reached.");
+    }
+    if (saved.subject !== subject || saved.kind !== "pattern-template") {
+      throw new HttpError(409, "Pattern ID already used.");
+    }
+    return { id: saved.id };
+  }
   if (action === "run-draw-scan") {
     const requestId = retryKey(input.requestId);
     const rawName = typeof input.name === "string" ? input.name.trim() : "";
@@ -984,8 +1039,13 @@ export async function mutateWorkspace(
     if (strokePoints.length < 2 || strokePoints.length > 400) {
       throw new HttpError(
         400,
-        "Draw a shape with 2–400 points or select one of the 8 pattern templates.",
+        "Draw a shape with 2–400 points or select one of the pattern templates.",
       );
+    }
+    try {
+      validateStrokePoints(strokePoints);
+    } catch (err) {
+      throw new HttpError(400, (err as Error).message);
     }
     const windowBars = Math.max(
       8,
@@ -993,7 +1053,7 @@ export async function mutateWorkspace(
     );
     const minPatternFit = Math.max(
       35,
-      Math.min(95, Math.round(Number(input.minPatternFit ?? 62))),
+      Math.min(95, Math.round(Number(input.minPatternFit ?? 75))),
     );
     const horizonBars = Math.max(
       1,
@@ -1187,7 +1247,7 @@ export async function mutateWorkspace(
             "Eligible historical data is unavailable. No run or credit charge was created.",
         );
       }
-      await rate(subject + ":x1scans", 30, 86400000);
+      await rate(subject + ":x1scans", 60, 86400000);
       const asOf = new Date().toISOString();
       const preflight = preflightResearch(
         definition,
