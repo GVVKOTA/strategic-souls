@@ -7,10 +7,10 @@ export const DEFAULT_EIGHT_CARD_IDS: readonly string[] = Object.freeze([
   "NSE:NIFTY",
   "BSE:SENSEX",
   "NSE:BANKNIFTY",
-  "NSE:NIFTYMIDCAP100",
+  "NSE:MIDCPNIFTY",
   "MCX:GOLD",
   "MCX:SILVER",
-  "GLOBAL:CL",
+  "GLOBAL:CLF27",
   "ECB:USDINR",
 ]);
 
@@ -21,6 +21,14 @@ export const ALLOWED_GLOBAL_MARKET_IDS: ReadonlySet<string> = new Set(
 /** Backward-compatible alias pointing strictly to the 8 allowed Global dashboard instruments. */
 export const DEFAULT_NINE_CARD_IDS: readonly string[] = DEFAULT_EIGHT_CARD_IDS;
 
+/** Existing dashboard layouts keep their order when an instrument slot is replaced. */
+export function normalizeMarketTileId(raw: string): string {
+  const id = raw.trim().toUpperCase();
+  if (id === "NSE:NIFTYMIDCAP100") return "NSE:MIDCPNIFTY";
+  if (id === "GLOBAL:CL") return "GLOBAL:CLF27";
+  return id;
+}
+
 /** Reconciles any legacy 9-card or custom layout strictly onto the 8 allowed Global dashboard tiles. */
 export function reconcileGlobalMarketIds(raw: unknown): string[] {
   const kept: string[] = [];
@@ -28,7 +36,7 @@ export function reconcileGlobalMarketIds(raw: unknown): string[] {
   if (Array.isArray(raw)) {
     for (const item of raw) {
       if (typeof item !== "string") continue;
-      const upper = item.trim().toUpperCase();
+      const upper = normalizeMarketTileId(item);
       // Map dated MCX Gold/Silver contracts back to canonical Global tile IDs if stored previously.
       const normalized =
         upper.startsWith("MCX:GOLD") && upper !== "MCX:GOLD"

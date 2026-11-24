@@ -259,7 +259,7 @@ function SharedLiveClock({ active }: { active: boolean }) {
 
 /**
  * Strategic Souls V3.1 — Strict 8-Tile Global Market Overview Grid.
- * Displays NIFTY 50, SENSEX, BANK NIFTY, NIFTY MIDCAP, GOLD, SILVER MCX, CL, and USD/INR
+ * Displays NIFTY 50, SENSEX, BANK NIFTY, Nifty Midcap Select, GOLD, SILVER MCX, CL Jan 2027, and USD/INR
  * in a balanced 2-col mobile / 4-col desktop grid with truthful timestamps and semantic sparklines.
  */
 export default function MarketOverviewGrid({

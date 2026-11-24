@@ -1,7 +1,7 @@
 /**
  * Strategic Souls V3 — Eight-Tile Global Market Overview & D1 Layout Persistence.
  * Enforces the strict 8-instrument Global allowlist:
- *   NIFTY 50, SENSEX, BANK NIFTY, NIFTY MIDCAP, GOLD, SILVER MCX, CL, USD/INR.
+ *   NIFTY 50, SENSEX, BANK NIFTY, Nifty Midcap Select, GOLD, SILVER MCX, CL Jan 2027, USD/INR.
  * Reconciles legacy 9-card stored layouts without destroying user watchlists/holdings/history.
  */
 import { database, rate } from "../../../database/queries/repository";
@@ -29,6 +29,7 @@ import {
   ALLOWED_GLOBAL_MARKET_IDS,
   DEFAULT_EIGHT_CARD_IDS,
   DEFAULT_NINE_CARD_IDS,
+  normalizeMarketTileId,
   reconcileGlobalMarketIds,
   type MarketLayoutRecord,
   type MarketOverviewCard,
@@ -152,7 +153,7 @@ export function validateNineCardIds(raw: unknown): string[] {
     if (typeof item !== "string") {
       throw new HttpError(400, "Each market slot must be a canonical instrument ID.");
     }
-    const entry = registryInstrument(item);
+    const entry = registryInstrument(normalizeMarketTileId(item));
     if (!entry || !ALLOWED_GLOBAL_MARKET_IDS.has(entry.id)) {
       throw new HttpError(
         400,
@@ -439,7 +440,7 @@ export function buildMarketOverviewCards(
     const resolvedUnit = (() => {
       const upper = (entry?.id ?? canonicalId).toUpperCase();
       if (entry?.assetClass === "INDEX") return "pts";
-      if (upper === "GLOBAL:CL") return "USD/bbl";
+      if (upper === "GLOBAL:CLF27") return "USD/bbl";
       if (upper === "MCX:GOLD") return "INR / 10g";
       if (upper === "MCX:SILVER") return "INR / kg";
       return entry?.currency ?? "pts";
@@ -471,7 +472,9 @@ export function buildMarketOverviewCards(
       quality: "UNAVAILABLE",
       marketSession: session.state,
       sessionLabel: session.label,
-      reasonCode: "Quote feed is currently unavailable for this instrument.",
+      reasonCode: entry?.id === "GLOBAL:CLF27"
+        ? "No authorized NYMEX quote feed is connected for this contract."
+        : "Quote feed is currently unavailable for this instrument.",
       redistributable: false,
     };
   });
