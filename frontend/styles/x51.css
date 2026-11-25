@@ -38,25 +38,79 @@
 .x1-india-identity {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-  white-space: nowrap;
+  gap: 7px;
   color: #ffab60;
-  font-size: clamp(.66rem, 1.3vw, .78rem);
+  font-size: 1rem;
   font-weight: 650;
   line-height: 1.2;
 }
 
-.x1-india-identity img { width: 24px; height: 16px; }
+.x1-india-identity img { width: 26px; height: auto; flex: none; }
+.x1-app .x1-topbar.x11-header {
+  height: auto;
+  min-height: 64px;
+  gap: 6px 10px;
+}
+.x1-app .x1-topbar.x11-header-global {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) auto auto;
+  grid-template-areas: "identity search help account";
+}
+.x11-header-global .x51-topbar-left { grid-area: identity; }
+.x11-header-global .x51-topbar-search-wrap { grid-area: search; width: min(100%, 45rem); justify-self: center; }
+.x11-header-global .x11-help-anchor { grid-area: help; }
+.x11-header-global .x6-account-anchor { grid-area: account; }
+.x11-header .x51-help-btn,
+.x11-header .x51-menu-btn,
+.x11-header .x51-bell-btn { min-width: 44px; min-height: 44px; }
+.x11-help-anchor { position: relative; flex: none; }
+.x11-help-options {
+  position: absolute;
+  inset: calc(100% + 6px) 0 auto auto;
+  z-index: 90;
+  display: grid;
+  padding: 5px;
+  min-width: max-content;
+  border: 1px solid var(--x1-divider-strong);
+  border-radius: 12px;
+  background: var(--x1-surface-2);
+  box-shadow: 0 12px 30px #0008;
+}
+.x11-help-options button {
+  min-height: 44px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  text-align: start;
+}
+.x11-help-options button:hover,
+.x11-help-options button:focus-visible { background: var(--x1-bg); }
+@media (max-width: 56rem) {
+  .x1-app .x1-topbar.x11-header-global {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "identity help account" "search search search";
+    padding-inline: max(10px, env(safe-area-inset-left)) max(10px, env(safe-area-inset-right));
+  }
+  .x11-header-global .x51-topbar-search-wrap { width: 100%; }
+}
+@media (max-width: 30rem) {
+  .x11-header .x6-avatar-trigger-guest { width: 44px; padding: 2px; }
+  .x11-header .x6-avatar-trigger-guest span { display: none; }
+  .x11-header .x51-topbar-left { gap: 5px; }
+}
 @media (max-width: 420px) {
-  .x1-app .x1-topbar:has(.x1-india-identity) { height: auto; min-height: 0; flex-wrap: wrap; gap: 5px 8px; }
-  .x1-topbar:has(.x1-india-identity) .x51-topbar-left { flex: 1 0 auto; }
-  .x1-topbar:has(.x1-india-identity) .x51-topbar-search-wrap { flex: 1 0 100%; order: 3; }
   .x1-footer > div { flex-wrap: wrap; gap: 6px 12px; }
   .x1-footer a { white-space: nowrap; }
 }
 .x1-global-menu-group { display: grid; gap: 5px; margin-bottom: .9rem; }
 .x1-global-menu-group h3 { margin: .3rem 0; font-size: .82rem; color: var(--x1-text-secondary); }
+.x1-app .x11-market-expand { display: none; margin: 10px auto 0; min-height: 44px; }
+@media (max-width: 767px) {
+  .x1-app .x11-market-expand { display: flex; }
+  .x1-app .x11-markets-collapsed > .ss-v3-mcard:nth-child(n + 5) { display: none !important; }
+}
+.x11-feed-filters { margin-bottom: 12px; }
+.x11-feed-filters > summary { width: fit-content; padding: 11px; min-height: 44px; cursor: pointer; }
+.x11-welcome-summary { cursor: pointer; padding: 10px; }
 .x1-alert-selected { outline: 1px solid var(--x1-title-blue); }
 .x1-asset-actions { padding: .6rem .9rem; justify-content: space-between; }
 .x53-globe-stage.is-fullscreen {

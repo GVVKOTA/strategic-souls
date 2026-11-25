@@ -570,6 +570,9 @@ export async function mutateWorkspace(
     action = input.action,
     now = new Date().toISOString();
   if (action === "preflight-scan" || action === "run-scan" || action === "run-draw-scan") {
+    if (input.universePreset === "NIFTY_500" || input.universe === "NIFTY_500") {
+      throw new HttpError(503, "Nifty 500 is unavailable. An authorized constituent snapshot and eligible historical coverage are required. No scan allowance was used.");
+    }
     try {
       validateScanRequestScope(input);
     } catch (error) {

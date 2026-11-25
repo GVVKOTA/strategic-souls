@@ -57,9 +57,8 @@ import AvatarStudio from "./avatar-studio";
 import type { SettingsSection } from "./account-quick-panel";
 
 type Props = {
-  initialSection?: SettingsSection;
+  initialSection?: SettingsSection | null;
   notify: Notice;
-  onBack: () => void;
   onProfileSynced: (profile: UserProfileSnapshot) => void;
   onSignOut: () => void;
   onOpenNotification?: (id: string) => void;
@@ -155,16 +154,14 @@ const SECTIONS: {
 ];
 
 export default function SettingsView({
-  initialSection = "profile",
+  initialSection = null,
   notify,
-  onBack,
   onProfileSynced,
   onSignOut,
   onOpenNotification,
   onOpenPriceAlerts,
 }: Props) {
-  const [section, setSection] = useState<SettingsSection>(initialSection);
-  const [mobileListOpen, setMobileListOpen] = useState(false);
+  const [section, setSection] = useState<SettingsSection | null>(initialSection);
   const [profile, setProfile] = useState<UserProfileSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -208,18 +205,6 @@ export default function SettingsView({
   const [eraseText, setEraseText] = useState("");
   const [confirmGroups, setConfirmGroups] = useState(false);
   const [confirmConvos, setConfirmConvos] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    queueMicrotask(() => {
-      if (!alive) return;
-      setSection(initialSection);
-      setMobileListOpen(false);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [initialSection]);
 
   const loadProfile = useCallback(
     async (signal?: AbortSignal) => {
@@ -653,23 +638,6 @@ export default function SettingsView({
 
   return (
     <section className="x6-settings" aria-label="Settings and preferences">
-      <header className="x6-settings-topbar">
-        <button
-          type="button"
-          className="x1-secondary x1-motion-button"
-          onClick={onBack}
-        >
-          <ArrowLeft size={16} />
-          <span>Back to workspace</span>
-        </button>
-        <div>
-          <h1 style={{ color: "var(--x1-title-blue)" }}>Settings</h1>
-          <p className="x1-caption">
-            Private to your account · {APP_RELEASE.releaseTrack}
-          </p>
-        </div>
-      </header>
-
       {error && (
         <div role="alert" className="x1-callout">
           <span>{error}</span>
@@ -686,9 +654,7 @@ export default function SettingsView({
       <div className="x6-settings-layout">
         {/* Telegram-inspired Settings Navigation List */}
         <nav
-          className={
-            "x6-settings-rail" + (mobileListOpen ? " is-mobile-open" : "")
-          }
+          className={"x6-settings-rail" + (section ? "" : " is-mobile-open")}
           aria-label="Settings categories"
         >
           <div className="ss-v3-settings-list">
@@ -711,7 +677,7 @@ export default function SettingsView({
                   }
                   onClick={() => {
                     setSection(item.id);
-                    setMobileListOpen(false);
+                    requestAnimationFrame(() => document.getElementById("x11-settings-category")?.focus({ preventScroll: true }));
                   }}
                 >
                   <span className="ss-v3-settings-row-left">
@@ -754,16 +720,18 @@ export default function SettingsView({
           </div>
         </nav>
 
-        <div className="x6-settings-content">
+        {section && <div className="x6-settings-content">
           <button
             type="button"
+            id="x11-settings-category"
             className="x6-settings-mobile-switch x1-secondary"
-            onClick={() => setMobileListOpen((v) => !v)}
+            onClick={() => {
+              setSection(null);
+              requestAnimationFrame(() => document.querySelector<HTMLElement>(".x6-settings-rail button")?.focus({ preventScroll: true }));
+            }}
           >
-            <span>
-              Section: {SECTIONS.find((s) => s.id === section)?.label}
-            </span>
-            <span>{mobileListOpen ? "Hide menu" : "All settings"}</span>
+            <ArrowLeft size={16} aria-hidden="true" />
+            <span>All categories</span>
           </button>
 
           {loading && !profile ? (
@@ -2268,7 +2236,7 @@ export default function SettingsView({
               )}
             </>
           ) : null}
-        </div>
+        </div>}
       </div>
 
       {profile && (

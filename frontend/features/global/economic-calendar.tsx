@@ -43,6 +43,7 @@ type Props = {
   initialEventId?: string;
   onRequireAuth?: () => void;
   onOpenEventChart?: (ctx: EconomicEventChartContext) => void;
+  onViewCalendar?: () => void;
   notify: Notice;
 };
 
@@ -143,6 +144,7 @@ export default function EconomicCalendar({
   onRequireAuth,
   onOpenEventChart,
   initialEventId,
+  onViewCalendar,
   notify,
 }: Props) {
   const [range, setRange] = useState<"today" | "week" | "upcoming" | "all">(
@@ -237,7 +239,7 @@ export default function EconomicCalendar({
     URL.revokeObjectURL(url);
   }
 
-  const visibleEvents = showAll ? events : events.slice(0, 6);
+  const visibleEvents = onViewCalendar ? events.slice(0, 3) : showAll ? events : events.slice(0, 6);
   const tzShort =
     TIMEZONES.find((t) => t.id === timeZone)?.label ?? "IST";
 
@@ -251,7 +253,9 @@ export default function EconomicCalendar({
             Verified coverage through Mar 2027
           </p>
         </div>
-        <label className="x53-cal-tz x52-zone-picker">
+        {onViewCalendar ? (
+          <button type="button" className="x1-secondary" onClick={onViewCalendar}>View calendar</button>
+        ) : <label className="x53-cal-tz x52-zone-picker">
           <span className="x1-caption">Timezone</span>
           <select
             id="ss-v31-calendar-tz"
@@ -267,10 +271,10 @@ export default function EconomicCalendar({
               </option>
             ))}
           </select>
-        </label>
+        </label>}
       </div>
 
-      <div className="x53-cal-controls">
+      {!onViewCalendar && <div className="x53-cal-controls">
         <div className="x53-cal-chips" role="group" aria-label="Time range">
           {(
             [
@@ -319,7 +323,7 @@ export default function EconomicCalendar({
             </button>
           ))}
         </div>
-      </div>
+      </div>}
 
       {loading ? (
         <div className="x55-feed-skeleton" aria-busy="true" aria-label="Loading economic calendar">
@@ -342,13 +346,13 @@ export default function EconomicCalendar({
         <div className="x1-callout">
           <CalendarIcon size={16} aria-hidden="true" /> No official scheduled
           releases in this window.{" "}
-          <button
+          {!onViewCalendar && <button
             type="button"
             className="x1-text-button"
             onClick={() => setRange("upcoming")}
           >
             View Upcoming
-          </button>
+          </button>}
         </div>
       ) : (
         <>
@@ -503,7 +507,7 @@ export default function EconomicCalendar({
           </div>
 
           <div className="x53-cal-footer">
-            {events.length > 6 && (
+            {!onViewCalendar && events.length > 6 && (
               <button
                 type="button"
                 className="x1-secondary"

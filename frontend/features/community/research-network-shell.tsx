@@ -49,7 +49,7 @@ const SocialWorkspace = lazy(() =>
 
 type PrimaryCommunityTab = "web" | "chats" | "groups";
 
-const COMM_TAB_ORDER: PrimaryCommunityTab[] = ["chats", "web", "groups"];
+const COMM_TAB_ORDER: PrimaryCommunityTab[] = ["web", "chats", "groups"];
 
 function formatFeedTimeframe(tf: string): string {
   const lower = tf.toLowerCase();
@@ -164,6 +164,7 @@ type Props = {
   onOpenAsset: (symbol: string) => void;
   onCopyToStrategy: (formula: string) => void;
   onMobileChatActive?: (active: boolean) => void;
+  onSelectTab?: (tab: PrimaryCommunityTab) => void;
 };
 
 export default function ResearchNetworkShell({
@@ -174,7 +175,7 @@ export default function ResearchNetworkShell({
   searchQuery,
   currentUser,
   profileRevision = 0,
-  initialTab = "chats",
+  initialTab = "web",
   initialProfileHandle = null,
   initialThread = "",
   initialRoom = "",
@@ -188,6 +189,7 @@ export default function ResearchNetworkShell({
   onOpenAsset,
   onCopyToStrategy,
   onMobileChatActive,
+  onSelectTab,
 }: Props) {
   const [tab, setTab] = useState<PrimaryCommunityTab>(initialTab);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
@@ -216,11 +218,13 @@ export default function ResearchNetworkShell({
 
   const selectCommunityTab = useCallback((nextTab: PrimaryCommunityTab) => {
     setTab(nextTab);
+    onSelectTab?.(nextTab);
+    try { localStorage.setItem("ss-community-tab", nextTab); } catch { /* URL still records the choice. */ }
     const url = new URL(window.location.href);
     url.searchParams.set("view", "community");
     url.searchParams.set("tab", nextTab === "web" ? "souls" : nextTab === "groups" ? "rooms" : "chats");
     window.history.replaceState(window.history.state, "", url);
-  }, []);
+  }, [onSelectTab]);
 
   // Compact researcher search results
   const [researchers, setResearchers] = useState<PublicResearcherSearchItem[]>(
@@ -1032,6 +1036,22 @@ export default function ResearchNetworkShell({
         >
           <button
             ref={(el) => {
+              tabRefs.current.web = el;
+            }}
+            type="button"
+            role="tab"
+            className={"ss-v3-comm-tab" + (tab === "web" ? " is-active" : "")}
+            aria-selected={tab === "web"}
+            tabIndex={tab === "web" ? 0 : -1}
+            onClick={() => selectCommunityTab("web")}
+          >
+            <span className="ss-v3-comm-tab-icon">
+              <IconSoulFeed size={24} />
+            </span>
+            <span>Feed</span>
+          </button>
+          <button
+            ref={(el) => {
               tabRefs.current.chats = el;
             }}
             type="button"
@@ -1056,22 +1076,6 @@ export default function ResearchNetworkShell({
           </button>
           <button
             ref={(el) => {
-              tabRefs.current.web = el;
-            }}
-            type="button"
-            role="tab"
-            className={"ss-v3-comm-tab" + (tab === "web" ? " is-active" : "")}
-            aria-selected={tab === "web"}
-            tabIndex={tab === "web" ? 0 : -1}
-            onClick={() => selectCommunityTab("web")}
-          >
-            <span className="ss-v3-comm-tab-icon">
-              <IconSoulFeed size={24} />
-            </span>
-            <span>Soul Feed</span>
-          </button>
-          <button
-            ref={(el) => {
               tabRefs.current.groups = el;
             }}
             type="button"
@@ -1092,7 +1096,9 @@ export default function ResearchNetworkShell({
       {/* TAB 1: SOUL FEED — Published Souls Discovery Feed */}
       {tab === "web" && (
         <section aria-label="Souls">
-          <div className="x51-cal-toolbar x55-feed-toolbar">
+          <details className="x11-feed-filters">
+            <summary>Filter</summary>
+            <div className="x51-cal-toolbar x55-feed-toolbar">
             <div className="x51-chip-row" role="group" aria-label="Feed mode">
               {(["ALL", "CLASSIC", "ADVANCED"] as const).map((m) => (
                 <button
@@ -1137,7 +1143,8 @@ export default function ResearchNetworkShell({
                 <option value="following">Following</option>
               </select>
             </div>
-          </div>
+            </div>
+          </details>
 
           {loadingFeed ? (
             <div className="x55-feed-skeleton" aria-busy="true" aria-label="Loading Souls">

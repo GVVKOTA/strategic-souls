@@ -251,7 +251,10 @@ test("malformed quotes and a timed-out sparkline leave the valid owner card priv
   let user = { userId: "alice" };
   let adapterCalls = 0;
   let timedOut = false;
+  let serveCandles = false;
   const at = new Date().toISOString();
+  const nowMs = Date.parse(at);
+  const tradeDate = (daysAgo) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(nowMs - daysAgo * 86_400_000);
   const harness = buildWorkerHarness({
     X2_OWNER_SUBJECT: "owner", MARKET_DATA_MODE: "private", ENABLE_PRIVATE_BROKER_DATA: "true",
     MARKET_ADAPTER_AUTH_TOKEN: FAKE_SERVICE_TOKEN,
@@ -270,6 +273,15 @@ test("malformed quotes and a timed-out sparkline leave the valid owner card priv
           exchangeTimestampUTC: at, retrievalTimestampUTC: at,
         }] });
         assert.equal(pathname, "/internal/candles");
+        if (serveCandles) return Response.json({
+          instrument: { id: "NSE:NIFTY" }, interval: "1d", sourceMode: "PRIVATE_OWNER_FEED",
+          candles: [
+            { close: 130, dateIST: tradeDate(0) },
+            { close: 121, dateIST: tradeDate(1) },
+            { close: 120, dateIST: tradeDate(2) },
+            { close: 121, dateIST: tradeDate(1) },
+          ],
+        });
         return new Promise((_, reject) => signal.addEventListener("abort", () => {
           timedOut = true;
           reject(new DOMException("Timed out", "AbortError"));
@@ -294,6 +306,10 @@ test("malformed quotes and a timed-out sparkline leave the valid owner card priv
   assert.equal(cards.find((card) => card.canonicalId === "BSE:SENSEX").value, null);
   assert.equal(timedOut, true);
   assert.equal(cards.filter((card) => card.value !== null).length, 1);
+  serveCandles = true;
+  const refreshed = await (await route.GET(request)).json();
+  assert.ok(Date.parse(refreshed.asOf) >= Date.parse(at));
+  assert.deepEqual(refreshed.cards.find((card) => card.canonicalId === "NSE:NIFTY").sparkline, [120, 121]);
 });
 
 test("owner Classic coverage uses longer candle history and saves a daily scan only with eligible bars", async () => {
@@ -373,6 +389,19 @@ test("owner Classic coverage uses longer candle history and saves a daily scan o
     scanRequestVersion: 2, universePreset: "INDIAN_EQUITIES", universe: "ECB_DAILY",
   });
   assert.equal(wrongSource.status, 400);
+  for (const [action, universe] of [
+    ["preflight-scan", "NIFTY_500"],
+    ["run-scan", "NIFTY_500"],
+    ["run-draw-scan", "NIFTY_500"],
+    ["run-scan", "ECB_DAILY"],
+  ]) {
+    const unlicensed = await call(action, "NSE:SBIN", {
+      scanRequestVersion: 2, universePreset: "NIFTY_500", universe,
+      requestId: webcrypto.randomUUID(),
+    });
+    assert.equal(unlicensed.status, 503);
+    assert.match(unlicensed.body.error, /No scan allowance was used/);
+  }
   const unsupportedEcbIntraday = await call("run-scan", "ECB:USDINR", {
     scanRequestVersion: 2, universePreset: "ECB_DAILY", universe: "ECB_DAILY",
     interval: "30m", requestId: webcrypto.randomUUID(),

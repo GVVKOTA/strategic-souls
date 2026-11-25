@@ -234,10 +234,12 @@ export function Modal({
   title,
   children,
   onClose,
+  className = "",
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -251,7 +253,7 @@ export function Modal({
   return (
     <dialog
       ref={ref}
-      className="x1-dialog x1-modal-enter"
+      className={`x1-dialog x1-modal-enter ${className}`}
       aria-label={title}
       onCancel={onClose}
       onClick={(e) => {

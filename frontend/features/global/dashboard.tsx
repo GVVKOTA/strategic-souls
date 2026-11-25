@@ -662,13 +662,13 @@ export default function Global({
             ((workspace?.scans.length ?? 0) === 0 ||
               totalWatchlistItems === 0 ||
               !portfolio) && (
-              <section
+              <details
                 className="ss-v3-welcome-card"
                 aria-label="Getting started checklist"
               >
+                <summary className="x11-welcome-summary">Start with Strategic Souls</summary>
                 <div className="ss-v3-welcome-head">
                   <div>
-                    <h2>Start with Strategic Souls</h2>
                     <p className="x1-caption" style={{ margin: 0 }}>
                       Three quick steps to set up your private research workspace.
                     </p>
@@ -734,7 +734,7 @@ export default function Global({
                     </span>
                   </button>
                 </div>
-              </section>
+              </details>
             )}
 
           {/* BLOCK B: Highlighted My Portfolio + Watchlist Compact Overview */}
@@ -914,6 +914,7 @@ export default function Global({
             authenticated={authenticated}
             onRequireAuth={onRequireAuth}
             onOpenEventChart={openEventChart}
+            onViewCalendar={() => onGlobalViewChange("INTELLIGENCE", "CALENDAR")}
             notify={notify}
           />
         </div>

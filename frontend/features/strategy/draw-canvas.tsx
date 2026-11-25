@@ -39,7 +39,7 @@ type Props = {
   onRequireAuth?: () => void;
   scanName?: string;
   onRequireName?: (message: string) => void;
-  universe: "ECB_DAILY" | "CONNECTED_MARKETS";
+  universe: "ECB_DAILY" | "CONNECTED_MARKETS" | "NIFTY_500";
   universePreset?: ScanUniversePreset;
   watchlistId?: string;
   interval: "30m" | "1h" | "1d" | "1wk" | "1mo";
