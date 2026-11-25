@@ -575,7 +575,7 @@ test("full local loopback adapter + Cloudflare Worker route authorization, multi
       ANGELONE_MPIN: FAKE_MPIN,
       ANGELONE_TOTP_SECRET: FAKE_TOTP_SECRET,
       MARKET_ADAPTER_AUTH_TOKEN: FAKE_SERVICE_TOKEN,
-      MARKET_ADAPTER_PORT: "18799",
+      MARKET_ADAPTER_PORT: "0",
       ANGELONE_CLIENT_PUBLIC_IP: "203.0.113.42",
     },
     fetcher: createMockAngelOneFetcher(),

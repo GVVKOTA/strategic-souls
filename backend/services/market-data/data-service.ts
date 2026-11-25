@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
-import type { DataPoint } from "./market-data";
+import { OFFICIAL_FX_PAIRS, type DataPoint } from "./market-data";
 import { loadOfficialReferences as loadMarketData } from "./official-references";
 import type { ScanDataset } from "../../engines/scan";
 import { matchesScanMarketPreset, type ScanSourceExclusion, type ScanUniversePreset } from "../research/research";
@@ -19,6 +19,7 @@ import {
   EMPTY_HEALTH,
   PROVIDERS,
   ProviderFailure,
+  indianDailyPrices,
   providerCandles,
   providerIntradayCandles,
   providerFundamentals,
@@ -29,14 +30,27 @@ import {
   statementMetrics,
   validateConfig,
 } from "./providers";
-import { X2_INSTRUMENTS, registryInstrument } from "./instrument-registry";
+import { recordProviderBackoff, reserveProviderCall } from "./provider-budget";
+import { niftyUniverse } from "./nifty-500";
 import {
+  SHARED_HISTORY_LABEL,
+  activeContract,
   eligibleSharedPeriods,
   hasReadySharedHistory,
+  hasSharedDerivedRights,
+  hasSharedDisplayRights,
+  nativeInterval,
+  readSharedDailyQuotes,
+  readSharedHistory,
   readSharedHistoryBatch,
   sharedDailyEventAt,
   sharedHistoryGrants,
+  sharedIngestionHealth,
+  type SharedGrant,
+  type SharedHistory,
 } from "./shared-history";
+import { getIndianExchangeSession } from "./exchange-calendar";
+import { X2_INSTRUMENTS, registryInstrument } from "./instrument-registry";
 import {
   gatewayCandles,
   gatewaySearchInstruments,
@@ -247,28 +261,67 @@ export async function exchangeScanAvailable(subject: string): Promise<boolean> {
   const { flags } = resolveGatewayConfig(environment());
   if (isDataOwner(subject) && flags.enablePrivateBrokerData) return true;
   if (flags.mode === "public_licensed" && flags.enablePublicExchangeQuotes) return true;
+  const grants = await sharedHistoryGrants(Date.now(), "research");
+  const marketIds = grants.flatMap(({ instruments }) =>
+    instruments
+      .filter((instrument) =>
+        matchesScanMarketPreset("MARKET", instrument.market, instrument.type, instrument.expiry),
+      )
+      .map(({ id }) => id),
+  );
+  if (grants.length && marketIds.length && await hasReadySharedHistory(grants, "1d", marketIds)) {
+    return true;
+  }
+  const owner = isDataOwner(subject);
   const configs = await providerConfigs();
-  if (configs.some((config) =>
-    config.provider !== "BHARATSTOCK" && config.provider !== "INDIANAPI" &&
+  return configs.some((config) =>
+    !config.sharedHistory &&
+    config.provider !== "BHARATSTOCK" &&
+    config.provider !== "INDIANAPI" &&
+    (owner || config.rights.redistribution) &&
     rightsActive(config, "analysis") && rightsActive(config, "storage") &&
     config.datasets.includes("candles") && config.instruments.some((instrument) =>
       matchesScanMarketPreset("MARKET", instrument.market, instrument.type, instrument.expiry),
     ),
-  )) return true;
-  if (!configs.some(({ provider, enabled }) => provider === "INDIANAPI" && enabled)) return false;
-  const grants = (await sharedHistoryGrants()).filter(({ provider }) => provider === "INDIANAPI");
-  return hasReadySharedHistory(grants, "1d", grants.flatMap(({ instruments }) =>
-    instruments.filter((instrument) =>
-      matchesScanMarketPreset("MARKET", instrument.market, instrument.type, instrument.expiry),
-    ).map(({ id }) => id),
-  ));
+  );
+}
+export async function canScanExchange(
+  interval: Interval,
+  instrumentIds?: readonly string[],
+  provider?: ProviderId,
+) {
+  const grants = await sharedHistoryGrants(Date.now(), "research");
+  return hasReadySharedHistory(
+    provider ? grants.filter((grant) => grant.provider === provider) : grants,
+    interval,
+    instrumentIds,
+  );
+}
+export async function scanScopeInstruments(preset: ScanUniversePreset, interval: Interval) {
+  if (preset === "ECB_DAILY") return OFFICIAL_FX_PAIRS.map(({ id }) => id).sort();
+  if (preset === "NIFTY_500") {
+    const active = await niftyUniverse().catch(() => null);
+    return active ? active.constituents.map(({ id }) => id) : [];
+  }
+  const now = Date.now();
+  const ids = (await sharedHistoryGrants(now, "research"))
+    .filter((grant) => grant.sharedHistory.intervals.includes(nativeInterval(interval)))
+    .flatMap((grant) => grant.instruments)
+    .filter((instrument) => activeContract(instrument, now) &&
+      matchesScanMarketPreset(preset, instrument.market, instrument.type, instrument.expiry))
+    .map(({ id }) => id);
+  return [...new Set(ids)].sort();
 }
 export async function instrumentRegistry(subject?: string) {
-  const configs = await providerConfigs();
+  const [configs, membership] = await Promise.all([
+    providerConfigs(),
+    subject ? niftyUniverse().catch(() => null) : Promise.resolve(null),
+  ]);
+  const constituents = new Map(membership?.constituents.map((row) => [row.id, row]));
   const ids = new Set<string>();
   const gw = resolveGatewayConfig(environment());
-  const ownerBrokerReady =
-    !!subject && isDataOwner(subject) && gw.flags.enablePrivateBrokerData;
+  const owner = !!subject && isDataOwner(subject);
+  const ownerBrokerReady = owner && gw.flags.enablePrivateBrokerData;
   const ownerSeeds = ownerBrokerReady
     ? VERIFIED_SEED_INSTRUMENTS.map((i) => ({
         id: i.id,
@@ -287,7 +340,12 @@ export async function instrumentRegistry(subject?: string) {
     : [];
   return [
     ...configs
-      .filter((c) => rightsActive(c, "display"))
+      .filter((c) => {
+        if (c.sharedHistory) {
+          return !!subject && hasSharedDisplayRights(c) && !!secretFrom(c.provider, environment());
+        }
+        return rightsActive(c, "display") && (owner || c.rights.redistribution);
+      })
       .flatMap((c) =>
         c.instruments.map((i) => ({
           id: i.id,
@@ -297,11 +355,26 @@ export async function instrumentRegistry(subject?: string) {
           assetClass: i.type,
           currency: i.currency,
           sourceUrl: PROVIDERS[c.provider].docs,
-          mappingStatus: "OWNER_VERIFIED_SOURCE_MAPPING",
+          sector: constituents.get(i.id)?.industry,
+          mappingStatus: constituents.has(i.id)
+            ? "OFFICIAL_CONSTITUENT"
+            : "OWNER_VERIFIED_SOURCE_MAPPING",
           availabilityState: "DATA_CONNECTED" as const,
         })),
       ),
     ...ownerSeeds,
+    ...(membership?.constituents.map((entry) => ({
+      id: entry.id,
+      label: entry.id.slice(4),
+      name: entry.name,
+      market: "NSE" as const,
+      assetClass: "EQUITY" as const,
+      currency: "INR",
+      sector: entry.industry,
+      sourceUrl: "https://www.niftyindices.com/indices/equity/broad-based-indices/nifty-500",
+      mappingStatus: "OFFICIAL_CONSTITUENT",
+      availabilityState: "IDENTIFIED_ONLY" as const,
+    })) ?? []),
     ...X2_INSTRUMENTS.map((entry) => ({
       ...entry,
       availabilityState:
@@ -313,9 +386,11 @@ export async function instrumentRegistry(subject?: string) {
 }
 export async function providerSettings(subject: string) {
   requireDataOwner(subject);
-  const rows = await database()
-    .prepare("SELECT * FROM x2_providers ORDER BY provider")
-    .all<ConfigRow>();
+  const [rows, sharedIngestion, activeUniverse] = await Promise.all([
+    database().prepare("SELECT * FROM x2_providers ORDER BY provider").all<ConfigRow>(),
+    sharedIngestionHealth().catch(() => []),
+    niftyUniverse().catch(() => null),
+  ]);
   return {
     isOwner: true,
     providers: Object.entries(PROVIDERS).map(([id, meta]) => {
@@ -328,6 +403,19 @@ export async function providerSettings(subject: string) {
         health: row ? JSON.parse(row.health) : EMPTY_HEALTH,
       };
     }),
+    sharedIngestion,
+    universe: activeUniverse
+      ? {
+          version: activeUniverse.version,
+          effectiveDate: activeUniverse.effectiveDate,
+          validatedAt: activeUniverse.validatedAt,
+          expectedCount: activeUniverse.expectedCount,
+          distinctCount: activeUniverse.distinctCount,
+          count: activeUniverse.constituents.length,
+          rightsExpiresAt: activeUniverse.rightsExpiresAt,
+          provenance: activeUniverse.provenance,
+        }
+      : null,
     secretSetup:
       "Configure server-only secrets in Cloudflare Workers runtime settings (wrangler secret put). This page never receives or installs keys.",
     priceBudget: {
@@ -362,8 +450,31 @@ export async function configureProvider(
   requireDataOwner(subject);
   let next: ProviderConfig;
   try {
-    next = validateConfig(input.config);
+    const config = input.config as Record<string, unknown> | undefined;
+    if ((config?.provider === "INDIANAPI" || config?.provider === "BHARATSTOCK") && input.useNiftyUniverse === true) {
+      const snapshot = await niftyUniverse();
+      if (!snapshot) throw new HttpError(409, "Import the licensed Nifty 500 snapshot before mapping it.");
+      next = validateConfig({
+        ...config,
+        instruments: snapshot.constituents.map((row) => ({
+          id: row.id,
+          name: row.name,
+          symbol: row.id.slice(4),
+          providerSymbol: row.id.slice(4),
+          market: "NSE",
+          mic: "XNSE",
+          type: "EQUITY",
+          currency: "INR",
+          unit: "INR per share",
+          timezone: "Asia/Kolkata",
+        })),
+      });
+      next.constituentGrant = { version: snapshot.version, expiresAt: snapshot.rightsExpiresAt };
+    } else {
+      next = validateConfig(config);
+    }
   } catch (e) {
+    if (e instanceof HttpError) throw e;
     throw new HttpError(400, (e as Error).message);
   }
   requestKey(next.lastWrite);
@@ -373,6 +484,12 @@ export async function configureProvider(
       .prepare("SELECT * FROM x2_providers WHERE provider=?")
       .bind(next.provider)
       .first<ConfigRow>();
+  const previousConfig = row ? (JSON.parse(row.payload) as ProviderConfig) : null;
+  if (previousConfig?.constituentGrant && !next.constituentGrant) {
+    if (JSON.stringify(next.instruments) !== JSON.stringify(previousConfig.instruments))
+      throw new HttpError(409, "Refresh the licensed constituent snapshot before editing its imported mappings.");
+    next.constituentGrant = previousConfig.constituentGrant;
+  }
   if (row?.last_write === next.lastWrite) {
     if (!sameConfig(JSON.parse(row.payload), next))
       throw new HttpError(
@@ -426,6 +543,18 @@ export async function configureProvider(
         next.lastWrite,
       ),
   ]);
+  if (previousConfig?.sharedHistory) {
+    try {
+      await db.batch([
+        db.prepare("DELETE FROM x8_shared_history_snapshot WHERE provider=? AND config_version<>? AND EXISTS(SELECT 1 FROM x2_providers WHERE provider=? AND version=?)")
+          .bind(next.provider, next.version, next.provider, next.version),
+        db.prepare("DELETE FROM x8_shared_history_task WHERE provider=? AND config_version<>? AND EXISTS(SELECT 1 FROM x2_providers WHERE provider=? AND version=?)")
+          .bind(next.provider, next.version, next.provider, next.version),
+      ]);
+    } catch {
+      /* Shared tables absent in legacy test harness */
+    }
+  }
   const saved = await db
     .prepare("SELECT last_write,payload FROM x2_providers WHERE provider=?")
     .bind(next.provider)
@@ -504,11 +633,24 @@ export async function testProvider(
     ].slice(0, 4);
     for (const instrument of samples) {
       try {
-        await quota(c);
-        const bars = c.datasets.includes("candles")
-          ? await providerCandles(c, instrument, secret)
-          : [];
-        if (!c.datasets.includes("candles")) {
+        if (c.sharedHistory) {
+          const backoff = await database().prepare(`SELECT paused_until,last_error FROM x8_shared_history_plan
+            WHERE provider=? AND config_version=? AND paused_until>?`).bind(id, c.version, Date.now())
+            .first<{ paused_until: number; last_error: string | null }>().catch(() => null);
+          if (backoff && backoff.last_error !== "AUTH_FAILED")
+            throw new ProviderFailure("RATE_LIMITED", "Wait for the provider backoff to finish.");
+        }
+        if (c.sharedHistory) {
+          await reserveProviderCall(c);
+        } else {
+          await quota(c);
+        }
+        const bars = c.provider === "INDIANAPI"
+          ? await indianDailyPrices(instrument.providerSymbol, secret, environment().INDIA_API_HOST)
+          : c.datasets.includes("candles")
+            ? await providerCandles(c, instrument, secret)
+            : [];
+        if (c.provider !== "INDIANAPI" && !c.datasets.includes("candles")) {
           if (c.provider === "EODHD" && c.datasets.includes("fundamentals")) {
             const statements = await providerFundamentals(instrument, secret);
             if (!statements.length)
@@ -523,6 +665,7 @@ export async function testProvider(
         health.accepted.push(instrument.id);
         health.lastEventAt = bars.at(-1)?.date ?? null;
       } catch (e) {
+        if (c.sharedHistory) await recordProviderBackoff(c, e).catch(() => {});
         health.rejected.push(instrument.id);
         health.state =
           e instanceof ProviderFailure
@@ -549,6 +692,13 @@ export async function testProvider(
     )
     .bind(JSON.stringify(health), new Date().toISOString(), id, c.version)
     .run();
+  if (c.sharedHistory && health.accepted.length) {
+    await database()
+      .prepare("UPDATE x8_shared_history_plan SET paused_until=0,failures=0,last_error=NULL WHERE provider=? AND config_version=?")
+      .bind(id, c.version)
+      .run()
+      .catch(() => {});
+  }
   cache.clear();
   return providerSettings(subject);
 }
@@ -599,6 +749,11 @@ async function sourceResearch(
   includeDetails = true,
   purpose: "display" | "analysis" = "display",
   pinnedProvider?: ProviderId,
+  shared?: {
+    cutoff?: number;
+    grants?: SharedGrant[];
+    stored?: Map<string, SharedHistory>;
+  },
 ): Promise<AssetResearch> {
   if (
     !["30m", "1h", "1d", "1wk", "1mo"].includes(interval) ||
@@ -606,7 +761,6 @@ async function sourceResearch(
     id.length > 80
   )
     throw new HttpError(400, "Invalid instrument or interval.");
-  void subject;
   const result = emptyAsset(id, interval);
   if (
     id.startsWith("ECB:") ||
@@ -659,8 +813,87 @@ async function sourceResearch(
       ],
     };
   }
+  const nowMs = shared?.cutoff ?? Date.now();
+  const requireDisplay = purpose === "display";
+  const sharedGrants =
+    shared?.grants ??
+    (subject
+      ? await sharedHistoryGrants(nowMs, requireDisplay ? "display" : "research")
+      : []);
+  const stored = shared?.stored
+    ? (() => {
+        const hit = shared.stored.get(id);
+        if (!hit) return null;
+        return requireDisplay && !hasSharedDisplayRights(hit.config, nowMs) ? null : hit;
+      })()
+    : subject && sharedGrants.length
+      ? await readSharedHistory(id, interval, sharedGrants, {
+          cutoff: shared?.cutoff,
+          provider: pinnedProvider,
+          requireDisplay,
+        })
+      : null;
+  if (stored) {
+    const priceOnly = stored.prices;
+    const retained = eligibleSharedPeriods(stored.candles, stored.instrument, interval, nowMs);
+    const grouped = interval === "1wk" || interval === "1mo";
+    const references = grouped ? aggregateReferences(retained, interval) : retained;
+    const candles = grouped
+      ? aggregateCandles(retained, interval).map((bar, index) => ({ ...bar, date: references[index].date }))
+      : retained;
+    const receivedAt = new Date(stored.row.received_at).toISOString();
+    const dailyPrices = priceOnly
+      ? eligibleSharedPeriods(priceOnly, stored.instrument, interval, nowMs).map(({ date, close }) => ({
+          date,
+          close,
+          knownAt: receivedAt,
+        }))
+      : null;
+    const priceReferences = dailyPrices && (grouped ? aggregateReferences(dailyPrices, interval) : dailyPrices);
+    const attribution = {
+      label: stored.config.sharedHistory.attribution,
+      url: stored.config.sharedHistory.attributionUrl,
+    };
+    const { providerSymbol: internalMapping, ...publicMapping } = stored.instrument;
+    void internalMapping;
+    const displayPermitted = hasSharedDisplayRights(stored.config, nowMs);
+    return {
+      ...result,
+      name: stored.instrument.name,
+      instrument: { ...publicMapping, providerSymbol: stored.instrument.symbol },
+      provider: SHARED_HISTORY_LABEL,
+      sourceUrl: attribution.url,
+      attribution,
+      currency: stored.instrument.currency,
+      unit: stored.instrument.unit,
+      state: stored.state,
+      asOf: receivedAt,
+      retrievedAt: receivedAt,
+      candles,
+      references: priceReferences ?? candles.map(({ date, close, knownAt }) => ({ date, close, knownAt })),
+      coverage: { firstDate: stored.row.first_event, lastDate: stored.row.last_event, bars: stored.row.bar_count },
+      capabilities: {
+        ...result.capabilities,
+        chart: displayPermitted && Boolean(priceReferences?.length || candles.length),
+        candles: candles.length > 0,
+        volume: candles.some((bar) => bar.volume !== null),
+        analysis: hasSharedDerivedRights(stored.config, nowMs),
+        derivedDisplay: hasSharedDerivedRights(stored.config, nowMs),
+        storage: true,
+      },
+      limitations: [
+        "Completed exchange observations from shared server cache. Source timestamps are retained.",
+        ...(priceOnly ? ["Daily closing price and volume only; open/high/low candles are not fabricated."] : []),
+      ],
+    };
+  }
+  const owner = isDataOwner(subject);
   const configs = (await providerConfigs()).filter(
     (c) =>
+      !c.sharedHistory &&
+      c.provider !== "BHARATSTOCK" &&
+      c.provider !== "INDIANAPI" &&
+      (owner || c.rights.redistribution) &&
       (purpose === "display"
         ? rightsActive(c, "display")
         : rightsActive(c, "analysis") && rightsActive(c, "storage")) &&
@@ -961,6 +1194,8 @@ export async function assetResearch(
 export async function currentDisplayRights(
   instrumentId: string,
   provider: string,
+  configuration?: Map<string, Promise<ProviderConfig[]>>,
+  version?: number,
 ) {
   if (provider === "ECB" && instrumentId.startsWith("ECB:"))
     return {
@@ -983,16 +1218,36 @@ export async function currentDisplayRights(
       rightsExpiresAt: null,
     };
   }
-  const c = (await providerConfigs()).find(
-    (c) =>
-      c.provider === provider &&
-      c.instruments.some((i) => i.id === instrumentId),
+  if (!["TRUEDATA", "EODHD", "INDIANAPI", "BHARATSTOCK"].includes(provider)) {
+    return { displayAllowed: false, derivedDisplayAllowed: false, rightsExpiresAt: null };
+  }
+  let configured = configuration?.get("provider-configs");
+  if (!configured) {
+    configured = providerConfigs();
+    configuration?.set("provider-configs", configured);
+  }
+  const c = (await configured).find(
+    (cfg) =>
+      cfg.provider === provider &&
+      (version === undefined || cfg.version === version) &&
+      cfg.instruments.some((i) => i.id === instrumentId),
   );
+  if (!c) {
+    return { displayAllowed: false, derivedDisplayAllowed: false, rightsExpiresAt: null };
+  }
+  if (c.sharedHistory) {
+    const secretOk = !!secretFrom(c.provider, environment());
+    return {
+      displayAllowed: secretOk && hasSharedDisplayRights(c),
+      derivedDisplayAllowed: secretOk && hasSharedDerivedRights(c),
+      rightsExpiresAt: c.rights.expiresAt,
+    };
+  }
   return {
-    displayAllowed: !!c && rightsActive(c, "display"),
+    displayAllowed: rightsActive(c, "display"),
     derivedDisplayAllowed:
-      !!c && rightsActive(c, "analysis") && c.rights.derivedDisplay === true,
-    rightsExpiresAt: c?.rights.expiresAt ?? null,
+      rightsActive(c, "analysis") && c.rights.derivedDisplay === true,
+    rightsExpiresAt: c.rights.expiresAt,
   };
 }
 export type ResearchUniverseDiagnostics = {
@@ -1031,6 +1286,7 @@ export type ResearchUniverse = {
     derivedDisplayAllowed: boolean;
     rightsExpiresAt: string | null;
     configVersion?: number;
+    attribution?: { label: string; url: string };
     interval?: Interval;
     periodPolicy?: string;
   }[];
@@ -1066,11 +1322,13 @@ export async function researchUniverse(
     minimumBars?: number;
     universePreset?: ScanUniversePreset;
     traceId?: string;
+    eventCutoff?: string;
   } = {},
 ): Promise<ResearchUniverse> {
   if (options.interval && !["30m", "1h", "1d", "1wk", "1mo"].includes(options.interval))
     throw new HttpError(400, "Use a supported scan interval.");
-  const maxLimit = Math.max(1, Math.min(24, options.limit ?? 24));
+  const brokerMaxLimit = Math.max(1, Math.min(24, options.limit ?? 24));
+  const sharedMaxLimit = Math.max(1, Math.min(100, options.limit ?? 24));
   const interval = options.interval ?? "1d";
   const isIntraday = interval === "30m" || interval === "1h";
   const out: ResearchUniverse = {
@@ -1165,22 +1423,35 @@ export async function researchUniverse(
     return out;
   }
   const preset = options.universePreset;
-  const configs = (await providerConfigs()).filter(
+  const cutoffMs = options.eventCutoff ? Date.parse(options.eventCutoff) : Date.now();
+  const owner = isDataOwner(subject);
+  const grants = await sharedHistoryGrants(Date.now(), "research");
+  const eligibleGrants = grants.filter((grant) => grant.sharedHistory.intervals.includes(nativeInterval(interval)));
+  const legacyConfigs = (await providerConfigs()).filter(
     (c) =>
+      !c.sharedHistory &&
       c.provider !== "BHARATSTOCK" &&
+      c.provider !== "INDIANAPI" &&
+      (owner || c.rights.redistribution) &&
       rightsActive(c, "analysis") &&
-      rightsActive(c, "storage") &&
-      (options.provider === "CONNECTED_MARKETS" ||
-        options.provider === c.provider),
+      rightsActive(c, "storage"),
+  );
+  const configs = [...eligibleGrants, ...legacyConfigs].filter(
+    (c) =>
+      options.provider === "CONNECTED_MARKETS" ||
+      options.provider === "SHARED" ||
+      options.provider === c.provider,
   );
   const allCommercialIds = [
     ...new Set(configs.flatMap((c) => c.instruments
-      .filter((i) => matchesScanMarketPreset(preset, i.market, i.type, i.expiry))
+      .filter((i) => activeContract(i, cutoffMs) &&
+        matchesScanMarketPreset(preset, i.market, i.type, i.expiry))
       .map((i) => i.id))),
   ].filter(
     (id) =>
       !options.instrumentIds?.length || options.instrumentIds.includes(id),
   );
+  const maxLimit = eligibleGrants.length > 0 && configs.every((c) => !!c.sharedHistory) ? sharedMaxLimit : brokerMaxLimit;
   const ids = allCommercialIds.slice(0, maxLimit);
   for (const deferredId of allCommercialIds.slice(maxLimit)) {
     out.excluded.push({
@@ -1190,45 +1461,82 @@ export async function researchUniverse(
     });
   }
   const loadedIds = new Set<string>();
-  const selectedGrants = !isIntraday && configs.some(({ provider }) => provider === "INDIANAPI")
-    ? (await sharedHistoryGrants()).filter(({ provider }) => provider === "INDIANAPI")
-    : [];
-  const sharedPrices = await readSharedHistoryBatch(ids, interval, selectedGrants);
+  const pinnedSharedProvider: ProviderId | undefined =
+    options.provider === "INDIANAPI" ||
+    options.provider === "BHARATSTOCK" ||
+    options.provider === "TRUEDATA" ||
+    options.provider === "EODHD"
+      ? options.provider
+      : undefined;
+  const stored = eligibleGrants.length && ids.length
+    ? await readSharedHistoryBatch(ids, interval, eligibleGrants, {
+        cutoff: options.eventCutoff ? cutoffMs : undefined,
+        provider: pinnedSharedProvider,
+        requireDisplay: false,
+      })
+    : new Map<string, SharedHistory>();
   for (const id of ids) {
-    const selected = configs.find((c) =>
+    const selected = stored.get(id)?.config ?? configs.find((c) =>
       c.instruments.some((i) => i.id === id &&
         matchesScanMarketPreset(preset, i.market, i.type, i.expiry)),
     )!;
     const mappedInst = selected.instruments.find((i) => i.id === id);
     if (selected.provider === "INDIANAPI") {
-      const snapshot = sharedPrices.get(id);
-      if (interval === "30m" || interval === "1h" || !snapshot?.prices?.length || snapshot.state === "STALE") {
-        out.excluded.push({ id, reason: "Fresh licensed NSE daily price history is unavailable for this timeframe." });
+      const snapshot = stored.get(id);
+      if (isIntraday || !snapshot?.prices?.length || snapshot.state === "STALE" || !mappedInst || !selected.sharedHistory) {
+        out.excluded.push({
+          id,
+          kind: "unavailable",
+          reason: isIntraday
+            ? "Indian API supplies daily closes only; intraday intervals are unsupported."
+            : "Fresh licensed daily NSE price history is unavailable for this instrument.",
+        });
         continue;
       }
-      const { instrument, row, config } = snapshot;
-      const prices = eligibleSharedPeriods(snapshot.prices, instrument, interval, Date.now());
-      const periods = new Map(prices.map((price) => [
-        interval === "1d" ? price.date : calendarPeriodKey(price.date, interval), price,
-      ]));
-      const knownAt = new Date(row.received_at).toISOString();
-      const observations = [...periods.values()].map((price) => ({
-        eventAt: sharedDailyEventAt(instrument, price.date),
-        knownAt,
+      const received = new Date(snapshot.row.received_at).toISOString();
+      const retained = eligibleSharedPeriods(snapshot.prices, mappedInst, interval, cutoffMs);
+      const periods = new Map<string, typeof retained[number]>();
+      for (const price of retained) {
+        periods.set(interval === "1d" ? price.date : calendarPeriodKey(price.date, interval), price);
+      }
+      if (!periods.size) {
+        out.excluded.push({ id, reason: "No complete exchange period in the available price history." });
+        continue;
+      }
+      const observations = Array.from(periods.values(), (price) => ({
+        eventAt: sharedDailyEventAt(mappedInst, price.date),
+        knownAt: received,
         close: price.close,
         ...(interval === "1d" && price.volume !== null ? { volume: price.volume } : {}),
       }));
-      if (!observations.length) {
-        out.excluded.push({ id, reason: "No complete exchange period in the licensed price snapshot." });
-        continue;
-      }
-      out.datasets.push({ instrumentId: id, currency: instrument.currency, source: config.sharedHistory.attribution,
-        permitted: true, frequency: "PUBLISHED_EOD", maxAgeMs: brokerScanFreshnessMs(interval), observations });
+      out.datasets.push({
+        instrumentId: id,
+        currency: mappedInst.currency || "INR",
+        source: selected.sharedHistory.attribution || SHARED_HISTORY_LABEL,
+        frequency: "PUBLISHED_EOD",
+        permitted: true,
+        observations,
+        maxAgeMs: brokerScanFreshnessMs(interval),
+      });
       out.lineage.push({
-        instrumentId: id, provider: config.provider, configVersion: config.version,
-        eventAt: observations.at(-1)!.eventAt, retrievedAt: knownAt, adjustment: "UNSPECIFIED",
-        displayAllowed: true, derivedDisplayAllowed: true, rightsExpiresAt: config.rights.expiresAt,
-        interval, periodPolicy: "LAST_CLOSE_OF_COMPLETED_EXCHANGE_PERIOD",
+        instrumentId: id,
+        provider: selected.provider,
+        configVersion: selected.version,
+        eventAt: observations.at(-1)!.eventAt,
+        retrievedAt: received,
+        adjustment: "UNSPECIFIED",
+        displayAllowed: hasSharedDisplayRights(selected),
+        derivedDisplayAllowed: hasSharedDerivedRights(selected),
+        rightsExpiresAt: selected.rights.expiresAt,
+        attribution: {
+          label: selected.sharedHistory.attribution,
+          url: selected.sharedHistory.attributionUrl,
+        },
+        interval,
+        periodPolicy:
+          interval === "1d"
+            ? "DAILY_CLOSE_ONLY_SOURCE_OBSERVATIONS"
+            : "LAST_CLOSE_IN_COMPLETED_CALENDAR_PERIOD",
       });
       loadedIds.add(id);
       continue;
@@ -1240,12 +1548,13 @@ export async function researchUniverse(
       false,
       "analysis",
       selected.provider,
+      { cutoff: options.eventCutoff ? cutoffMs : undefined, grants: eligibleGrants, stored },
     );
     if (isIntraday) {
       const observations = completedCommercialIntradayObservations(
         a.candles,
         mappedInst?.market ?? "GLOBAL",
-        a.retrievedAt ?? out.asOf,
+        options.eventCutoff ?? a.retrievedAt ?? out.asOf,
         interval,
       );
       const latest = observations.at(-1);
@@ -1274,16 +1583,19 @@ export async function researchUniverse(
       });
       out.lineage.push({
         instrumentId: id,
-        provider: a.provider,
+        provider: selected.sharedHistory ? selected.provider : a.provider,
         eventAt: latest.eventAt,
         retrievedAt: a.retrievedAt ?? out.asOf,
         adjustment: "RAW",
-        displayAllowed: rightsActive(selected, "display"),
-        derivedDisplayAllowed:
-          rightsActive(selected, "analysis") &&
-          selected.rights.derivedDisplay === true,
+        displayAllowed: selected.sharedHistory
+          ? hasSharedDisplayRights(selected)
+          : rightsActive(selected, "display"),
+        derivedDisplayAllowed: selected.sharedHistory
+          ? hasSharedDerivedRights(selected)
+          : rightsActive(selected, "analysis") && selected.rights.derivedDisplay === true,
         rightsExpiresAt: selected.rights.expiresAt,
         configVersion: selected.version,
+        ...(a.attribution ? { attribution: a.attribution } : {}),
         interval,
         periodPolicy:
           interval === "30m"
@@ -1292,7 +1604,21 @@ export async function researchUniverse(
       });
       continue;
     }
-    const rows = completedPublishedPeriods(a.candles, interval, dateInZone(a.instrument?.timezone ?? "UTC"));
+    const cutoffDate = options.eventCutoff ? new Date(cutoffMs) : new Date();
+    const currentDate = dateInZone(a.instrument?.timezone ?? "UTC", cutoffDate);
+    const exchange = mappedInst?.market;
+    const session = exchange === "NSE" || exchange === "BSE" || exchange === "MCX"
+      ? getIndianExchangeSession(exchange, cutoffDate.getTime())
+      : null;
+    const includeToday = session?.state === "CLOSED" && !session.specialSessionNote &&
+      session.localTimeIST >= (exchange === "MCX" ? "23:55:00" : "15:30:00");
+    const sharedInstrument = stored.get(id)?.instrument;
+    const closed = options.eventCutoff && !sharedInstrument
+      ? a.candles.filter((bar) => bar.date < currentDate || (bar.date === currentDate && includeToday))
+      : a.candles;
+    const rows = sharedInstrument
+      ? eligibleSharedPeriods(closed, sharedInstrument, interval, cutoffDate.getTime())
+      : completedPublishedPeriods(closed, interval, currentDate);
     const closes = aggregateReferences(rows, interval);
     const candles = aggregateCandles(rows, interval);
     if (
@@ -1317,7 +1643,9 @@ export async function researchUniverse(
       frequency: "PUBLISHED_EOD",
       maxAgeMs: brokerScanFreshnessMs(interval),
       observations: candles.map((c, index) => ({
-        eventAt: closes[index].date + "T00:00:00.000Z",
+        eventAt: sharedInstrument
+          ? sharedDailyEventAt(sharedInstrument, closes[index].date)
+          : closes[index].date + "T00:00:00.000Z",
         knownAt: c.knownAt,
         open: c.open,
         high: c.high,
@@ -1329,16 +1657,21 @@ export async function researchUniverse(
     });
     out.lineage.push({
       instrumentId: id,
-      provider: a.provider,
-      eventAt: closes.at(-1)?.date ?? null,
+      provider: selected.sharedHistory ? selected.provider : a.provider,
+      eventAt: sharedInstrument
+        ? sharedDailyEventAt(sharedInstrument, closes.at(-1)!.date)
+        : closes.at(-1)?.date ?? null,
       retrievedAt: a.retrievedAt!,
       adjustment: "RAW",
-      displayAllowed: rightsActive(selected, "display"),
-      derivedDisplayAllowed:
-        rightsActive(selected, "analysis") &&
-        selected.rights.derivedDisplay === true,
+      displayAllowed: selected.sharedHistory
+        ? hasSharedDisplayRights(selected)
+        : rightsActive(selected, "display"),
+      derivedDisplayAllowed: selected.sharedHistory
+        ? hasSharedDerivedRights(selected)
+        : rightsActive(selected, "analysis") && selected.rights.derivedDisplay === true,
       rightsExpiresAt: selected.rights.expiresAt,
       configVersion: selected.version,
+      ...(a.attribution ? { attribution: a.attribution } : {}),
       interval: options.interval ?? "1d",
       periodPolicy:
         options.interval && options.interval !== "1d"
@@ -1389,7 +1722,7 @@ export async function researchUniverse(
     const targetBars = Math.min(1_500, Math.max(100, (options.minimumBars ?? 0) + 60));
     const remainingBudget = Math.min(
       Math.floor(7_500 / targetBars),
-      Math.max(0, maxLimit - ids.length),
+      Math.max(0, brokerMaxLimit - ids.length),
     );
     const candidateIds = rawBrokerCandidates.slice(0, remainingBudget);
     for (const deferredId of rawBrokerCandidates.slice(remainingBudget)) {
@@ -1709,9 +2042,9 @@ export type MarketQuote = Omit<
 > & {
   assetClass: "EQUITY" | "INDEX" | "FUTURE";
   provider: string;
-  frequency: "DAILY_OHLC";
+  frequency: "DAILY_OHLC" | "DAILY_CLOSE";
 };
-/** Bounded, same service as chart/scan. Maximum eight exact configured instruments, parallel source calls. */
+/** Bounded, same service as chart/scan. Maximum eight exact configured instruments. */
 export async function loadExtendedMarketData(subject: string, ids?: string[]) {
   if (
     ids &&
@@ -1719,54 +2052,88 @@ export async function loadExtendedMarketData(subject: string, ids?: string[]) {
       ids.some((id) => typeof id !== "string" || id.length > 80))
   )
     throw new HttpError(400, "Choose at most eight exact market instruments.");
-  const reference = await loadMarketData();
+  const [reference, grants] = await Promise.all([
+    loadMarketData(),
+    sharedHistoryGrants(Date.now(), "display"),
+  ]);
+  const sharedWanted = ids ?? [...new Set(grants.flatMap((g) => g.instruments.map((i) => i.id)))].slice(0, 8);
+  const stored = sharedWanted.length && grants.length
+    ? await readSharedDailyQuotes(sharedWanted, grants)
+    : new Map();
+  const marketQuotes: MarketQuote[] = [...stored.values()].map((quote) => ({
+    id: quote.id,
+    label: quote.instrument.name,
+    assetClass: quote.instrument.type as "EQUITY" | "INDEX" | "FUTURE",
+    value: quote.value,
+    unit: quote.unit,
+    currency: quote.instrument.currency,
+    provider: quote.attribution.label,
+    sourceUrl: quote.attribution.url,
+    rightsUrl: quote.attribution.url,
+    eventAt: quote.latestDate,
+    sourceDate: quote.latestDate,
+    eventTimePrecision: "DATE",
+    retrievedAt: quote.receivedAt,
+    state: quote.quality,
+    frequency: quote.providerId === "INDIANAPI" ? "DAILY_CLOSE" : "DAILY_OHLC",
+    reason: "Published daily close, not a live or executable quote.",
+    derivation: null,
+    change: quote.quality === "PUBLISHED_EOD" ? quote.pctChange : null,
+    changeUnit: "%",
+    canAnalyze: quote.quality === "PUBLISHED_EOD",
+  }));
+  const owner = isDataOwner(subject);
   const configs = (await providerConfigs()).filter(
-    (c) => rightsActive(c, "display") && c.datasets.includes("candles"),
+    (c) =>
+      !c.sharedHistory &&
+      c.provider !== "BHARATSTOCK" &&
+      c.provider !== "INDIANAPI" &&
+      (owner || c.rights.redistribution) &&
+      rightsActive(c, "display") &&
+      c.datasets.includes("candles"),
   );
   const wanted = [
     ...new Set(configs.flatMap((c) => c.instruments.map((i) => i.id))),
   ]
-    .filter((id) => !ids || ids.includes(id))
-    .slice(0, 8);
+    .filter((id) => !stored.has(id) && (!ids || ids.includes(id)))
+    .slice(0, Math.max(0, 8 - marketQuotes.length));
   const observations = await Promise.all(
     wanted.map((id) => assetResearch(id, subject, "1d", false)),
   );
-  const marketQuotes: MarketQuote[] = observations.flatMap((a) => {
+  for (const a of observations) {
     const instrument = a.instrument,
       last = a.candles.at(-1),
       prior = a.candles.at(-2);
-    if (!instrument || !last) return [];
-    return [
-      {
-        id: a.id,
-        label: a.name,
-        assetClass: instrument.type as "EQUITY" | "INDEX" | "FUTURE",
-        value: last.close,
-        unit: a.unit,
-        currency: a.currency,
-        provider: a.provider,
-        sourceUrl: a.sourceUrl,
-        rightsUrl: PROVIDERS[a.provider as ProviderId].rightsUrl,
-        eventAt: last.date,
-        sourceDate: last.date,
-        eventTimePrecision: "DATE",
-        retrievedAt: a.retrievedAt,
-        state: a.state === "PUBLISHED_EOD" ? "PUBLISHED_EOD" : "STALE",
-        frequency: "DAILY_OHLC",
-        reason: "Published daily close, not a live or executable quote.",
-        derivation: null,
-        change:
-          a.capabilities.analysis &&
-          a.capabilities.derivedDisplay === true &&
-          prior &&
-          prior.close > 0
-            ? (last.close / prior.close - 1) * 100
-            : null,
-        changeUnit: "%",
-        canAnalyze: a.capabilities.analysis && a.state === "PUBLISHED_EOD",
-      },
-    ];
-  });
+    if (!instrument || !last) continue;
+    marketQuotes.push({
+      id: a.id,
+      label: a.name,
+      assetClass: instrument.type as "EQUITY" | "INDEX" | "FUTURE",
+      value: last.close,
+      unit: a.unit,
+      currency: a.currency,
+      provider: a.provider,
+      sourceUrl: a.sourceUrl,
+      rightsUrl: PROVIDERS[a.provider as ProviderId]?.rightsUrl ?? a.sourceUrl,
+      eventAt: last.date,
+      sourceDate: last.date,
+      eventTimePrecision: "DATE",
+      retrievedAt: a.retrievedAt,
+      state: a.state === "PUBLISHED_EOD" ? "PUBLISHED_EOD" : "STALE",
+      frequency: "DAILY_OHLC",
+      reason: "Published daily close, not a live or executable quote.",
+      derivation: null,
+      change:
+        a.capabilities.analysis &&
+        a.capabilities.derivedDisplay === true &&
+        prior &&
+        prior.close > 0
+          ? (last.close / prior.close - 1) * 100
+          : null,
+      changeUnit: "%",
+      canAnalyze: a.capabilities.analysis && a.state === "PUBLISHED_EOD",
+    });
+  }
   return {
     ...reference,
     quotes: [...reference.quotes, ...marketQuotes],

@@ -1,11 +1,19 @@
 /** Read-time licence enforcement. Stored snapshots and their digests are never modified. */
 import { currentDisplayRights } from "../market-data/data-service";
+import type { ProviderConfig } from "../market-data/data-types";
+import { EXPLICIT_SCOPE_VERSION, niftyUniverseRightsActive } from "../market-data/nifty-500";
+
 type DisplayRights = {
   displayAllowed: boolean;
   derivedDisplayAllowed: boolean;
   rightsExpiresAt: string | null;
 };
-type Lineage = DisplayRights & { instrumentId: string; provider: string };
+type Lineage = DisplayRights & {
+  instrumentId: string;
+  provider: string;
+  configVersion?: number;
+  attribution?: { label: string; url: string };
+};
 type ResultRow = {
   instrumentId: string;
   status: string;
@@ -13,6 +21,7 @@ type ResultRow = {
   latestEventAt?: string | null;
   source?: string;
   metrics?: Record<string, number | null>;
+  patternFit?: number;
 };
 type Snapshot = {
   sourceLineage?: Lineage[];
@@ -57,7 +66,11 @@ export async function snapshotDisplayRights(
     ...(payload.results?.results ?? []),
   ];
   for (const row of sourceRows)
-    if (typeof row.instrumentId === "string" && !entries.has(row.instrumentId))
+    if (
+      !(payload.runState && "status" in row && row.status === "UNKNOWN" && !entries.has(row.instrumentId)) &&
+      typeof row.instrumentId === "string" &&
+      !entries.has(row.instrumentId)
+    )
       entries.set(row.instrumentId, {
         instrumentId: row.instrumentId,
         provider: legacyECB(row.instrumentId, row.source)
@@ -68,13 +81,14 @@ export async function snapshotDisplayRights(
         rightsExpiresAt: null,
       });
   const rights = new Map<string, DisplayRights>();
+  const configs = new Map<string, Promise<ProviderConfig[]>>();
   await Promise.all(
     [...entries].map(async ([id, creation]) => {
-      const key = creation.provider + "|" + id;
+      const key = creation.provider + "|" + (creation.configVersion ?? "") + "|" + id;
       if (!cache.has(key))
         cache.set(
           key,
-          currentDisplayRights(id, creation.provider).catch(() => ({
+          currentDisplayRights(id, creation.provider, configs, creation.configVersion).catch(() => ({
             displayAllowed: false,
             derivedDisplayAllowed: false,
             rightsExpiresAt: null,
@@ -100,11 +114,62 @@ export async function snapshotDisplayRights(
   return rights;
 }
 /** The only snapshot serializer used by history, detail, export and mutation responses. */
+function publicHistoryLabel(source: string) {
+  return /Angel\s*One|SmartAPI|Configured Exchange Feed \(Private\)/i.test(source)
+    ? "Private exchange history"
+    : source === "TRUEDATA" || source === "EODHD" || source === "INDIANAPI" || source === "BHARATSTOCK"
+      ? "Licensed exchange history"
+      : source;
+}
+function redactLineage(lineage: Lineage[]) {
+  return lineage.map((row) => ({ ...row, provider: publicHistoryLabel(row.provider) }));
+}
 export async function projectResearchSnapshot(
   payload: Snapshot,
   includeDatasets: boolean,
   cache: DisplayRightsCache = new Map(),
 ) {
+  if (typeof payload.universeVersion === "string" && payload.universeVersion !== EXPLICIT_SCOPE_VERSION) {
+    const key = "universe:" + payload.universeVersion;
+    if (!cache.has(key)) {
+      cache.set(
+        key,
+        niftyUniverseRightsActive(payload.universeVersion)
+          .catch(() => false)
+          .then((active) => ({ displayAllowed: active, derivedDisplayAllowed: active, rightsExpiresAt: null })),
+      );
+    }
+    if (!(await cache.get(key))?.displayAllowed) {
+      return {
+        payload: {
+          runState: payload.runState,
+          completedAt: payload.completedAt,
+          rule: payload.rule,
+          origin: payload.origin,
+          name: payload.name,
+          results: {
+            version: payload.results?.version,
+            asOf: payload.results?.asOf,
+            formula: payload.results?.formula,
+            total: payload.results?.total,
+            matches: null,
+            eligible: 0,
+            failed: null,
+            unknown: null,
+            results: [] as ResultRow[],
+          },
+        },
+        redaction: {
+          applied: true,
+          mode: "WITHHELD" as const,
+          rawInstrumentIds: [] as string[],
+          derivedInstrumentIds: ["UNIVERSE_EXPIRED"] as string[],
+          reason: "Constituent display rights have expired.",
+        },
+        digestVerifiableFromResponse: false,
+      };
+    }
+  }
   const rights = await snapshotDisplayRights(payload, cache);
   const rawHidden = [...rights]
       .filter(([, r]) => !r.displayAllowed)
@@ -122,22 +187,34 @@ export async function projectResearchSnapshot(
   const restricted = rawHidden.length > 0 || derivedHidden.length > 0;
   if (!restricted) {
     const projected = { ...payload };
+    const sourceRedacted =
+      payload.sourceLineage?.some((row) => publicHistoryLabel(row.provider) !== row.provider) ?? false;
+    if (sourceRedacted && payload.sourceLineage) {
+      projected.sourceLineage = redactLineage(payload.sourceLineage);
+    }
     if (!includeDatasets) delete projected.datasets;
     return {
       payload: projected,
       redaction: {
         applied: false,
+        mode: "NONE" as const,
         rawInstrumentIds: [] as string[],
         derivedInstrumentIds: [] as string[],
         reason: null as string | null,
       },
-      digestVerifiableFromResponse: includeDatasets,
+      digestVerifiableFromResponse: includeDatasets && !sourceRedacted,
     };
   }
   // Fail closed on unrecognized payload fields: do not spread future raw-price objects into a restricted response.
   const projected: Snapshot = {};
   for (const key of [
     "requestDigest",
+    "scanTier",
+    "origin",
+    "runState",
+    "universeVersion",
+    "completedAt",
+    "patternRecipe",
     "rule",
     "research",
     "description",
@@ -147,11 +224,17 @@ export async function projectResearchSnapshot(
     "billing",
   ])
     if (key in payload) projected[key] = payload[key];
+  const allDerived = derivedHidden.length === 0;
+  if (payload.coverage && typeof payload.coverage === "object") {
+    const { matched, unmatched, ...safeCoverage } = payload.coverage as Record<string, unknown>;
+    projected.coverage = allDerived ? { ...safeCoverage, matched, unmatched } : safeCoverage;
+  }
   projected.sourceLineage = (payload.sourceLineage ?? []).map((row) => {
     const metadata = row as Lineage & Record<string, unknown>;
     return {
       instrumentId: row.instrumentId,
-      provider: row.provider,
+      provider: publicHistoryLabel(row.provider),
+      ...(row.attribution ? { attribution: row.attribution } : {}),
       eventAt: metadata.eventAt,
       retrievedAt: metadata.retrievedAt,
       adjustment: metadata.adjustment,
@@ -172,6 +255,15 @@ export async function projectResearchSnapshot(
       const r = rights.get(row.instrumentId),
         raw = r?.displayAllowed === true,
         derived = r?.derivedDisplayAllowed === true;
+      if (payload.runState && !r && row.status === "UNKNOWN") {
+        return {
+          instrumentId: row.instrumentId,
+          status: "UNKNOWN",
+          reasons: ["Completed history unavailable."],
+          latestEventAt: null,
+          source: "Unavailable",
+        };
+      }
       return {
         instrumentId: row.instrumentId,
         status: derived ? row.status : "WITHHELD",
@@ -179,15 +271,15 @@ export async function projectResearchSnapshot(
           ? (row.reasons ?? [])
           : [
               derived
-                ? "Detailed observations are withheld by source licence; permitted derived status only."
+                ? "Raw exchange prices are withheld by data licence; permitted derived scan outcome only."
                 : "Calculation retained server-side; this source does not permit displaying its result.",
             ],
         latestEventAt: row.latestEventAt ?? null,
         source: row.source,
         ...(raw && derived && row.metrics ? { metrics: row.metrics } : {}),
+        ...(derived && typeof row.patternFit === "number" ? { patternFit: row.patternFit } : {}),
       };
     });
-    const allDerived = derivedHidden.length === 0;
     projected.results = {
       version: payload.results.version,
       asOf: payload.results.asOf,
@@ -327,10 +419,12 @@ export async function projectResearchSnapshot(
     payload: projected,
     redaction: {
       applied: true,
+      mode: (allDerived ? "DERIVED_ONLY" : "WITHHELD") as "DERIVED_ONLY" | "WITHHELD",
       rawInstrumentIds: rawHidden,
       derivedInstrumentIds: derivedHidden,
-      reason:
-        "Read-time source licence restrictions; the digest covers the unchanged full server-stored snapshot, not this redacted projection.",
+      reason: allDerived
+        ? "Raw exchange prices are withheld by data licence; permitted derived scan outcomes only."
+        : "Read-time source licence restrictions; the digest covers the unchanged full server-stored snapshot, not this redacted projection.",
     },
     digestVerifiableFromResponse: false,
   };

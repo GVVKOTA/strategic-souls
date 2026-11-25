@@ -20,9 +20,31 @@ type ProviderView = {
   config: ProviderConfig | null;
   health: ProviderHealth;
 };
+type SharedIngestionRow = {
+  provider: string;
+  config_version: number;
+  last_error: string | null;
+  paused_until: number;
+  mapped_intervals: number;
+  fetched_intervals: number;
+  due_intervals: number;
+  oldest_checked: number | null;
+  newest_checked: number | null;
+};
 type Settings = {
   isOwner: boolean;
   providers: ProviderView[];
+  sharedIngestion?: SharedIngestionRow[];
+  universe?: {
+    version: string;
+    effectiveDate: string;
+    validatedAt: string;
+    expectedCount: number;
+    distinctCount: number;
+    count: number;
+    rightsExpiresAt: string;
+    provenance: string;
+  } | null;
   secretSetup: string;
   audit: {
     provider: string;
@@ -82,6 +104,12 @@ export default function DataControl({
     [error, setError] = useState(""),
     [busy, setBusy] = useState("Loading"),
     [mapping, setMapping] = useState(mappingTemplate),
+    [sharedGrant, setSharedGrant] = useState(""),
+    [useNiftyUniverse, setUseNiftyUniverse] = useState(false),
+    [universeFile, setUniverseFile] = useState<File | null>(null),
+    [universeImportBusy, setUniverseImportBusy] = useState(false),
+    [universeStatus, setUniverseStatus] = useState(""),
+    [rightsConfirmed, setRightsConfirmed] = useState(false),
     [contract, setContract] = useState(""),
     [expiry, setExpiry] = useState(""),
     [priority, setPriority] = useState(1),
@@ -103,6 +131,45 @@ export default function DataControl({
   const active = useRef(false),
     key = useRef<string | null>(null);
   const current = state?.providers.find((p) => p.id === selected);
+  async function importUniverse(event: React.FormEvent) {
+    event.preventDefault();
+    if (!universeFile || !rightsConfirmed || universeImportBusy) return;
+    if (universeFile.size > 190_000) {
+      setUniverseStatus("The JSON snapshot exceeds 190 KB.");
+      return;
+    }
+    setUniverseImportBusy(true);
+    setUniverseStatus("");
+    try {
+      const snapshot = JSON.parse(await universeFile.text()) as Record<string, unknown>;
+      const response = await fetch("/api/strategy/universe", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...snapshot, rightsConfirmed: true }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const result = (await response.json()) as {
+        count?: number;
+        version?: string;
+        active?: boolean;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(result.error ?? "Snapshot import failed.");
+      setUniverseStatus(
+        (result.active ? "Active" : "Saved historical") +
+          " snapshot · " +
+          result.count +
+          " constituents · " +
+          (result.version ?? "").slice(0, 12),
+      );
+      setState(await request<Settings>());
+      window.dispatchEvent(new Event("x2-data-updated"));
+    } catch (err) {
+      setUniverseStatus((err as Error).message);
+    } finally {
+      setUniverseImportBusy(false);
+    }
+  }
   useEffect(() => {
     let alive = true;
     fetchMarketHealth()
@@ -154,6 +221,8 @@ export default function DataControl({
     const c = current?.config;
     queueMicrotask(() => {
       setMapping(c ? JSON.stringify(c.instruments, null, 2) : mappingTemplate);
+      setSharedGrant(c?.sharedHistory ? JSON.stringify(c.sharedHistory, null, 2) : "");
+      setUseNiftyUniverse(false);
       setContract(c?.rights.contractReference ?? "");
       setExpiry(c?.rights.expiresAt.slice(0, 10) ?? "");
       setPriority(c?.priority ?? 1);
@@ -178,7 +247,7 @@ export default function DataControl({
               verified: false,
             },
       );
-      setDatasets(c?.datasets ?? ["candles"]);
+      setDatasets(c?.datasets ?? [selected === "INDIANAPI" ? "prices" : "candles"]);
       setEnabled(c?.enabled ?? false);
       key.current = null;
     });
@@ -193,13 +262,22 @@ export default function DataControl({
       if (op === "configure") {
         let instruments;
         try {
-          instruments = JSON.parse(mapping);
+          instruments = useNiftyUniverse ? [] : JSON.parse(mapping);
         } catch {
           throw new Error("Instrument mappings must be a JSON array.");
+        }
+        let sharedHistory;
+        if (sharedGrant.trim()) {
+          try {
+            sharedHistory = JSON.parse(sharedGrant);
+          } catch {
+            throw new Error("Shared-history authorization must be valid JSON.");
+          }
         }
         key.current ??= crypto.randomUUID();
         payload = {
           op,
+          ...(useNiftyUniverse ? { useNiftyUniverse: true } : {}),
           config: {
             provider: selected,
             version: current?.config?.version ?? 0,
@@ -209,6 +287,7 @@ export default function DataControl({
             dailyCallLimit: quota,
             instruments,
             datasets,
+            ...(sharedHistory ? { sharedHistory } : {}),
             rights: {
               ...rights,
               cacheSeconds: cache,
@@ -314,6 +393,62 @@ export default function DataControl({
         <p role="status">{busy || "Settings unavailable. Reload to retry."}</p>
       ) : (
         <>
+          {state.isOwner && (
+            <details className="x2-inline-help">
+              <summary>
+                Nifty 500 constituent snapshot{" "}
+                {state.universe
+                  ? `(${state.universe.distinctCount} active · eff. ${state.universe.effectiveDate})`
+                  : "(Not imported)"}
+              </summary>
+              <form className="x1-form" onSubmit={(event) => void importUniverse(event)}>
+                <label>
+                  Approved constituent snapshot JSON (with rights expiry)
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={(event) => setUniverseFile(event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                <label className="x2-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={rightsConfirmed}
+                    onChange={(event) => setRightsConfirmed(event.target.checked)}
+                  />
+                  The authorized source permits use and display of these constituent identities.
+                </label>
+                <button
+                  type="submit"
+                  disabled={!universeFile || !rightsConfirmed || universeImportBusy}
+                >
+                  {universeImportBusy ? "Validating snapshot…" : "Import snapshot"}
+                </button>
+                {universeStatus && <p role="status">{universeStatus}</p>}
+              </form>
+            </details>
+          )}
+          <details className="x2-inline-help">
+            <summary>Shared history authorization (credit window &amp; cache)</summary>
+            <label>
+              Verified shared-history grant JSON (leave blank for private/legacy mapping)
+              <textarea
+                rows={7}
+                spellCheck={false}
+                value={sharedGrant}
+                onChange={(event) => {
+                  edit();
+                  setSharedGrant(event.target.value);
+                }}
+              />
+            </label>
+            <p>
+              For derived-only screening grants (e.g. BharatStock Paid Customer Derivatives), keep{" "}
+              <code>display</code> and <code>redistribution</code> unchecked while enabling{" "}
+              <code>analysis</code>, <code>storage</code>, <code>derivedDisplay</code>, and{" "}
+              <code>verified</code>.
+            </p>
+          </details>
           <label>
             Implemented provider
             <select
@@ -328,6 +463,31 @@ export default function DataControl({
               ))}
             </select>
           </label>
+          {(selected === "INDIANAPI" || selected === "BHARATSTOCK") && (
+            <label className="x2-checkbox">
+              <input
+                type="checkbox"
+                checked={useNiftyUniverse}
+                onChange={(event) => {
+                  edit();
+                  setUseNiftyUniverse(event.target.checked);
+                }}
+              />
+              Map the current licensed Nifty 500 snapshot as NSE equities
+            </label>
+          )}
+          {state.sharedIngestion && state.sharedIngestion.length > 0 && (
+            <div className="x2-provider-status" aria-label="Shared ingestion progress">
+              <strong>Shared history scheduler</strong>
+              {state.sharedIngestion.map((row) => (
+                <span key={`${row.provider}-${row.config_version}`}>
+                  {row.provider} v{row.config_version}: {row.fetched_intervals ?? 0}/
+                  {row.mapped_intervals} fetched · {row.due_intervals ?? 0} due
+                  {row.last_error ? ` · last error: ${row.last_error}` : ""}
+                </span>
+              ))}
+            </div>
+          )}
           <div className="x2-provider-status">
             <strong>{current?.health.state.replaceAll("_", " ")}</strong>
             <span>
@@ -501,7 +661,7 @@ export default function DataControl({
                 <input
                   type="number"
                   min="1"
-                  max="1000"
+                  max="30000"
                   value={quota}
                   onChange={(e) => {
                     edit();

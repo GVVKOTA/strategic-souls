@@ -1,6 +1,20 @@
 import handler from "vinext/server/fetch-handler";
+import { refreshSharedHistory } from "../services/market-data/shared-history";
+import { processMarketScanBatch } from "../services/research/market-scan-jobs";
+import { clearExpiredReports } from "../services/market-data/company-reports";
 
 const worker = {
+  async scheduled(controller: ScheduledController) {
+    if (controller.cron === "*/2 * * * *") {
+      await refreshSharedHistory();
+      await clearExpiredReports();
+      return;
+    }
+    const deadline = Date.now() + 25_000;
+    for (let batch = 0; batch < 10 && Date.now() < deadline; batch++) {
+      if (!(await processMarketScanBatch(undefined, 50))) break;
+    }
+  },
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext) {
     const startedAt = Date.now();
     const requestId = crypto.randomUUID().slice(0, 12);

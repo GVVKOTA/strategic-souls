@@ -10,7 +10,13 @@ export async function niftyUniverseRightsActive(version: string) {
   ).bind(version, todayInIndia(), new Date().toISOString()).first();
 }
 const todayInIndia = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(Date.now());
-export type NiftyConstituent = { id: string; isin: string; name: string; industry: string };
+export type NiftyConstituent = {
+  id: string;
+  isin: string;
+  name: string;
+  industry: string;
+  series?: string;
+};
 type UniverseRow = {
   version: string;
   effective_date: string;
@@ -28,17 +34,25 @@ export function validateNifty500(input: unknown, expectedCount = NIFTY_500_COUNT
   const ids = new Set<string>();
   const isins = new Set<string>();
   const constituents = input.map((row: Record<string, unknown> | null) => {
-    const { id, isin, name, industry } = row ?? {};
+    const { id, isin, name, industry, series } = row ?? {};
     if (typeof id !== "string" || !/^NSE:[A-Z0-9][A-Z0-9&.-]{0,29}$/.test(id) ||
         typeof isin !== "string" || !/^IN[A-Z0-9]{9}[0-9]$/.test(isin) ||
         typeof name !== "string" || !name.trim() || name.length > 160 ||
         typeof industry !== "string" || !industry.trim() || industry.length > 100)
       throw new HttpError(400, "Each constituent needs a canonical NSE symbol, ISIN, name and industry.");
+    if (series !== undefined && (typeof series !== "string" || !/^[A-Z0-9]{1,8}$/.test(series.trim())))
+      throw new HttpError(400, "Optional exchange series must be 1–8 uppercase alphanumeric characters.");
     if (ids.has(id) || isins.has(isin))
       throw new HttpError(400, "Duplicate NSE symbol or ISIN in the constituent snapshot.");
     ids.add(id);
     isins.add(isin);
-    return { id, isin, name: name.trim(), industry: industry.trim() };
+    return {
+      id,
+      isin,
+      name: name.trim(),
+      industry: industry.trim(),
+      ...(typeof series === "string" ? { series: series.trim() } : {}),
+    };
   });
   return constituents.sort((a, b) => a.id.localeCompare(b.id, "en"));
 }
@@ -54,13 +68,16 @@ export async function niftyUniverse(version?: string) {
       ORDER BY effective_date DESC,sequence DESC LIMIT 1`).bind(today, now)
   ).first<UniverseRow>();
   if (!row) return null;
+  const constituents = validateNifty500(JSON.parse(row.constituents), row.expected_count);
   return {
     version: row.version,
     effectiveDate: row.effective_date,
     validatedAt: row.validated_at,
     provenance: row.provenance,
     rightsExpiresAt: row.rights_expires_at,
-    constituents: validateNifty500(JSON.parse(row.constituents), row.expected_count),
+    expectedCount: row.expected_count,
+    distinctCount: constituents.length,
+    constituents,
   };
 }
 

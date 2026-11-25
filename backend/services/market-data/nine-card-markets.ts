@@ -590,7 +590,7 @@ export async function getMarketOverviewPayload(
     const checkedAt = Date.now();
     const [daily, history] = await Promise.all([
       readSharedDailyQuotes(ids, grants, checkedAt),
-      readSharedHistoryBatch(ids, "1d", grants, { now: checkedAt }),
+      readSharedHistoryBatch(ids, "1d", grants, { now: checkedAt, requireDisplay: true }),
     ]);
     for (const [id, quote] of daily) {
       if (id !== quote.instrument.id || quote.instrument.type !== "INDEX" ||

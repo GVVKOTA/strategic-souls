@@ -22,12 +22,12 @@ export const BHARATSTOCK_INDEX_SYMBOLS: ReadonlyMap<string, {symbol: string; nam
 
 export const PROVIDERS = {
   BHARATSTOCK: {
-    label: "BharatStock · dashboard index closes",
+    label: "BharatStock · NSE daily OHLCV & indices",
     secret: "BHARATSTOCK_API_KEY",
-    docs: BHARATSTOCK_ORIGIN + "/reference#indices",
+    docs: BHARATSTOCK_ORIGIN + "/reference",
     rightsUrl: BHARATSTOCK_ORIGIN + "/terms",
     markets: ["NSE"], datasets: ["candles"],
-    status: "Documented NSE index history. Exchange display licence required.",
+    status: "Paid tier required for caching or public derived/display service. Free tier is non-commercial/non-cache.",
   },
   INDIANAPI: {
     label: "Indian API · NSE daily prices",
@@ -92,10 +92,22 @@ export function validateInstrument(
     throw new Error("Use exact source identifiers, not a URL or expression.");
   if (provider === "INDIANAPI" && (v.type !== "EQUITY" || id !== "NSE:" + symbol || v.mic !== "XNSE" || v.currency !== "INR" || v.timezone !== "Asia/Kolkata"))
     throw new Error("Map a verified NSE equity ticker in INR with its Indian exchange timezone.");
-  if (provider === "BHARATSTOCK" &&
-      (v.type !== "INDEX" || BHARATSTOCK_INDEX_SYMBOLS.get(id)?.symbol !== symbol ||
-        v.mic !== "XNSE" || v.currency !== "INR" || v.timezone !== "Asia/Kolkata"))
-    throw new Error("Map only BharatStock's documented NSE dashboard indices.");
+  if (provider === "BHARATSTOCK") {
+    const validIndex =
+      v.type === "INDEX" &&
+      BHARATSTOCK_INDEX_SYMBOLS.get(id)?.symbol === symbol &&
+      v.mic === "XNSE" &&
+      v.currency === "INR" &&
+      v.timezone === "Asia/Kolkata";
+    const validEquity =
+      v.type === "EQUITY" &&
+      id === "NSE:" + symbol &&
+      v.mic === "XNSE" &&
+      v.currency === "INR" &&
+      v.timezone === "Asia/Kolkata";
+    if (!validIndex && !validEquity)
+      throw new Error("Map only BharatStock's documented NSE equities or dashboard indices in INR/Asia/Kolkata.");
+  }
   if (!(PROVIDERS[provider].markets as readonly string[]).includes(v.market))
     throw new Error("This adapter does not support the selected market.");
   if (
@@ -225,19 +237,23 @@ export function validateConfig(value: unknown): ProviderConfig {
   if (
     !Number.isInteger(v.dailyCallLimit) ||
     v.dailyCallLimit < 1 ||
-    v.dailyCallLimit > 1000 ||
+    v.dailyCallLimit > 30000 ||
     !Number.isInteger(v.priority) ||
     v.priority < 1 ||
     v.priority > 10 ||
     typeof v.enabled !== "boolean"
   )
-    throw new Error("Use a 1–1000 daily call cap and priority 1–10.");
+    throw new Error("Use a 1–30000 daily call cap and priority 1–10.");
   const sharedHistory = validateSharedHistory(v.sharedHistory, p);
   if ((p === "BHARATSTOCK" || p === "INDIANAPI") && v.enabled && !sharedHistory)
     throw new Error("Record the licensed shared history settings before enabling this provider.");
-  if (sharedHistory && (!r.display || !r.analysis || !r.storage || !r.redistribution || !r.derivedDisplay ||
-      !r.verified || !v.datasets.includes(p === "INDIANAPI" ? "prices" : "candles")))
-    throw new Error("Shared history needs verified display, analysis, derived display, storage and redistribution rights.");
+  const datasetRequired = p === "INDIANAPI" ? "prices" : "candles";
+  const hasDerivedSharedGrant =
+    r.verified && r.analysis && r.storage && r.derivedDisplay === true;
+  if (sharedHistory && (!hasDerivedSharedGrant || !v.datasets.includes(datasetRequired)))
+    throw new Error("Shared history requires verified analysis, storage, derived display rights, and the matching historical dataset.");
+  if (sharedHistory && r.display && !r.redistribution)
+    throw new Error("Shared public raw display requires an explicit redistribution grant; disable display for derived-only screening.");
   return {
     provider: p,
     enabled: v.enabled,
@@ -547,6 +563,57 @@ export async function bharatStockIndexCandles(
   }).sort((a, b) => a.date.localeCompare(b.date));
 }
 
+export async function bharatStockEquityCandles(
+  instrument: Instrument,
+  key: string,
+  fetcher: typeof fetch = fetch,
+  now = Date.now(),
+  days = 370,
+): Promise<Candle[]> {
+  if (instrument.type !== "EQUITY" || instrument.market !== "NSE" || instrument.id !== "NSE:" + instrument.providerSymbol)
+    throw new ProviderFailure("INVALID_DATA", "BharatStock equity history requires a verified NSE equity symbol.");
+  const boundedDays = Math.max(30, Math.min(2190, Math.round(days)));
+  const from = new Date(now - boundedDays * 86_400_000).toISOString().slice(0, 10);
+  const to = new Date(now).toISOString().slice(0, 10);
+  const url = new URL("/v1/stocks/" + encodeURIComponent(instrument.providerSymbol) + "/prices", BHARATSTOCK_ORIGIN);
+  url.search = new URLSearchParams({ from, to, page: "1", page_size: "500" }).toString();
+  const payload = await fetchProviderJson(url, { "X-API-Key": key }, fetcher) as { data?: unknown };
+  const rawRows = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : null;
+  if (!rawRows || rawRows.length === 0 || rawRows.length > 600)
+    throw new ProviderFailure("INVALID_DATA", "BharatStock equity history is missing or exceeds the requested window.");
+  const dates = new Set<string>();
+  const knownAt = new Date(now).toISOString();
+  return rawRows.map((value: unknown): Candle => {
+    const row = value as Record<string, unknown> | null;
+    const day = date(row?.trade_date, now);
+    const { open, high, low, close, volume, adjusted_close } = row ?? {};
+    if (
+      dates.has(day) ||
+      typeof open !== "number" || typeof high !== "number" ||
+      typeof low !== "number" || typeof close !== "number" ||
+      ![open, high, low, close].every((price) => Number.isFinite(price) && price > 0) ||
+      high < Math.max(open, low, close) || low > Math.min(open, high, close) ||
+      (volume != null && (typeof volume !== "number" || !Number.isFinite(volume) || volume < 0)) ||
+      (adjusted_close != null && (typeof adjusted_close !== "number" || !Number.isFinite(adjusted_close) || adjusted_close <= 0))
+    )
+      throw new ProviderFailure("INVALID_DATA", "Invalid or duplicate BharatStock equity observation.");
+    dates.add(day);
+    return {
+      date: day,
+      open,
+      high,
+      low,
+      close,
+      adjustedClose: typeof adjusted_close === "number" ? adjusted_close : null,
+      volume: typeof volume === "number" ? volume : null,
+      openInterest: null,
+      knownAt,
+      adjustment: typeof adjusted_close === "number" ? "RAW_OHLC_ADJUSTED_CLOSE" : "RAW",
+      provider: "BHARATSTOCK",
+    };
+  }).sort((a, b) => a.date.localeCompare(b.date));
+}
+
 export async function providerCandles(
   config: ProviderConfig,
   instrument: Instrument,
@@ -557,7 +624,11 @@ export async function providerCandles(
 ) {
   if (config.provider === "INDIANAPI")
     throw new ProviderFailure("INVALID_DATA", "This dataset contains daily prices only.");
-  if (config.provider === "BHARATSTOCK") return bharatStockIndexCandles(instrument, secret, fetcher, now);
+  if (config.provider === "BHARATSTOCK") {
+    return instrument.type === "EQUITY"
+      ? bharatStockEquityCandles(instrument, secret, fetcher, now, days)
+      : bharatStockIndexCandles(instrument, secret, fetcher, now);
+  }
   if (instrument.expiry && Date.parse(instrument.expiry + "T23:59:59Z") < now)
     throw new ProviderFailure(
       "INVALID_DATA",

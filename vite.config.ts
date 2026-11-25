@@ -32,6 +32,7 @@ const cloudflareWorkerConfig = {
   compatibility_date: "2026-05-15",
   compatibility_flags: ["nodejs_compat"],
   observability: { enabled: true },
+  triggers: { crons: ["* * * * *", "*/2 * * * *"] },
   vars: { ENABLE_PRIVATE_BROKER_DATA: "true", INDIA_API_HOST: "stock.indianapi.in" },
   version_metadata: { binding: "CF_VERSION_METADATA" },
   vpc_services: [

@@ -67,6 +67,15 @@ import {
 import { IconGraveyard, IconPin, IconStrategy } from "../../components/workspace/ss-icons";
 import { triggerGoFeedback } from "../../components/workspace/go-feedback";
 import { ResearchInfo, RuleEditor } from "./controls";
+import {
+  cancelMarketScan,
+  fetchActiveMarketScans,
+  fetchUniverseReadiness,
+  resultPhase,
+  waitForMarketScan,
+  type MarketScanProgress,
+  type UniverseReadinessView,
+} from "./market-scan-client";
 import "./research.css";
 
 const FormulaLab = lazy(() => import("./formula-lab"));
@@ -100,6 +109,7 @@ type ScanPhase =
   | "IDLE"
   | "RUNNING"
   | "COMPLETE"
+  | "PARTIAL"
   | "NO_MATCHES"
   | "BLOCKED"
   | "FAILED"
@@ -261,6 +271,29 @@ function safeCsvCell(raw: string | number | null | undefined): string {
 
 function exportScanResultsCsv(scan: ScanRun): void {
   const rows = scan.payload.results?.results ?? [];
+  const derivedOnly =
+    scan.redaction?.applied === true ||
+    !rows.some((r) => typeof r.metrics?.close === "number");
+  if (derivedOnly) {
+    const lines = [["Instrument", "Venue", "Status", "BarTimestamp", "Source"].join(",")];
+    for (const r of rows) {
+      const [venue, sym] = r.instrumentId.includes(":")
+        ? r.instrumentId.split(":", 2)
+        : ["MKT", r.instrumentId];
+      lines.push([sym, venue, r.status, r.latestEventAt ?? "", r.source ?? ""].map(safeCsvCell).join(","));
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const safeName = (scan.name || "soul-scan").replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 48);
+    link.download = `${safeName}-derived-results.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return;
+  }
   const header = [
     "Instrument",
     "Venue",
@@ -482,10 +515,14 @@ export default function Strategy({
       ? "ECB_DAILY"
       : initialUniversePreset ?? (initialInstrument?.trim() ? "MARKET" : null),
   );
-  const exchangeAvailable = workspace?.marketScanAvailable ?? isOwner;
+  const [universeReadiness, setUniverseReadiness] = useState<UniverseReadinessView | null>(null);
+  const [activeJob, setActiveJob] = useState<MarketScanProgress | null>(null);
+  const [scanErrorRetryable, setScanErrorRetryable] = useState(false);
+  const niftyReady = universeReadiness?.status === "READY";
+  const exchangeAvailable = (workspace?.marketScanAvailable ?? false) || niftyReady || isOwner;
   const scanSource = chosenScope ?? (exchangeAvailable ? "MARKET" : "ECB_DAILY");
   const exchangeScopeUnavailable = !exchangeAvailable &&
-    (scanSource === "MARKET" || scanSource === "INDIAN_EQUITIES" || scanSource === "MCX_FUTURES");
+    (scanSource === "MARKET" || scanSource === "INDIAN_EQUITIES" || scanSource === "MCX_FUTURES" || scanSource === "NIFTY_500");
   const [moreScopesOpen, setMoreScopesOpen] = useState(
     !!initialUniversePreset &&
       initialUniversePreset !== "MARKET" &&
@@ -536,6 +573,60 @@ export default function Strategy({
   const scanAbortRef = useRef<AbortController | null>(null);
   const reviewKeyRef = useRef<{ sig: string; id: string } | null>(null);
   const resultsRef = useRef<HTMLElement>(null);
+
+  // Fetch Nifty 500 shared universe readiness & recover any in-flight durable job on mount/reload
+  useEffect(() => {
+    let alive = true;
+    void fetchUniverseReadiness().then((status) => {
+      if (alive && status) setUniverseReadiness(status);
+    });
+    if (!authenticated) return () => { alive = false; };
+    const ctrl = new AbortController();
+    void fetchActiveMarketScans()
+      .then(async (jobs) => {
+        const running = jobs[0];
+        if (!alive || !running?.jobId || lock.current) return;
+        lock.current = true;
+        setBusy(true);
+        setScanPhase("RUNNING");
+        setActiveJob(running);
+        setRunningContext({
+          name: running.name || "Market Scan",
+          sourceLabel: "Nifty 500",
+          timeframeLabel: "Daily",
+        });
+        try {
+          const completed = await waitForMarketScan(running, ctrl.signal, (st) => {
+            if (alive) setActiveJob(st);
+          });
+          if (!alive) return;
+          await reload();
+          if (completed.id) {
+            setSelectedScanId(completed.id);
+            setJustCompletedId(completed.id);
+          }
+          setScanPhase(resultPhase(completed) as ScanPhase);
+          notify("Resumed scan completed and archived to GRAVEYARD.");
+        } catch (err) {
+          if (!alive || ctrl.signal.aborted) return;
+          setScanPhase("FAILED");
+          setScanErrorRetryable(false);
+          setScanError(err instanceof Error ? err.message : "Resumed scan did not complete.");
+        } finally {
+          if (alive) {
+            lock.current = false;
+            setBusy(false);
+            setActiveJob(null);
+            setRunningContext(null);
+          }
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      ctrl.abort();
+    };
+  }, [authenticated, reload, notify]);
 
   // Cleanup any in-flight scan abort controller on unmount
   useEffect(() => {
@@ -666,7 +757,15 @@ export default function Strategy({
     }
   }, [effectiveFormula]);
 
-  const dailyOnlyScope = scanSource === "ECB_DAILY" || scanSource === "CUSTOM_CSV";
+  const sharedSupportsIntraday = Boolean(
+    universeReadiness?.eligibleTimeframes?.includes("30m") ||
+      universeReadiness?.eligibleTimeframes?.includes("1h"),
+  );
+  const dailyOnlyScope =
+    scanSource === "ECB_DAILY" ||
+    scanSource === "CUSTOM_CSV" ||
+    (scanSource === "NIFTY_500" && !sharedSupportsIntraday) ||
+    (scanSource === "MARKET" && niftyReady && !isOwner && !sharedSupportsIntraday);
 
   // Select latest scan cleanly, prioritizing explicit completed scan
   const scans = useMemo(() => workspace?.scans ?? [], [workspace?.scans]);
@@ -851,9 +950,17 @@ export default function Strategy({
 
   function handleCancelScan() {
     if (!busy) return;
+    const jobId = activeJob?.jobId;
+    if (jobId) {
+      void cancelMarketScan(jobId).catch(() => {});
+    }
     invalidatePendingRun();
+    setActiveJob(null);
+    setScanErrorRetryable(false);
     setScanError(
-      "Stopped waiting in this tab. If the server had already finished saving the scan, it will appear in GRAVEYARD after refresh.",
+      jobId
+        ? "Scan cancelled on the server. Your scan quota was not charged."
+        : "Stopped waiting in this tab. If the server had already finished saving the scan, it will appear in GRAVEYARD after refresh.",
     );
   }
 
@@ -864,9 +971,15 @@ export default function Strategy({
     }
     if (lock.current || busy) return;
     if (exchangeScopeUnavailable) return;
-    if (scanSource === "NIFTY_500") {
+    if (scanSource === "NIFTY_500" && !niftyReady) {
       setScanPhase("BLOCKED");
-      setScanError("Nifty 500 requires authorized constituents and eligible historical coverage.");
+      setScanErrorRetryable(
+        universeReadiness?.status === "WARMING" || universeReadiness?.status === "RATE_LIMITED",
+      );
+      setScanError(
+        universeReadiness?.reason ??
+          "Nifty 500 requires authorized constituents and eligible historical coverage.",
+      );
       return;
     }
 
@@ -939,10 +1052,12 @@ export default function Strategy({
     scanAbortRef.current = ctrl;
 
     try {
-      const res = await api<{
-        id: string;
-        results?: { matches?: number };
-      }>(
+      const initial = await api<
+        MarketScanProgress & {
+          id?: string;
+          results?: { matches?: number };
+        }
+      >(
         "/api/strategy/scan",
         {
           action: "run-scan",
@@ -956,31 +1071,54 @@ export default function Strategy({
         { signal: ctrl.signal, timeoutMs: 65_000 },
       );
       if (seq !== runSeqRef.current) return;
-      await reload();
+      const res = initial.jobId
+        ? await waitForMarketScan(initial, ctrl.signal, (status) => {
+            if (seq === runSeqRef.current) setActiveJob(status);
+          })
+        : initial;
       if (seq !== runSeqRef.current) return;
-      setSelectedScanId(res.id);
+      await reload();
+      void fetchUniverseReadiness().then((status) => {
+        if (status) setUniverseReadiness(status);
+      });
+      if (seq !== runSeqRef.current) return;
+      const scanId = res.id ?? null;
+      if (scanId) {
+        setSelectedScanId(scanId);
+        setJustCompletedId(scanId);
+      }
       setUniverseTableOpen(null);
-      setJustCompletedId(res.id);
       setScanPhase(
-        (res.results?.matches ?? 0) > 0 ? "COMPLETE" : "NO_MATCHES",
+        initial.jobId
+          ? (resultPhase(res, initial.results?.matches) as ScanPhase)
+          : (initial.results?.matches ?? 0) > 0
+            ? "COMPLETE"
+            : "NO_MATCHES",
       );
       notify("Scan completed and archived to GRAVEYARD.");
     } catch (err) {
       if (seq !== runSeqRef.current) return;
+      const typed = err as Error & { errorCode?: string; retryable?: boolean };
       const msg =
         err instanceof Error
           ? err.message
           : "Scan could not complete right now. Please try again.";
-      setScanPhase(
-        /allowance|not yet active|unavailable|requires|does not publish/i.test(msg)
-          ? "BLOCKED"
-          : "FAILED",
+      const persistent =
+        typed?.errorCode === "MISSING_PERMISSION" ||
+        typed?.errorCode === "NIFTY_UNIVERSE_UNAVAILABLE" ||
+        typed?.errorCode === "INTRADAY_NOT_SUPPORTED" ||
+        typed?.errorCode === "DATA_EXPIRED" ||
+        /allowance|not yet active|unavailable|requires|does not publish|not yet imported|expired/i.test(msg);
+      setScanPhase(persistent ? "BLOCKED" : "FAILED");
+      setScanErrorRetryable(
+        typeof typed?.retryable === "boolean" ? typed.retryable : !persistent,
       );
       setScanError(msg);
     } finally {
       if (seq === runSeqRef.current) {
         lock.current = false;
         setBusy(false);
+        setActiveJob(null);
         setRunningContext(null);
       }
     }
@@ -1163,12 +1301,28 @@ export default function Strategy({
 
         {exchangeScopeUnavailable && (
           <div className="x1-callout" role="status">
-            <span>Shared NSE, BSE and MCX history requires a licensed feed. ECB daily FX is available.</span>
+            <span>
+              {universeReadiness?.status === "WARMING" || universeReadiness?.status === "RATE_LIMITED"
+                ? universeReadiness.reason
+                : universeReadiness?.reason || "Shared NSE, BSE and MCX history requires a licensed feed. ECB daily FX is available."}
+            </span>
             <button type="button" className="x1-secondary" onClick={() => handleScopeChange("ECB_DAILY")}>
               Choose ECB FX
             </button>
           </div>
         )}
+        {!exchangeScopeUnavailable &&
+          (scanSource === "MARKET" || scanSource === "NIFTY_500") &&
+          universeReadiness?.membership && (
+            <p className="x1-caption" role="status">
+              Nifty 500 ({universeReadiness.membership.effectiveDate} ·{" "}
+              {universeReadiness.coverage?.ready ?? 0}/
+              {universeReadiness.membership.distinctCount ?? universeReadiness.membership.count} ready)
+              {universeReadiness.rightsMode === "DERIVED_ONLY"
+                ? " · Derived scan outcomes only (raw prices withheld by licence)"
+                : " · Published EOD"}
+            </p>
+          )}
         {moreScopesOpen && (
           <div
             className="ss-v31-extra-scopes"
@@ -1191,8 +1345,11 @@ export default function Strategy({
           </div>
         )}
 
-        {scanSource === "NIFTY_500" && (
-          <p className="x1-caption" role="status">Nifty 500 is unavailable. It requires authorized constituents and eligible historical coverage.</p>
+        {scanSource === "NIFTY_500" && !niftyReady && (
+          <p className="x1-caption" role="status">
+            {universeReadiness?.reason ??
+              "Nifty 500 is unavailable. It requires authorized constituents and eligible historical coverage."}
+          </p>
         )}
         {scanSource === "MY_WATCHLIST" && watchlists.length > 1 && (
           <select
@@ -1784,7 +1941,7 @@ export default function Strategy({
 
             {scanError && (
               <div className="x1-callout" role="alert" style={{ margin: 0 }}>
-                <div style={{ marginBottom: 8 }}>
+                <div style={{ marginBottom: scanErrorRetryable ? 8 : 0 }}>
                   <strong>
                     {scanPhase === "BLOCKED"
                       ? "Scan unavailable · 0 quota charged"
@@ -1794,15 +1951,17 @@ export default function Strategy({
                   </strong>
                   <div style={{ marginTop: 4 }}>{scanError}</div>
                 </div>
-                <button
-                  type="button"
-                  className="x1-secondary"
-                  disabled={busy || exchangeScopeUnavailable}
-                  onClick={() => void executeScan()}
-                >
-                  <RefreshCw size={14} aria-hidden="true" />
-                  <span>Retry scan</span>
-                </button>
+                {scanErrorRetryable && (
+                  <button
+                    type="button"
+                    className="x1-secondary"
+                    disabled={busy || exchangeScopeUnavailable}
+                    onClick={() => void executeScan()}
+                  >
+                    <RefreshCw size={14} aria-hidden="true" />
+                    <span>Retry scan</span>
+                  </button>
+                )}
               </div>
             )}
 
@@ -1849,7 +2008,10 @@ export default function Strategy({
               {busy && runningContext ? (
                 <p className="ss-v3-results-context" role="status" aria-live="polite">
                   Evaluating {runningContext.name} · {runningContext.sourceLabel} ·{" "}
-                  {runningContext.timeframeLabel}…
+                  {runningContext.timeframeLabel}
+                  {activeJob?.coverage
+                    ? ` · ${activeJob.coverage.selected - activeJob.coverage.deferred}/${activeJob.coverage.selected} checked (${activeJob.progress ?? 0}%)`
+                    : "…"}
                 </p>
               ) : activeScan ? (
                 <p className="ss-v3-results-context">
@@ -1990,6 +2152,13 @@ export default function Strategy({
                         </div>
                       )}
                     </div>
+
+                    {activeScan.redaction?.applied && (
+                      <p className="x1-caption" role="note" style={{ margin: "4px 0 8px" }}>
+                        {activeScan.redaction.reason ||
+                          "Raw exchange prices are withheld by data licence; showing permitted derived scan outcomes only."}
+                      </p>
+                    )}
 
                     {/* Truthful Disjoint Breakdown (never labels non-matches as "Failed"!) */}
                     <div className="ss-v31-breakdown-row" aria-label="Scan coverage breakdown">
