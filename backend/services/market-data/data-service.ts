@@ -31,6 +31,13 @@ import {
 } from "./providers";
 import { X2_INSTRUMENTS, registryInstrument } from "./instrument-registry";
 import {
+  eligibleSharedPeriods,
+  hasReadySharedHistory,
+  readSharedHistoryBatch,
+  sharedDailyEventAt,
+  sharedHistoryGrants,
+} from "./shared-history";
+import {
   gatewayCandles,
   gatewaySearchInstruments,
   MarketGatewayError,
@@ -241,12 +248,20 @@ export async function exchangeScanAvailable(subject: string): Promise<boolean> {
   if (isDataOwner(subject) && flags.enablePrivateBrokerData) return true;
   if (flags.mode === "public_licensed" && flags.enablePublicExchangeQuotes) return true;
   const configs = await providerConfigs();
-  return configs.some((config) =>
+  if (configs.some((config) =>
+    config.provider !== "BHARATSTOCK" && config.provider !== "INDIANAPI" &&
     rightsActive(config, "analysis") && rightsActive(config, "storage") &&
     config.datasets.includes("candles") && config.instruments.some((instrument) =>
       matchesScanMarketPreset("MARKET", instrument.market, instrument.type, instrument.expiry),
     ),
-  );
+  )) return true;
+  if (!configs.some(({ provider, enabled }) => provider === "INDIANAPI" && enabled)) return false;
+  const grants = (await sharedHistoryGrants()).filter(({ provider }) => provider === "INDIANAPI");
+  return hasReadySharedHistory(grants, "1d", grants.flatMap(({ instruments }) =>
+    instruments.filter((instrument) =>
+      matchesScanMarketPreset("MARKET", instrument.market, instrument.type, instrument.expiry),
+    ).map(({ id }) => id),
+  ));
 }
 export async function instrumentRegistry(subject?: string) {
   const configs = await providerConfigs();
@@ -1152,6 +1167,7 @@ export async function researchUniverse(
   const preset = options.universePreset;
   const configs = (await providerConfigs()).filter(
     (c) =>
+      c.provider !== "BHARATSTOCK" &&
       rightsActive(c, "analysis") &&
       rightsActive(c, "storage") &&
       (options.provider === "CONNECTED_MARKETS" ||
@@ -1174,12 +1190,49 @@ export async function researchUniverse(
     });
   }
   const loadedIds = new Set<string>();
+  const selectedGrants = !isIntraday && configs.some(({ provider }) => provider === "INDIANAPI")
+    ? (await sharedHistoryGrants()).filter(({ provider }) => provider === "INDIANAPI")
+    : [];
+  const sharedPrices = await readSharedHistoryBatch(ids, interval, selectedGrants);
   for (const id of ids) {
     const selected = configs.find((c) =>
       c.instruments.some((i) => i.id === id &&
         matchesScanMarketPreset(preset, i.market, i.type, i.expiry)),
     )!;
     const mappedInst = selected.instruments.find((i) => i.id === id);
+    if (selected.provider === "INDIANAPI") {
+      const snapshot = sharedPrices.get(id);
+      if (interval === "30m" || interval === "1h" || !snapshot?.prices?.length || snapshot.state === "STALE") {
+        out.excluded.push({ id, reason: "Fresh licensed NSE daily price history is unavailable for this timeframe." });
+        continue;
+      }
+      const { instrument, row, config } = snapshot;
+      const prices = eligibleSharedPeriods(snapshot.prices, instrument, interval, Date.now());
+      const periods = new Map(prices.map((price) => [
+        interval === "1d" ? price.date : calendarPeriodKey(price.date, interval), price,
+      ]));
+      const knownAt = new Date(row.received_at).toISOString();
+      const observations = [...periods.values()].map((price) => ({
+        eventAt: sharedDailyEventAt(instrument, price.date),
+        knownAt,
+        close: price.close,
+        ...(interval === "1d" && price.volume !== null ? { volume: price.volume } : {}),
+      }));
+      if (!observations.length) {
+        out.excluded.push({ id, reason: "No complete exchange period in the licensed price snapshot." });
+        continue;
+      }
+      out.datasets.push({ instrumentId: id, currency: instrument.currency, source: config.sharedHistory.attribution,
+        permitted: true, frequency: "PUBLISHED_EOD", maxAgeMs: brokerScanFreshnessMs(interval), observations });
+      out.lineage.push({
+        instrumentId: id, provider: config.provider, configVersion: config.version,
+        eventAt: observations.at(-1)!.eventAt, retrievedAt: knownAt, adjustment: "UNSPECIFIED",
+        displayAllowed: true, derivedDisplayAllowed: true, rightsExpiresAt: config.rights.expiresAt,
+        interval, periodPolicy: "LAST_CLOSE_OF_COMPLETED_EXCHANGE_PERIOD",
+      });
+      loadedIds.add(id);
+      continue;
+    }
     const a = await sourceResearch(
       id,
       subject,

@@ -7,8 +7,9 @@
 import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import { registryInstrument } from "./instrument-registry";
-import type { MarketSnapshot } from "./market-data";
+import type { DataPoint, MarketSnapshot } from "./market-data";
 import { loadOfficialReferences } from "./official-references";
+import { readSharedDailyQuotes, readSharedHistoryBatch, sharedHistoryGrants } from "./shared-history";
 import { isDataOwner } from "./data-service";
 import {
   getIndianExchangeSession,
@@ -318,6 +319,7 @@ export function buildMarketOverviewCards(
   privateQuotes: readonly NormalizedMarketQuote[] = [],
   mcxAliasMap: ReadonlyMap<string, string> = new Map(),
   privateSparklines: ReadonlyMap<string, number[]> = new Map(),
+  sharedSparklines: ReadonlyMap<string, number[]> = new Map(),
 ): MarketOverviewCard[] {
   const reconciled = reconcileGlobalMarketIds(ids);
   const allPoints = [...snapshot.quotes, ...snapshot.yields];
@@ -379,10 +381,10 @@ export function buildMarketOverviewCards(
     const session = resolveSession(canonicalId, market, snapshot.asOf);
 
     if (point && point.value !== null) {
-      const pts = hist?.points.map((p) => p.close) ?? null;
+      const pts = hist?.points.map((p) => p.close) ?? sharedSparklines.get(canonicalId) ?? null;
       const spark = pts && pts.length >= 10 ? pts.slice(-30) : null;
       const prevClose =
-        pts && pts.length >= 2
+        hist && pts && pts.length >= 2
           ? pts[pts.length - 2]
           : point.change !== null && point.changeUnit === "%"
             ? point.value / (1 + point.change / 100)
@@ -580,7 +582,38 @@ export async function getMarketOverviewPayload(
     }
     return { quotes, mcxAliasMap, sparklines };
   });
-  const [layout, references, exchange] = await Promise.all([
+  const sharedIndicesPromise = layoutPromise.then(async ({ ids }) => {
+    const grants = await sharedHistoryGrants(Date.now(), "dashboard");
+    const quotes: DataPoint[] = [];
+    const sparklines = new Map<string, number[]>();
+    if (!grants.length) return { quotes, sparklines };
+    const checkedAt = Date.now();
+    const [daily, history] = await Promise.all([
+      readSharedDailyQuotes(ids, grants, checkedAt),
+      readSharedHistoryBatch(ids, "1d", grants, { now: checkedAt }),
+    ]);
+    for (const [id, quote] of daily) {
+      if (id !== quote.instrument.id || quote.instrument.type !== "INDEX" ||
+          !Number.isFinite(quote.value) || quote.value <= 0) continue;
+      const series = history.get(id);
+      if (series && series.row.last_event === quote.latestDate &&
+          new Date(series.row.received_at).toISOString() === quote.receivedAt &&
+          series.candles.at(-1)?.close === quote.value) {
+        sparklines.set(id, series.candles.slice(-30).map(({ close }) => close));
+      }
+      quotes.push({
+        id, label: quote.instrument.name, assetClass: "INDEX", value: quote.value,
+        unit: quote.unit, currency: quote.instrument.currency, provider: quote.attribution.label,
+        sourceUrl: quote.attribution.url, rightsUrl: quote.attribution.url,
+        eventAt: quote.latestDate, sourceDate: quote.latestDate, eventTimePrecision: "DATE",
+        retrievedAt: quote.receivedAt, state: quote.quality, frequency: "DAILY_CLOSE",
+        reason: "Licensed, published daily close.", derivation: null, change: quote.pctChange,
+        changeUnit: "%", canAnalyze: false,
+      });
+    }
+    return { quotes, sparklines };
+  }).catch(() => ({ quotes: [], sparklines: new Map<string, number[]>() }));
+  const [layout, references, exchange, shared] = await Promise.all([
     layoutPromise,
     (async () => {
       try {
@@ -594,6 +627,7 @@ export async function getMarketOverviewPayload(
       console.warn({ event: "market_overview_source_unavailable", source: "exchange" });
       return emptyExchange;
     }),
+    sharedIndicesPromise,
   ]);
   const allowedCatalog = DEFAULT_EIGHT_CARD_IDS.map((id) => registryInstrument(id))
     .filter((i): i is NonNullable<typeof i> => !!i)
@@ -611,10 +645,11 @@ export async function getMarketOverviewPayload(
     layout,
     cards: buildMarketOverviewCards(
       layout.ids,
-      references,
+      { ...references, quotes: [...references.quotes, ...shared.quotes] },
       exchange.quotes,
       exchange.mcxAliasMap,
       exchange.sparklines,
+      shared.sparklines,
     ),
     catalog: allowedCatalog,
     disclosure:

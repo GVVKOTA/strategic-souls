@@ -152,3 +152,11 @@ Broker scans exclude developing daily bars and the current calendar week or mont
 Guests and standard accounts can open dated ECB and US Treasury references from Global. Standard accounts start Soul Scan on ECB FX when their workspace has no configured exchange history. Choosing Indian markets preserves that scope. If it is unavailable, the user can explicitly switch to ECB FX or use their own permitted daily CSV.
 
 Apply `drizzle/0020_official_reference_cache.sql` before promoting this feature. The shared D1 cache stores up to two validated official source documents and reuses them for 15 minutes across Worker instances. It retains original retrieval timestamps and labels stale display data. Soul Scan excludes stale history. Existing private quotes, account records, requests and provider credentials stay outside this cache.
+
+## Shared Indian exchange activation
+
+Record written permission for website display to the intended audience, retained history, server-side scan analysis and derived scan results. Record provider attribution, covered instruments and intervals, delay, expiry, retention and the current credit window. Provision keys through existing Worker secret bindings.
+
+BharatStock dashboard snapshots use confirmed exact index mappings. Indian API snapshots supply eligible NSE daily closes and volume where returned. The scanner also supports grouping completed weeks and months from those closes. Choose a provider with OHLC or intraday grants for scans that require those inputs.
+
+With the grants configured, the authenticated data owner can send `{"op":"refresh-history"}` to `POST /api/x2/providers` from a same-origin session. Each refresh checks the grant, provider budget and leases before warming a bounded batch. Confirm the dashboard and an ordinary-account scan using the actual dataset before launch. Full Nifty 500 needs its own authorized membership snapshot and complete eligible history.

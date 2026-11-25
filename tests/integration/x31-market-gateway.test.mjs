@@ -127,7 +127,7 @@ function createMockAngelOneFetcher() {
   };
 }
 
-function buildWorkerHarness(env, getUser, fetchOfficial = fetch) {
+function buildWorkerHarness(env, getUser, fetchOfficial = fetch, clock = Date) {
   const sql = new DatabaseSync(":memory:");
   sql.exec("PRAGMA foreign_keys=ON");
   for (const file of readdirSync("drizzle").filter((f) => f.endsWith(".sql")).sort()) {
@@ -146,8 +146,9 @@ function buildWorkerHarness(env, getUser, fetchOfficial = fetch) {
     bind(...args) {
       return new Statement(this.q, args);
     }
-    async first() {
-      return sql.prepare(this.q).get(...this.args) ?? null;
+    async first(column) {
+      const row = sql.prepare(this.q).get(...this.args);
+      return (column ? row?.[column] : row) ?? null;
     }
     async all() {
       return { results: sql.prepare(this.q).all(...this.args) };
@@ -162,7 +163,7 @@ function buildWorkerHarness(env, getUser, fetchOfficial = fetch) {
 
   const context = vm.createContext({
     console,
-    Date,
+    Date: clock,
     Intl,
     TextEncoder,
     TextDecoder,
@@ -225,6 +226,68 @@ function buildWorkerHarness(env, getUser, fetchOfficial = fetch) {
   }
   return { load };
 }
+
+test("standard accounts read only licensed shared Indian snapshots with exact source and contracts", async () => {
+  const now = Date.parse("2026-11-25T05:00:00Z");
+  class FixtureClock extends Date {
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return now; }
+  }
+  const env = { BHARATSTOCK_API_KEY: "fixture-bharat-index", INDIA_API_KEY: "fixture-indian-history",
+    ENABLE_PRIVATE_BROKER_DATA: "true", X2_OWNER_SUBJECT: "owner" };
+  const upstream = [];
+  const harness = buildWorkerHarness(env, () => ({ userId: "alice" }), async (url) => {
+    upstream.push(url);
+    return new Response(null, { status: 503 });
+  }, FixtureClock);
+  const grant = (provider, symbol, id, type, unit, dataset) => ({
+    provider, enabled: true, priority: 1, version: 1, datasets: [dataset], lastWrite: "fixture",
+    instruments: [{ id, name: symbol, symbol, providerSymbol: symbol, market: "NSE", mic: "XNSE",
+      type, currency: "INR", unit, timezone: "Asia/Kolkata" }],
+    rights: { verified: true, display: true, analysis: true, derivedDisplay: true, storage: true,
+      redistribution: true, expiresAt: "2026-12-01T00:00:00Z", contractReference: "TEST ONLY" },
+    sharedHistory: { intervals: ["1d"], lagMinutes: 0, attribution: provider + " fixture",
+      attributionUrl: "https://example.test/fixture", creditWindow: {
+        startsAt: "2026-11-01T00:00:00Z", endsAt: "2026-12-01T00:00:00Z",
+        availableCredits: 10, callsPerMinute: 1,
+      } },
+  });
+  const index = grant("BHARATSTOCK", "NIFTY", "NSE:NIFTY", "INDEX", "pts", "candles");
+  const equities = grant("INDIANAPI", "RELIANCE", "NSE:RELIANCE", "EQUITY", "INR", "prices");
+  for (const config of [index, equities]) {
+    const id = config.instruments[0].id;
+    const bars = ["2026-11-23", "2026-11-24"].map((date, i) => config === index
+      ? { date, open: 99 + i, high: 102 + i, low: 99 + i, close: 100 + i, volume: null }
+      : { date, close: 200 + i, volume: null });
+    await env.DB.prepare("INSERT INTO x2_providers VALUES (?,?,?,?,?,?,?)")
+      .bind(config.provider, 1, JSON.stringify(config), "{}", "owner", new Date(now).toISOString(), "fixture").run();
+    await env.DB.prepare("INSERT INTO x8_shared_history_snapshot VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(config.provider, 1, id, "1d", now - 1000, now + 120_000, bars[0].date, bars[1].date,
+        bars.length, bars[1].close, bars[0].close, bars[0].date, null, JSON.stringify(bars)).run();
+  }
+  const market = await harness.load("backend/services/market-data/nine-card-markets.ts");
+  const research = await harness.load("backend/services/market-data/data-service.ts");
+  const quote = (await market.getMarketOverviewPayload(null)).cards.find(({ canonicalId }) => canonicalId === "NSE:NIFTY");
+  assert.deepEqual([quote.value, quote.quality, quote.isLive, quote.redistributable, quote.sourceObservedAtUTC],
+    [101, "PUBLISHED_EOD", false, true, "2026-11-24"]);
+  assert.equal(await research.exchangeScanAvailable("alice"), true);
+  const daily = await research.researchUniverse("alice", {
+    universePreset: "INDIAN_EQUITIES", provider: "CONNECTED_MARKETS", interval: "1d",
+  });
+  assert.deepEqual(Array.from(daily.datasets, (d) => d.instrumentId), ["NSE:RELIANCE"]);
+  assert.deepEqual(Object.keys(daily.datasets[0].observations[0]).sort(), ["close", "eventAt", "knownAt"]);
+  const intraday = await research.researchUniverse("alice", {
+    universePreset: "INDIAN_EQUITIES", provider: "CONNECTED_MARKETS", interval: "1h",
+  });
+  assert.equal(intraday.datasets.length, 0);
+  index.rights.redistribution = false;
+  equities.rights.expiresAt = "2026-11-23T00:00:00Z";
+  for (const config of [index, equities]) await env.DB.prepare("UPDATE x2_providers SET payload=? WHERE provider=?")
+    .bind(JSON.stringify(config), config.provider).run();
+  assert.equal((await market.getMarketOverviewPayload(null)).cards.find(({ canonicalId }) => canonicalId === "NSE:NIFTY").value, null);
+  assert.equal(await research.exchangeScanAvailable("alice"), false);
+  assert.ok(upstream.every((url) => /ecb\.europa\.eu|home\.treasury\.gov/.test(url)));
+});
 
 test("eight-card overview survives an absent adapter and unavailable official feeds", async () => {
   let user = null;
