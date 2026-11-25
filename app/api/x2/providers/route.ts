@@ -1,11 +1,14 @@
 import { getAuthenticatedUser } from "../../../../backend/auth/session";
+import { rate } from "../../../../database/queries/repository";
 import { HttpError, body, protectMutation } from "../../../../backend/middleware/security";
 import {
   configureProvider,
   isDataOwner,
   providerSettings,
+  requireDataOwner,
   testProvider,
 } from "../../../../backend/services/market-data/data-service";
+import { refreshSharedHistory, sharedHistoryGrants, sharedIngestionHealth } from "../../../../backend/services/market-data/shared-history";
 export const dynamic = "force-dynamic";
 async function handle(request: Request) {
   const headers = { "Cache-Control": "private, no-store" };
@@ -22,6 +25,14 @@ async function handle(request: Request) {
     }
     protectMutation(request, 32768);
     const input = await body(request, 32768);
+    if (input.op === "refresh-history") {
+      requireDataOwner(user.userId);
+      await rate(user.userId + ":shared-history-refresh", 4, 60_000);
+      const grants = await sharedHistoryGrants(Date.now(), "ingestion");
+      if (!grants.length) throw new HttpError(409, "No verified shared exchange feed is configured.");
+      await refreshSharedHistory();
+      return Response.json({ history: await sharedIngestionHealth() }, { headers });
+    }
     if (input.op !== "configure" && input.op !== "test")
       throw new HttpError(400, "Choose a supported settings action.");
     return Response.json(
