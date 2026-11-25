@@ -60,6 +60,7 @@ import {
 } from "./global-menu";
 
 type View = "Global" | "Strategy" | "Community";
+type StrategyPanel = "scan" | "lab";
 
 const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   "profile", "appearance", "notifications", "privacy", "account",
@@ -125,7 +126,7 @@ export default function X1Workspace() {
       ScanUniversePreset | undefined
     >(undefined),
     [sharedFormula, setSharedFormula] = useState(""),
-    [strategyPanel, setStrategyPanel] = useState("Soul Scan"),
+    [strategyPanel, setStrategyPanel] = useState<StrategyPanel>("scan"),
     [busy, setBusy] = useState(false),
     [sessionError, setSessionError] = useState(""),
     [isOwner, setIsOwner] = useState(false),
@@ -138,6 +139,7 @@ export default function X1Workspace() {
   const drawerTriggerRef = useRef<HTMLButtonElement>(null);
   const drawerCloseRef = useRef<HTMLButtonElement>(null);
   const settingsBaseUrl = useRef("");
+  const settingsLocationOpen = useRef(false);
   const settingsReturnFocus = useRef<HTMLElement | null>(null);
   const helpAnchor = useRef<HTMLDivElement>(null);
   const helpTrigger = useRef<HTMLButtonElement>(null);
@@ -171,6 +173,14 @@ export default function X1Workspace() {
     },
     [],
   );
+
+  const selectStrategyPanel = useCallback((panel: StrategyPanel) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", "strategy");
+    url.searchParams.set("panel", panel);
+    if (url.href !== window.location.href) window.history.pushState(null, "", url);
+    setStrategyPanel(panel);
+  }, []);
 
   useEffect(() => {
     if (!sectionDrawerOpen) return;
@@ -210,6 +220,7 @@ export default function X1Workspace() {
   };
 
   const refreshLock = useRef(false);
+  const sessionGeneration = useRef(0);
   const researchDirty = useRef(false);
   const authRef = useRef({ authenticated: false, accepted: false });
   const [mobileChatActive, setMobileChatActive] = useState(false);
@@ -244,8 +255,9 @@ export default function X1Workspace() {
   );
 
   const reload = useCallback(async () => {
+    const generation = sessionGeneration.current;
     const state = await api<WorkspaceState>("/api/x1/workspace");
-    setWorkspace(state);
+    if (generation === sessionGeneration.current) setWorkspace(state);
   }, []);
 
   const loadMarket = useCallback(async (usePrivate: boolean) => {
@@ -257,20 +269,25 @@ export default function X1Workspace() {
 
   const refreshData = useCallback(async () => {
     if (refreshLock.current) return;
+    const generation = sessionGeneration.current;
     refreshLock.current = true;
     setRefreshing(true);
     try {
       const usePrivate =
         authRef.current.authenticated && authRef.current.accepted;
+      let result: MarketSnapshot;
       try {
-        setData(await loadMarket(usePrivate));
+        result = await loadMarket(usePrivate);
       } catch (error) {
         if (!usePrivate) throw error;
-        setData(await loadMarket(false));
+        if (generation !== sessionGeneration.current) return;
+        result = await loadMarket(false);
       }
+      if (generation !== sessionGeneration.current) return;
+      setData(result);
       setMarketUnavailable(false);
     } catch {
-      setMarketUnavailable(true);
+      if (generation === sessionGeneration.current) setMarketUnavailable(true);
     } finally {
       refreshLock.current = false;
       setRefreshing(false);
@@ -279,11 +296,17 @@ export default function X1Workspace() {
 
   const hydrateForSession = useCallback(
     async (session: AuthSessionResponse, aliveCheck: () => boolean) => {
+      const generation = ++sessionGeneration.current;
+      const isCurrent = () => aliveCheck() && generation === sessionGeneration.current;
+      authRef.current = { authenticated: session.authenticated, accepted: session.accepted };
       setAuthenticated(session.authenticated);
       setAuthUser(session.user);
       setIsOwner(!!session.isOwner);
       setAccepted(session.authenticated ? session.accepted : null);
       setSessionError("");
+      setMarketUnavailable(false);
+      setWorkspace(null);
+      setData(null);
 
       if (session.user?.preferences) {
         setMotionPref(session.user.preferences.motion);
@@ -297,24 +320,23 @@ export default function X1Workspace() {
           api<WorkspaceState>("/api/x1/workspace"),
           loadMarket(true),
         ]);
-        if (!aliveCheck()) return;
+        if (!isCurrent()) return;
         if (ws.status === "fulfilled") setWorkspace(ws.value);
         if (market.status === "fulfilled") setData(market.value);
         else {
           try {
             const fallback = await loadMarket(false);
-            if (aliveCheck()) setData(fallback);
+            if (isCurrent()) setData(fallback);
           } catch {
-            if (aliveCheck()) setMarketUnavailable(true);
+            if (isCurrent()) setMarketUnavailable(true);
           }
         }
       } else {
-        setWorkspace(null);
         try {
           const pub = await loadMarket(false);
-          if (aliveCheck()) setData(pub);
+          if (isCurrent()) setData(pub);
         } catch {
-          if (aliveCheck()) setMarketUnavailable(true);
+          if (isCurrent()) setMarketUnavailable(true);
         }
       }
     },
@@ -328,8 +350,11 @@ export default function X1Workspace() {
         target = params.get("view")?.toLowerCase(),
         sec = params.get("section")?.toLowerCase();
       const settings = params.get("settings");
-      setSettingsOpen(target === "settings" || settings !== null);
-      if (target === "settings" || settings !== null) {
+      const isSettingsLocation = target === "settings" || settings !== null;
+      const wasSettingsLocation = settingsLocationOpen.current;
+      settingsLocationOpen.current = isSettingsLocation;
+      setSettingsOpen(isSettingsLocation);
+      if (isSettingsLocation) {
         setSettingsSection(settingsSectionFromUrl(settings ?? sec ?? null));
       } else if (settingsReturnFocus.current) {
         const trigger = settingsReturnFocus.current;
@@ -340,7 +365,7 @@ export default function X1Workspace() {
       }
       const base = new URL(window.location.href);
       base.searchParams.delete("settings");
-      if (event && base.href === settingsBaseUrl.current) return;
+      if (event && (wasSettingsLocation || isSettingsLocation) && base.href === settingsBaseUrl.current) return;
       const validId = (name: string) => {
         const id = params.get(name) ?? "";
         return /^[A-Za-z0-9_-]{8,80}$/.test(id) ? id : "";
@@ -376,28 +401,30 @@ export default function X1Workspace() {
         setGlobalViewState(parseGlobalViewParam(sec));
         setIntelligenceSubView(parseIntelligenceSubViewParam(params.get("tab") ?? sec));
       }
-      if (params.get("panel")) {
-        const panelParam = params.get("panel")!;
+      const panelParam = params.get("panel");
+      if (target === "strategy") {
+        setStrategyPanel(/^(lab|formula[ -]lab)$/i.test(panelParam ?? "") ? "lab" : "scan");
+      } else if (panelParam) {
         setGlobalViewState(parseGlobalViewParam(panelParam));
-        setStrategyPanel(panelParam);
       }
     };
     queueMicrotask(() => { if (alive) syncLocation(); });
     window.addEventListener("popstate", syncLocation);
 
+    const initialGeneration = sessionGeneration.current;
     api<AuthSessionResponse>("/api/auth/session")
       .then((session) => {
-        if (!alive) return;
+        if (!alive || initialGeneration !== sessionGeneration.current) return;
         return hydrateForSession(session, () => alive);
       })
       .catch(async (err) => {
-        if (!alive) return;
+        if (!alive || initialGeneration !== sessionGeneration.current) return;
         setAuthenticated(false);
         setAccepted(null);
         setSessionError((err as Error).message);
         try {
           const pub = await loadMarket(false);
-          if (alive) setData(pub);
+          if (alive && initialGeneration === sessionGeneration.current) setData(pub);
         } catch {
           /* Public feed error surfaced separately if refresh is retried. */
         }
@@ -442,7 +469,7 @@ export default function X1Workspace() {
     return () => clearInterval(timer);
   }, [refreshData]);
 
-  function navigate(next: View) {
+  function navigate(next: View, nextStrategyPanel = strategyPanel) {
     if (
       view === "Strategy" &&
       next !== view &&
@@ -452,6 +479,7 @@ export default function X1Workspace() {
       )
     )
       return false;
+    settingsLocationOpen.current = false;
     setSettingsOpen(false);
     setHelpMenuOpen(false);
     setQuickMenuOpen(false);
@@ -461,7 +489,9 @@ export default function X1Workspace() {
     }
     if (view !== next) setDeepLink({ thread: "", room: "", post: "", anchor: "", scan: "", event: "" });
     setView(next);
-    window.history.pushState(null, "", "/?view=" + next.toLowerCase());
+    const url = new URLSearchParams({ view: next.toLowerCase() });
+    if (next === "Strategy" && nextStrategyPanel === "lab") url.set("panel", "lab");
+    window.history.pushState(null, "", "/?" + url);
     document.getElementById("x1-main")?.focus();
     window.scrollTo({ top: 0, behavior: "instant" });
     return true;
@@ -479,9 +509,11 @@ export default function X1Workspace() {
       : document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSettingsSection(section);
     const url = new URL(window.location.href);
+    url.searchParams.delete("settings");
     settingsBaseUrl.current = url.href;
     url.searchParams.set("settings", section ?? "all");
     window.history.pushState({ workspaceSettings: true }, "", url);
+    settingsLocationOpen.current = true;
     setSettingsOpen(true);
   }, [helpMenuOpen]);
 
@@ -497,6 +529,7 @@ export default function X1Workspace() {
     }
     url.searchParams.delete("settings");
     window.history.replaceState(window.history.state, "", url);
+    settingsLocationOpen.current = false;
     setSettingsOpen(false);
   }, []);
 
@@ -666,8 +699,8 @@ export default function X1Workspace() {
     setInitialInstrument(instrumentId);
     setInitialFormula(formula);
     setInitialUniversePreset(universePreset);
-    setStrategyPanel("Soul Scan");
-    navigate("Strategy");
+    setStrategyPanel("scan");
+    navigate("Strategy", "scan");
     setAsset("");
   };
 
@@ -675,6 +708,8 @@ export default function X1Workspace() {
     setBusy(true);
     try {
       await api("/api/auth/signout", {});
+      const generation = ++sessionGeneration.current;
+      authRef.current = { authenticated: false, accepted: false };
       setQuickMenuOpen(false);
       setAuthenticated(false);
       setAuthUser(null);
@@ -683,7 +718,8 @@ export default function X1Workspace() {
       setAccepted(null);
       setIsOwner(false);
       setWorkspace(null);
-      setNotices([]);
+      setData(null);
+      setMarketUnavailable(false);
       setInitialProfileHandle(null);
       setCommunitySearch("");
       setSharedFormula("");
@@ -695,9 +731,10 @@ export default function X1Workspace() {
       setBellOpen(false);
       if (settingsOpen) closeSettings();
       try {
-        setData(await loadMarket(false));
+        const publicData = await loadMarket(false);
+        if (generation === sessionGeneration.current) setData(publicData);
       } catch {
-        /* Keep last official snapshot if refresh fails. */
+        if (generation === sessionGeneration.current) setMarketUnavailable(true);
       }
       notify("Signed out safely.");
     } catch (err) {
@@ -729,6 +766,7 @@ export default function X1Workspace() {
   ] as const;
 
   const isSignedIn = authenticated === true;
+  const memberWorkspace = isSignedIn && accepted === true;
 
   return (
     <div
@@ -840,10 +878,13 @@ export default function X1Workspace() {
             <>
               <div className="x51-topbar-left">
                 <button
+                  ref={drawerTriggerRef}
                   type="button"
                   className="x51-menu-btn"
                   aria-label="Open Strategy sections menu"
+                  aria-haspopup="dialog"
                   aria-expanded={sectionDrawerOpen}
+                  aria-controls="x53-sections-drawer"
                   onClick={() => setSectionDrawerOpen((v) => !v)}
                 >
                   <MoreVertical size={18} />
@@ -1108,6 +1149,7 @@ export default function X1Workspace() {
                 className="x1-form"
                 onSubmit={async (e) => {
                   e.preventDefault();
+                  const generation = sessionGeneration.current;
                   setBusy(true);
                   try {
                     const f = new FormData(e.currentTarget);
@@ -1116,9 +1158,13 @@ export default function X1Workspace() {
                       privacy: f.get("privacy") === "on",
                       terms: f.get("terms") === "on",
                     });
+                    if (generation !== sessionGeneration.current) return;
                     setAccepted(true);
                     await reload();
-                    setData(await loadMarket(true));
+                    if (generation !== sessionGeneration.current) return;
+                    const privateData = await loadMarket(true);
+                    if (generation !== sessionGeneration.current) return;
+                    setData(privateData);
                     notify("Workspace enabled for private adult research.");
                   } catch (error) {
                     notify((error as Error).message, true);
@@ -1162,7 +1208,7 @@ export default function X1Workspace() {
             }
           >
             <div
-              key={view}
+              key={view + (memberWorkspace ? "-member" : "-guest")}
               className={"x1-dashboard x1-dashboard-" + view.toLowerCase()}
             >
               {view === "Global" ? (
@@ -1207,13 +1253,12 @@ export default function X1Workspace() {
                     "-" +
                     initialInstrument +
                     "-" +
-                    (initialUniversePreset ?? "") + initialScanWatchlist +
-                    "-" +
-                    strategyPanel
+                    (initialUniversePreset ?? "") + initialScanWatchlist
                   }
                   data={data}
                   workspace={workspace}
                   isOwner={isOwner}
+                  sessionPending={authenticated === null}
                   authenticated={isSignedIn && accepted === true}
                   onRequireAuth={() => setAuthModal("signin")}
                   reload={reload}
@@ -1223,7 +1268,8 @@ export default function X1Workspace() {
                   initialInstrument={initialInstrument}
                   initialUniversePreset={initialUniversePreset}
                   initialWatchlistId={initialScanWatchlist}
-                  initialPanel={strategyPanel}
+                  panel={strategyPanel}
+                  onPanelChange={selectStrategyPanel}
                   initialRunId={deepLink.scan}
                   onOpenCommunityWeb={() => {
                     setCommunityTab("web");
@@ -1268,8 +1314,8 @@ export default function X1Workspace() {
                   onOpenAsset={setAsset}
                   onCopyToStrategy={(formula) => {
                     setInitialFormula(formula);
-                    setStrategyPanel("Soul Scan");
-                    navigate("Strategy");
+                    setStrategyPanel("scan");
+                    navigate("Strategy", "scan");
                   }}
                   onMobileChatActive={setMobileChatActive}
                   onSelectTab={setCommunityTab}
@@ -1438,26 +1484,26 @@ export default function X1Workspace() {
               {view === "Strategy"
                 ? (
                     [
-                      ["Soul Scan", "Classic (50 rules) & Advanced Soul Genome"],
-                      ["Formula Lab", "Correlation, BSM/IV, CAGR, XIRR & Historical"],
+                      ["scan", "Soul Scan", "Classic (50 rules) & Advanced Soul Genome"],
+                      ["lab", "Formula Lab", "Correlation, BSM/IV, CAGR, XIRR & Historical"],
                     ] as const
-                  ).map(([sec, desc]) => (
+                  ).map(([panel, label, desc]) => (
                     <button
-                      key={sec}
+                      key={panel}
                       type="button"
                       className={
                         "x51-drawer-item" +
-                        (strategyPanel === sec ? " is-active" : "")
+                        (strategyPanel === panel ? " is-active" : "")
                       }
-                      aria-current={strategyPanel === sec ? "page" : undefined}
+                      aria-current={strategyPanel === panel ? "page" : undefined}
                       onClick={() => {
-                        setStrategyPanel(sec);
+                        selectStrategyPanel(panel);
                         setSectionDrawerOpen(false);
                         drawerTriggerRef.current?.focus();
                       }}
                     >
                       <span>
-                        <strong>{sec}</strong>
+                        <strong>{label}</strong>
                         <small>{desc}</small>
                       </span>
                       <ArrowRight size={14} />
