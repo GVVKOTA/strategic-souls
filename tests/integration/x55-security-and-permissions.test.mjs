@@ -313,8 +313,8 @@ test("guest gets 401 on private APIs; release reports public build provenance wi
   assert.equal(relRes.status, 200);
   const rel = await relRes.json();
   assert.equal(rel.release, "V3.1");
-  assert.equal(rel.revisionMarker, "x1-workspace-rollout-2026-11-25");
-  assert.equal(rel.workspaceExperience, "X 1.0");
+  assert.equal(rel.revisionMarker, "x11-workspace-2026-11-25");
+  assert.equal(rel.workspaceExperience, "X 1.1");
   assert.equal(rel.buildCommit, null);
   assert.equal(rel.workerVersionId, "local-version");
   assert.equal(rel.provenance, "UNAVAILABLE");

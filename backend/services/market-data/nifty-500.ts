@@ -6,9 +6,10 @@ export const NIFTY_500_COUNT = 500;
 export const EXPLICIT_SCOPE_VERSION = "x8-scoped-v1";
 export async function niftyUniverseRightsActive(version: string) {
   return !!await database().prepare(
-    "SELECT 1 FROM x78_market_universes WHERE version=? AND rights_expires_at>?",
-  ).bind(version, new Date().toISOString()).first();
+    "SELECT 1 FROM x78_market_universes WHERE version=? AND effective_date<=? AND rights_expires_at>?",
+  ).bind(version, todayInIndia(), new Date().toISOString()).first();
 }
+const todayInIndia = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(Date.now());
 export type NiftyConstituent = { id: string; isin: string; name: string; industry: string };
 type UniverseRow = {
   version: string;
@@ -45,9 +46,9 @@ export function validateNifty500(input: unknown, expectedCount = NIFTY_500_COUNT
 export async function niftyUniverse(version?: string) {
   const db = database();
   const now = new Date().toISOString();
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(Date.now());
+  const today = todayInIndia();
   const row = await (version
-    ? db.prepare("SELECT * FROM x78_market_universes WHERE version=? AND rights_expires_at>?").bind(version, now)
+    ? db.prepare("SELECT * FROM x78_market_universes WHERE version=? AND effective_date<=? AND rights_expires_at>?").bind(version, today, now)
     : db.prepare(`SELECT * FROM x78_market_universes
       WHERE effective_date<=? AND rights_expires_at>?
       ORDER BY effective_date DESC,sequence DESC LIMIT 1`).bind(today, now)

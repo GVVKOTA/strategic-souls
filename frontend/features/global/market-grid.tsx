@@ -45,12 +45,19 @@ function guestMarketIds(): string[] {
   }
 }
 
-function cardIsGenuinelyLive(card: MarketOverviewCard): boolean {
+function cardIsGenuinelyLive(card: MarketOverviewCard, checkedAt: string | null): boolean {
+  const observedAt = Date.parse(card.sourceObservedAtUTC ?? "");
+  const retrievalTime = Date.parse(checkedAt ?? "");
   return (
     card.value !== null &&
     card.quality === "REAL_TIME" &&
     card.marketSession === "OPEN" &&
-    card.isLive !== false
+    card.isLive === true &&
+    card.sourceObservedPrecision !== "DATE_ONLY" &&
+    !!card.sourceObservedAtUTC?.includes("T") &&
+    Number.isFinite(observedAt) &&
+    Number.isFinite(retrievalTime) &&
+    observedAt <= retrievalTime
   );
 }
 
@@ -95,7 +102,7 @@ function formatCompactObservation(
         }).format(new Date(`${rawDate}T00:00:00Z`))
       : "";
     return {
-      text: shortDate ? `${shortDate} · Ref` : "Reference",
+      text: shortDate ? `As of ${shortDate} · ECB reference` : "ECB reference",
       statusKind: "reference",
       statusText: "Reference",
     };
@@ -142,30 +149,30 @@ function formatCompactObservation(
     }
   }
 
-  if (cardIsGenuinelyLive(card)) {
+  if (cardIsGenuinelyLive(card, serverNowIso)) {
     return {
-      text: obsLabel || "Live tick",
+      text: `As of ${obsLabel}`,
       statusKind: "live",
       statusText: "LIVE",
     };
   }
   if (card.quality === "DELAYED") {
     return {
-      text: obsLabel ? `${obsLabel} · Delayed` : "Delayed",
+      text: obsLabel ? `As of ${obsLabel} · Delayed` : "Delayed",
       statusKind: "delayed",
       statusText: "Delayed",
     };
   }
   if (card.quality === "STALE") {
     return {
-      text: obsLabel ? `${obsLabel} · Stale` : "Stale",
+      text: obsLabel ? `As of ${obsLabel} · Stale` : "Stale",
       statusKind: "stale",
       statusText: "Stale",
     };
   }
   if (card.quality === "PUBLISHED_EOD") {
     return {
-      text: obsLabel ? `${obsLabel} · EOD` : "EOD",
+      text: obsLabel ? `As of ${obsLabel} · EOD` : "EOD",
       statusKind: "closed",
       statusText: "EOD",
     };
@@ -173,7 +180,7 @@ function formatCompactObservation(
   // Closed or prior-session verified observation — displays truthful date/time + Closed/Holiday suffix
   const suffix = card.sessionLabel === "Holiday" ? "Holiday" : "Closed";
   return {
-    text: obsLabel ? `${obsLabel} · ${suffix}` : suffix,
+    text: obsLabel ? `As of ${obsLabel} · ${suffix}` : suffix,
     statusKind: "closed",
     statusText: suffix,
   };
@@ -225,38 +232,6 @@ function MiniSpark({
   );
 }
 
-/** Single shared market clock shown ONLY while at least one entitled venue is genuinely LIVE. */
-function SharedLiveClock({ active }: { active: boolean }) {
-  const [clockText, setClockText] = useState("");
-
-  useEffect(() => {
-    if (!active) return;
-    const fmt = () =>
-      new Intl.DateTimeFormat("en-GB", {
-        timeZone: "Asia/Kolkata",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hourCycle: "h23",
-      }).format(new Date()) + " IST";
-    queueMicrotask(() => setClockText(fmt()));
-    const timer = window.setInterval(() => setClockText(fmt()), 1000);
-    return () => window.clearInterval(timer);
-  }, [active]);
-
-  if (!active || !clockText) return null;
-  return (
-    <span
-      className="ss-v31-live-clock"
-      aria-label={`Live market clock ${clockText}`}
-    >
-      <span className="ss-v31-live-dot" aria-hidden="true" />
-      <span>LIVE</span>
-      <span className="ss-v31-live-clock-time">{clockText}</span>
-    </span>
-  );
-}
-
 /**
  * Strategic Souls V3.1 — Strict 8-Tile Global Market Overview Grid.
  * Displays NIFTY 50, SENSEX, BANK NIFTY, Nifty Midcap Select, GOLD, SILVER MCX, CL Jan 2027, and USD/INR
@@ -286,6 +261,7 @@ export default function MarketOverviewGrid({
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveBadge, setSaveBadge] = useState("");
+  const [showAllMarkets, setShowAllMarkets] = useState(false);
   const overviewRequest = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -346,7 +322,6 @@ export default function MarketOverviewGrid({
   }, [loadOverview]);
 
   const showQuotes = !error && loadedForAuthenticated === authenticated;
-  const hasAnyLiveFeed = showQuotes && cards.some(cardIsGenuinelyLive);
   const layoutIds = loadedForAuthenticated === authenticated ? layout.ids : DEFAULT_EIGHT_CARD_IDS;
 
   function openCustomize() {
@@ -431,16 +406,16 @@ export default function MarketOverviewGrid({
         </h1>
         <div className="x53-dashboard-bar">
           <div className="x53-dashboard-meta" aria-live="polite">
-            <SharedLiveClock active={hasAnyLiveFeed} />
             {saveBadge ? (
               <span className="x54-ephemeral-pill ss-v31-teal-pill">{saveBadge}</span>
             ) : asOfUTC ? (
               <span className="x1-caption" title="Latest retrieval check time (distinct from quote observation time)">
                 Checked{" "}
-                {new Date(asOfUTC).toLocaleTimeString([], {
+                {new Date(asOfUTC).toLocaleTimeString("en-IN", {
+                  timeZone: "Asia/Kolkata",
                   hour: "2-digit",
                   minute: "2-digit",
-                })}
+                })} IST
               </span>
             ) : null}
           </div>
@@ -482,9 +457,10 @@ export default function MarketOverviewGrid({
       )}
 
       <div
-        className="x51-market-grid ss-v3-market-grid-8"
+        className={"x51-market-grid ss-v3-market-grid-8" + (showAllMarkets ? "" : " x11-markets-collapsed")}
         role="list"
-        aria-label="Eight market overview tiles"
+        id="x11-market-cards"
+        aria-label="Market overview tiles"
       >
         {layoutIds.map((id, idx) => {
           const card = showQuotes ? cards[idx] : undefined;
@@ -555,14 +531,14 @@ export default function MarketOverviewGrid({
                       ? "Change —"
                       : "—"}
                 </span>
-                {card.sparkline && card.sparkline.length >= 2 && (
+                {card.sparkline && card.sparkline.length >= 2 ? (
                   <div className="ss-v31-spark-wrap">
                     <MiniSpark
                       values={card.sparkline}
                       windowReturnPct={sparkReturn}
                     />
                   </div>
-                )}
+                ) : <span className="ss-v31-mcard-time">Chart data unavailable</span>}
               </div>
 
               <div className="ss-v31-mcard-foot">
@@ -580,10 +556,18 @@ export default function MarketOverviewGrid({
                   </span>
                 )}
               </div>
+              {hasValue && card.quality !== "REFERENCE" && <span className="ss-v31-mcard-time">{card.provider}</span>}
             </button>
           );
         })}
       </div>
+      <button
+        type="button"
+        className="x1-secondary x11-market-expand"
+        aria-expanded={showAllMarkets}
+        aria-controls="x11-market-cards"
+        onClick={() => setShowAllMarkets((show) => !show)}
+      >{showAllMarkets ? "Show fewer markets" : "Show all 8 markets"}</button>
 
       {editOpen && (
         <Modal

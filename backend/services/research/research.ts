@@ -16,6 +16,7 @@ export const SCAN_UNIVERSE_PRESETS = [
   "MARKET",
   "MY_WATCHLIST",
   "INDIAN_EQUITIES",
+  "NIFTY_500",
   "MCX_FUTURES",
   "ECB_DAILY",
   "CUSTOM_CSV",
@@ -27,12 +28,14 @@ export const SCAN_UNIVERSE_LABEL: Record<ScanUniversePreset, string> = {
   MARKET: "Market",
   MY_WATCHLIST: "Watchlist",
   INDIAN_EQUITIES: "NSE / BSE Equities",
+  NIFTY_500: "Nifty 500",
   MCX_FUTURES: "MCX Futures",
   ECB_DAILY: "ECB Reference FX",
   CUSTOM_CSV: "Private Daily CSV",
 };
 
 export function scanUniverseForPreset(preset: ScanUniversePreset | undefined) {
+  if (preset === "NIFTY_500") return "NIFTY_500" as const;
   return preset === "ECB_DAILY" ? "ECB_DAILY" as const : "CONNECTED_MARKETS" as const;
 }
 
@@ -65,6 +68,7 @@ export function matchesScanMarketPreset(
   expiry?: string | null,
   now = Date.now(),
 ) {
+  if (preset === "NIFTY_500") return false;
   if (preset === "MARKET") {
     if ((exchange === "NSE" || exchange === "BSE") && (assetClass === "EQUITY" || assetClass === "INDEX")) {
       return true;
@@ -94,7 +98,7 @@ export type ResearchDefinition = {
   description: string;
   formula: string;
   mode: "SIMPLE" | "ADVANCED";
-  universe: "ECB_DAILY" | "CONNECTED_MARKETS";
+  universe: "ECB_DAILY" | "CONNECTED_MARKETS" | "NIFTY_500";
   universePreset?: ScanUniversePreset;
   watchlistId?: string;
   interval: "30m" | "1h" | "1d" | "1wk" | "1mo";
@@ -255,11 +259,13 @@ export function validateResearch(
   const universe = input.universe ?? "ECB_DAILY",
     interval = input.interval ?? "1d",
     partialPolicy = input.partialPolicy ?? "STRICT";
-  if (universe !== "ECB_DAILY" && universe !== "CONNECTED_MARKETS")
+  if (universe !== "ECB_DAILY" && universe !== "CONNECTED_MARKETS" && universe !== "NIFTY_500")
     throw new Error("Choose a supported universe.");
   const universePreset = input.universePreset;
   if (universePreset !== undefined && !isScanUniversePreset(universePreset))
     throw new Error("Choose a supported scan universe preset.");
+  if ((universe === "NIFTY_500") !== (universePreset === "NIFTY_500"))
+    throw new Error("The selected source and requested dataset do not agree.");
   if (!["30m", "1h", "1d", "1wk", "1mo"].includes(String(interval)))
     throw new Error("Choose a supported timeframe.");
   if (partialPolicy !== "STRICT" && partialPolicy !== "ALLOW_UNKNOWN")

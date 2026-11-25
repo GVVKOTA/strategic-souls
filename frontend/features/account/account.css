@@ -270,7 +270,48 @@
   gap: 6px;
 }
 
-/* Settings screen */
+/* Settings sheet */
+html:has(.x11-settings-sheet[open]) { overflow: hidden; }
+.x1-dialog.x11-settings-sheet {
+  inset: 0 0 0 auto;
+  margin: 0;
+  width: min(100%, 36rem);
+  max-width: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  box-sizing: border-box;
+  padding: 0 max(14px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(14px, env(safe-area-inset-left));
+  border-radius: 0;
+  overscroll-behavior: contain;
+  background: var(--x1-bg);
+}
+.x11-settings-sheet > header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-top: env(safe-area-inset-top);
+  min-height: 58px;
+  margin-bottom: 8px;
+  background: var(--x1-bg);
+  border-bottom: 1px solid var(--x1-divider);
+}
+.x11-settings-sheet > header button { width: 44px; height: 44px; }
+.x11-settings-sheet .x6-settings { padding: 0 0 16px; }
+.x11-settings-sheet .x6-settings-layout { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.x11-settings-sheet .x6-settings-rail:not(.is-mobile-open) { display: none; }
+.x11-settings-sheet .x6-settings-mobile-switch {
+  display: inline-flex;
+  min-height: 44px;
+  width: auto;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.x11-settings-sheet .x1-panel { margin-bottom: 10px; padding: 12px; }
+.x11-settings-sheet form { min-width: 0; }
+@media (max-width: 680px) {
+  .x1-dialog.x11-settings-sheet { width: 100%; }
+}
 .x6-settings {
   padding: 20px 0 36px;
 }

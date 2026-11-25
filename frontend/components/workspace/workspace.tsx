@@ -59,7 +59,17 @@ import {
   type IntelligenceSubView,
 } from "./global-menu";
 
-type View = "Global" | "Strategy" | "Community" | "Settings";
+type View = "Global" | "Strategy" | "Community";
+
+const SETTINGS_SECTIONS: readonly SettingsSection[] = [
+  "profile", "appearance", "notifications", "privacy", "account",
+  "security", "sessions", "help", "about",
+];
+
+function settingsSectionFromUrl(value: string | null): SettingsSection | null {
+  if (value === "all") return null;
+  return SETTINGS_SECTIONS.find((section) => section === value) ?? "profile";
+}
 
 const GLOBAL_THOUGHTS = [
   "Process outlasts prediction: check data quality and cutoff dates before reacting to price movement.",
@@ -68,13 +78,15 @@ const GLOBAL_THOUGHTS = [
 
 export default function X1Workspace() {
   const [view, setView] = useState<View>("Global"),
-    [settingsSection, setSettingsSection] = useState<SettingsSection>("profile"),
-    [communityTab, setCommunityTab] = useState<"web" | "chats" | "groups">("chats"),
+    [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null),
+    [settingsOpen, setSettingsOpen] = useState(false),
+    [helpMenuOpen, setHelpMenuOpen] = useState(false),
+    [communityTab, setCommunityTab] = useState<"web" | "chats" | "groups">("web"),
     [communitySavedOnly, setCommunitySavedOnly] = useState(false),
     [communityTabNonce, setCommunityTabNonce] = useState(0),
     [communitySearch, setCommunitySearch] = useState(""),
     [sectionDrawerOpen, setSectionDrawerOpen] = useState(false),
-    [contextHelpOpen, setContextHelpOpen] = useState(false),
+    [contextHelpOpen, setContextHelpOpen] = useState<boolean | "about">(false),
     [thoughtDismissed, setThoughtDismissed] = useState(false),
     [bellOpen, setBellOpen] = useState(false),
     [notices, setNotices] = useState<{ id: string; kind: string; readAt: string | null }[]>([]),
@@ -88,6 +100,7 @@ export default function X1Workspace() {
     [quickMenuOpen, setQuickMenuOpen] = useState(false),
     [profileRevision, setProfileRevision] = useState(0),
     [data, setData] = useState<MarketSnapshot | null>(null),
+    [marketUnavailable, setMarketUnavailable] = useState(false),
     [workspace, setWorkspace] = useState<WorkspaceState | null>(null),
     [authenticated, setAuthenticated] = useState<boolean | null>(null),
     [authUser, setAuthUser] = useState<AuthSessionResponse["user"]>(null),
@@ -124,7 +137,28 @@ export default function X1Workspace() {
   const avatarTriggerRef = useRef<HTMLButtonElement>(null);
   const drawerTriggerRef = useRef<HTMLButtonElement>(null);
   const drawerCloseRef = useRef<HTMLButtonElement>(null);
-  const previousView = useRef<"Global" | "Strategy" | "Community">("Global");
+  const settingsBaseUrl = useRef("");
+  const settingsReturnFocus = useRef<HTMLElement | null>(null);
+  const helpAnchor = useRef<HTMLDivElement>(null);
+  const helpTrigger = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!helpMenuOpen) return;
+    function dismiss(event: PointerEvent) {
+      if (!helpAnchor.current?.contains(event.target as Node)) setHelpMenuOpen(false);
+    }
+    function escape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setHelpMenuOpen(false);
+      helpTrigger.current?.focus();
+    }
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [helpMenuOpen]);
 
   const selectGlobalView = useCallback(
     (next: GlobalView, sub?: IntelligenceSubView) => {
@@ -228,14 +262,20 @@ export default function X1Workspace() {
     try {
       const usePrivate =
         authRef.current.authenticated && authRef.current.accepted;
-      setData(await loadMarket(usePrivate));
-    } catch (e) {
-      notify((e as Error).message, true);
+      try {
+        setData(await loadMarket(usePrivate));
+      } catch (error) {
+        if (!usePrivate) throw error;
+        setData(await loadMarket(false));
+      }
+      setMarketUnavailable(false);
+    } catch {
+      setMarketUnavailable(true);
     } finally {
       refreshLock.current = false;
       setRefreshing(false);
     }
-  }, [loadMarket, notify]);
+  }, [loadMarket]);
 
   const hydrateForSession = useCallback(
     async (session: AuthSessionResponse, aliveCheck: () => boolean) => {
@@ -265,7 +305,7 @@ export default function X1Workspace() {
             const fallback = await loadMarket(false);
             if (aliveCheck()) setData(fallback);
           } catch {
-            if (aliveCheck()) notify(market.reason.message, true);
+            if (aliveCheck()) setMarketUnavailable(true);
           }
         }
       } else {
@@ -273,12 +313,12 @@ export default function X1Workspace() {
         try {
           const pub = await loadMarket(false);
           if (aliveCheck()) setData(pub);
-        } catch (err) {
-          if (aliveCheck()) notify((err as Error).message, true);
+        } catch {
+          if (aliveCheck()) setMarketUnavailable(true);
         }
       }
     },
-    [loadMarket, notify],
+    [loadMarket],
   );
 
   useEffect(() => {
@@ -287,6 +327,20 @@ export default function X1Workspace() {
       const params = new URLSearchParams(window.location.search),
         target = params.get("view")?.toLowerCase(),
         sec = params.get("section")?.toLowerCase();
+      const settings = params.get("settings");
+      setSettingsOpen(target === "settings" || settings !== null);
+      if (target === "settings" || settings !== null) {
+        setSettingsSection(settingsSectionFromUrl(settings ?? sec ?? null));
+      } else if (settingsReturnFocus.current) {
+        const trigger = settingsReturnFocus.current;
+        settingsReturnFocus.current = null;
+        requestAnimationFrame(() => {
+          (trigger.isConnected ? trigger : helpTrigger.current)?.focus({ preventScroll: true });
+        });
+      }
+      const base = new URL(window.location.href);
+      base.searchParams.delete("settings");
+      if (event && base.href === settingsBaseUrl.current) return;
       const validId = (name: string) => {
         const id = params.get(name) ?? "";
         return /^[A-Za-z0-9_-]{8,80}$/.test(id) ? id : "";
@@ -300,7 +354,7 @@ export default function X1Workspace() {
         setAsset("");
         setAssetAlerts("");
       }
-      setView(target === "strategy" ? "Strategy" : target === "community" ? "Community" : target === "settings" ? "Settings" : "Global");
+      setView(target === "strategy" ? "Strategy" : target === "community" ? "Community" : "Global");
       const rawProf = (params.get("profile") || params.get("handle") || "")
         .trim()
         .replace(/^@+/, "");
@@ -310,18 +364,12 @@ export default function X1Workspace() {
         setInitialProfileHandle(rawProf || null);
         if (rawProf || tab === "souls" || tab === "web") setCommunityTab("web");
         else if (tab === "rooms" || tab === "groups") setCommunityTab("groups");
-        else setCommunityTab("chats");
-      }
-      if (target === "settings") {
-        setView("Settings");
-        if (
-          sec === "profile" ||
-          sec === "appearance" ||
-          sec === "notifications" ||
-          sec === "privacy" ||
-          sec === "account" || sec === "security" || sec === "sessions" || sec === "help" || sec === "about"
-        ) {
-          setSettingsSection(sec);
+        else if (tab === "chats" || validId("thread")) setCommunityTab("chats");
+        else {
+          try {
+            const remembered = localStorage.getItem("ss-community-tab");
+            setCommunityTab(remembered === "chats" || remembered === "groups" ? remembered : "web");
+          } catch { setCommunityTab("web"); }
         }
       }
       if (target !== "settings") {
@@ -404,12 +452,10 @@ export default function X1Workspace() {
       )
     )
       return false;
-    if (next !== "Settings") {
-      previousView.current = next;
-    }
+    setSettingsOpen(false);
+    setHelpMenuOpen(false);
     setQuickMenuOpen(false);
     if (next !== "Community") {
-      setCommunityTab("chats");
       setCommunitySavedOnly(false);
       setInitialProfileHandle(null);
     }
@@ -421,22 +467,37 @@ export default function X1Workspace() {
     return true;
   }
 
-  const openSettings = useCallback((section: SettingsSection = "profile") => {
+  const openSettings = useCallback((section: SettingsSection | null = null) => {
+    setHelpMenuOpen(false);
+    setQuickMenuOpen(false);
     if (!authRef.current.authenticated) {
-      setQuickMenuOpen(false);
       setAuthModal("signin");
       return;
     }
+    settingsReturnFocus.current = helpMenuOpen
+      ? helpTrigger.current
+      : document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSettingsSection(section);
-    setQuickMenuOpen(false);
-    setView("Settings");
-    window.history.replaceState(
-      null,
-      "",
-      "/?view=settings&section=" + encodeURIComponent(section),
-    );
-    document.getElementById("x1-main")?.focus();
-    window.scrollTo({ top: 0, behavior: "instant" });
+    const url = new URL(window.location.href);
+    settingsBaseUrl.current = url.href;
+    url.searchParams.set("settings", section ?? "all");
+    window.history.pushState({ workspaceSettings: true }, "", url);
+    setSettingsOpen(true);
+  }, [helpMenuOpen]);
+
+  const closeSettings = useCallback(() => {
+    if (window.history.state?.workspaceSettings) {
+      window.history.back();
+      return;
+    }
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("view")?.toLowerCase() === "settings") {
+      url.searchParams.set("view", "global");
+      url.searchParams.delete("section");
+    }
+    url.searchParams.delete("settings");
+    window.history.replaceState(window.history.state, "", url);
+    setSettingsOpen(false);
   }, []);
 
   const handleProfileSynced = useCallback((profile: UserProfileSnapshot) => {
@@ -632,10 +693,7 @@ export default function X1Workspace() {
       setAssetEventContext(null);
       setMobileChatActive(false);
       setBellOpen(false);
-      if (view === "Settings") {
-        setView("Global");
-        window.history.replaceState(null, "", "/?view=global");
-      }
+      if (settingsOpen) closeSettings();
       try {
         setData(await loadMarket(false));
       } catch {
@@ -732,7 +790,7 @@ export default function X1Workspace() {
         </div>
       </aside>
       <div className="x1-content">
-        <header className="x1-topbar">
+        <header className={"x1-topbar x11-header x11-header-" + view.toLowerCase()}>
           {/* GLOBAL HEADER: 3-dot Sections Drawer + Universal Search + bordered ? Help + Avatar */}
           {view === "Global" && (
             <>
@@ -774,16 +832,6 @@ export default function X1Workspace() {
                   }}
                 />
               </div>
-              <div className="x51-topbar-right">
-                <button
-                  type="button"
-                  className="x51-help-btn"
-                  aria-label="Global help and research guide"
-                  onClick={() => setContextHelpOpen(true)}
-                >
-                  ?
-                </button>
-              </div>
             </>
           )}
 
@@ -803,16 +851,6 @@ export default function X1Workspace() {
               </div>
               <div className="x51-topbar-center">
                 <h1 className="x51-topbar-title">Strategy Builder</h1>
-              </div>
-              <div className="x51-topbar-right">
-                <button
-                  type="button"
-                  className="x51-help-btn"
-                  aria-label="Strategy Builder help and quotas"
-                  onClick={() => setContextHelpOpen(true)}
-                >
-                  ?
-                </button>
               </div>
             </>
           )}
@@ -904,14 +942,31 @@ export default function X1Workspace() {
             </>
           )}
 
-          {/* SETTINGS HEADER */}
-          {view === "Settings" && (
-            <>
-              <div className="x51-topbar-center">
-                <h1 className="x51-topbar-title">Account &amp; Preferences</h1>
+          <div className="x11-help-anchor" ref={helpAnchor}>
+            <button
+              ref={helpTrigger}
+              type="button"
+              className="x51-help-btn"
+              aria-label="Help"
+              aria-expanded={helpMenuOpen}
+              aria-controls="x11-help-options"
+              onClick={() => setHelpMenuOpen((open) => !open)}
+            >?</button>
+            {helpMenuOpen && (
+              <div id="x11-help-options" className="x11-help-options" role="group" aria-label="Help options">
+                <button type="button" onClick={() => { setHelpMenuOpen(false); setContextHelpOpen(true); }}>
+                  Help &amp; Guide
+                </button>
+                <button type="button" onClick={() => openSettings()}>
+                  {isSignedIn ? "All Settings" : "Sign in for settings"}
+                </button>
+                <button type="button" onClick={() => {
+                  if (isSignedIn) openSettings("about");
+                  else { setHelpMenuOpen(false); setContextHelpOpen("about"); }
+                }}>About</button>
               </div>
-            </>
-          )}
+            )}
+          </div>
 
           <div className="x6-account-anchor">
             {isSignedIn ? (
@@ -1001,6 +1056,12 @@ export default function X1Workspace() {
           onHide={() => void hidePrivateTicker()}
         />
         <main id="x1-main" tabIndex={-1} className="x1-main">
+          {marketUnavailable && view === "Global" && globalView !== "DASHBOARD" && (
+            <div className="x1-callout" role="status">
+              <span>Market reference data could not be refreshed.</span>
+              <button type="button" className="x1-text-button" onClick={() => void refreshData()} disabled={refreshing}>Retry</button>
+            </div>
+          )}
           {sessionError && (
             <div role="alert" className="x1-callout">
               {sessionError}{" "}
@@ -1183,42 +1244,6 @@ export default function X1Workspace() {
                     );
                   }}
                 />
-              ) : view === "Settings" ? (
-                isSignedIn ? (
-                  <SettingsView
-                    initialSection={settingsSection}
-                    notify={notify}
-                    onBack={() => navigate(previousView.current)}
-                    onProfileSynced={handleProfileSynced}
-                    onSignOut={() => void handleSignOut()}
-                    onOpenNotification={(id) => void openNotification(id)}
-                    onOpenPriceAlerts={() => { if (navigate("Global")) selectGlobalView("PRICE_ALERTS"); }}
-                  />
-                ) : (
-                  <section className="x1-panel">
-                    <h2>Sign in to access Settings &amp; Preferences</h2>
-                    <p className="x1-caption">
-                      Profile settings, privacy controls, and workspace preferences are private to your account.
-                    </p>
-                    <div className="x1-actions">
-                      <button
-                        type="button"
-                        className="x1-primary x1-motion-button"
-                        onClick={() => setAuthModal("signin")}
-                      >
-                        Sign in
-                        <ArrowRight size={15} />
-                      </button>
-                      <button
-                        type="button"
-                        className="x1-secondary"
-                        onClick={() => navigate("Global")}
-                      >
-                        Back to Global
-                      </button>
-                    </div>
-                  </section>
-                )
               ) : (
                 <CommunityNetwork
                   authenticated={isSignedIn && accepted === true}
@@ -1246,6 +1271,7 @@ export default function X1Workspace() {
                     navigate("Strategy");
                   }}
                   onMobileChatActive={setMobileChatActive}
+                  onSelectTab={setCommunityTab}
                 />
               )}
             </div>
@@ -1456,13 +1482,44 @@ export default function X1Workspace() {
         </>
       )}
 
-      {/* Contextual Help Modal (Global & Strategy bordered ? button) */}
-      {contextHelpOpen && (
+      {settingsOpen && authenticated !== null && (
+        <Modal title="All Settings" className="x11-settings-sheet" onClose={closeSettings}>
+          {isSignedIn ? (
+            <Suspense fallback={<WorkspaceSkeleton label="Opening settings…" kind="panel" />}>
+              <SettingsView
+                key={settingsSection ?? "all"}
+                initialSection={settingsSection}
+                notify={notify}
+                onProfileSynced={handleProfileSynced}
+                onSignOut={() => void handleSignOut()}
+                onOpenNotification={(id) => { closeSettings(); void openNotification(id); }}
+                onOpenPriceAlerts={() => { if (navigate("Global")) selectGlobalView("PRICE_ALERTS"); }}
+              />
+            </Suspense>
+          ) : (
+            <div className="x1-panel">
+              <p>Sign in to manage your profile, privacy and preferences.</p>
+              <button type="button" className="x1-primary" onClick={() => {
+                closeSettings();
+                setAuthModal("signin");
+              }}>Sign in</button>
+            </div>
+          )}
+        </Modal>
+      )}
+
+      {/* Contextual Help & Guide */}
+      {contextHelpOpen === "about" && (
+        <Modal title="About Strategic Souls" onClose={() => setContextHelpOpen(false)}>
+          <p>{APP_RELEASE.versionLabel} by {APP_RELEASE.organization}</p>
+          <p>Read-only market research, strategy testing and community discussion.</p>
+          <a href={`mailto:${APP_RELEASE.supportEmail}`}>{APP_RELEASE.supportEmail}</a>
+        </Modal>
+      )}
+      {contextHelpOpen === true && (
         <Modal
           title={
-            view === "Strategy"
-              ? "Strategy Builder · Help & Allowances"
-              : "Global Workspace · Help & Data Rights"
+            view === "Strategy" ? "Strategy Builder · Help & Allowances" : view === "Community" ? "Community · Help & Guide" : "Global Workspace · Help & Data Rights"
           }
           onClose={() => setContextHelpOpen(false)}
         >

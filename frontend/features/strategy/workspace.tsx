@@ -130,6 +130,7 @@ const TIMEFRAME_LABEL: Record<string, string> = {
 
 const EXTRA_SCOPES: readonly { id: ScanUniversePreset; label: string }[] = [
   { id: "INDIAN_EQUITIES", label: "NSE / BSE" },
+  { id: "NIFTY_500", label: "Nifty 500" },
   { id: "MCX_FUTURES", label: "MCX Futures" },
   { id: "ECB_DAILY", label: "ECB FX (Daily)" },
   { id: "CUSTOM_CSV", label: "Private CSV" },
@@ -153,11 +154,6 @@ const DEFAULT_ADVANCED_TREE: RuleTree = {
 };
 
 const DEFAULT_ADVANCED_FORMULA = "all(close > sma(close, 20), rsi(close, 14) < 70)";
-
-function defaultSoulNameForPreset(preset: ClassicPreset): string {
-  const short = preset.label.trim();
-  return short.length <= 64 ? short : `${short.slice(0, 61)}…`;
-}
 
 function sourceBadgeLabel(rawPreset?: string, rawSource?: string): string {
   if (rawPreset === "MY_WATCHLIST" || rawSource === "Watchlist") return "Watchlist";
@@ -467,9 +463,7 @@ export default function Strategy({
   );
   const [pinningId, setPinningId] = useState<string | null>(null);
 
-  // Soul name (sensible prefilled editable default; persists custom typing across preset switches)
-  const [name, setName] = useState<string>(defaultSoulNameForPreset(initialClassic));
-  const [nameEditedManually, setNameEditedManually] = useState(false);
+  const [name, setName] = useState("");
 
   // Advanced rule tree + formula
   const [tree, setTree] = useState<RuleTree>(DEFAULT_ADVANCED_TREE);
@@ -605,16 +599,12 @@ export default function Strategy({
         setScanTier("CLASSIC");
         setClassicPresetId(matched.id);
         setClassicFormula(matched.formula);
-        setName(defaultSoulNameForPreset(matched));
-        setNameEditedManually(false);
       } else {
         setScanTier("ADVANCED");
         setAdvancedEntry("BUILD");
         setAdvancedFormula(clean);
         const parsed = treeFromFormula(clean);
         if (parsed) setTree(parsed);
-        setName("Imported Community Soul");
-        setNameEditedManually(false);
       }
     });
     return () => {
@@ -713,15 +703,7 @@ export default function Strategy({
   function selectMode(nextTier: ScanTierMode) {
     setScanTier(nextTier);
     setScanError("");
-    if (nextTier === "CLASSIC") {
-      if (!nameEditedManually) {
-        setName(defaultSoulNameForPreset(activePreset));
-      }
-    } else {
-      if (!nameEditedManually) {
-        setName("Custom Advanced Scan");
-      }
-    }
+
   }
 
   function applyClassicPreset(preset: ClassicPreset) {
@@ -730,15 +712,11 @@ export default function Strategy({
       setTree(treeFromFormula(preset.formula) ?? DEFAULT_ADVANCED_TREE);
       setAdvancedEntry("BUILD");
       setScanError("");
-      if (!nameEditedManually) setName(defaultSoulNameForPreset(preset));
       return;
     }
     setClassicPresetId(preset.id);
     setClassicFormula(preset.formula);
     setScanError("");
-    if (!nameEditedManually) {
-      setName(defaultSoulNameForPreset(preset));
-    }
   }
 
   function handleScopeChange(nextScope: ScanUniversePreset) {
@@ -763,10 +741,11 @@ export default function Strategy({
       return;
     }
     if (savingDraft) return;
-    const cleanName =
-      name.trim().length >= 3
-        ? name.trim()
-        : `${defaultSoulNameForPreset(activePreset)} Copy`;
+    const cleanName = name.trim();
+    if (cleanName.length < 3) {
+      setScanError("Enter a Soul name of at least 3 characters before saving.");
+      return;
+    }
     setSavingDraft(true);
     try {
       await api("/api/x1/workspace", {
@@ -852,13 +831,7 @@ export default function Strategy({
         setAdvancedFormula(res.blueprint.formula);
         const parsed = treeFromFormula(res.blueprint.formula);
         if (parsed) setTree(parsed);
-        if (!nameEditedManually) {
-          setName(
-            res.blueprint.humanSummary
-              ? res.blueprint.humanSummary.slice(0, 60)
-              : "Discover Rule Scan",
-          );
-        }
+
       }
     } catch (err) {
       notify(
@@ -884,13 +857,14 @@ export default function Strategy({
       return;
     }
     if (lock.current || busy) return;
+    if (scanSource === "NIFTY_500") {
+      setScanPhase("BLOCKED");
+      setScanError("Nifty 500 requires authorized constituents and eligible historical coverage.");
+      return;
+    }
 
-    const cleanName =
-      name.trim() ||
-      (scanTier === "CLASSIC"
-        ? defaultSoulNameForPreset(activePreset)
-        : "Custom Advanced Scan");
-    if (cleanName !== name) setName(cleanName);
+    const enteredName = name.trim();
+    const cleanName = enteredName.length >= 3 ? enteredName : "Untitled scan";
 
     if (scanSource === "MY_WATCHLIST" && watchlistItems.length === 0) {
       setScanPhase("BLOCKED");
@@ -917,7 +891,7 @@ export default function Strategy({
         : `Advanced rule evaluation for ${cleanName}: ${effectiveFormula}`.slice(0, 1900);
 
     const requestDef: ResearchDefinition = {
-      name: cleanName.length >= 3 ? cleanName : `${cleanName} Scan`,
+      name: cleanName,
       description:
         autoDescription.length >= 10
           ? autoDescription
@@ -1197,6 +1171,9 @@ export default function Strategy({
           </div>
         )}
 
+        {scanSource === "NIFTY_500" && (
+          <p className="x1-caption" role="status">Nifty 500 is unavailable. It requires authorized constituents and eligible historical coverage.</p>
+        )}
         {scanSource === "MY_WATCHLIST" && watchlists.length > 1 && (
           <select
             id="ss-v31-watchlist-select"
@@ -1406,7 +1383,7 @@ export default function Strategy({
               </button>
             </div>
 
-            {/* 3. Soul Name (prefilled editable default; never blocks or steals focus) */}
+            {/* Require a name when saving a named Soul. */}
             <div className="x54-field-group">
               <label className="x54-field-label" htmlFor="ss-v3-soul-name">
                 <span>Soul Name</span>
@@ -1418,10 +1395,7 @@ export default function Strategy({
                 className="x54-name-input"
                 value={name}
                 maxLength={100}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setNameEditedManually(true);
-                }}
+                onChange={(e) => setName(e.target.value)}
                 placeholder="Name your Soul scan"
               />
             </div>
@@ -2294,7 +2268,6 @@ export default function Strategy({
                               onClick={() => {
                                 setScanTier("CLASSIC");
                                 setClassicFormula("close > ema(close, 20)");
-                                if (!nameEditedManually) setName("Price above EMA(20)");
                                 setScanError("");
                               }}
                             >
@@ -2306,7 +2279,6 @@ export default function Strategy({
                               onClick={() => {
                                 setScanTier("CLASSIC");
                                 setClassicFormula("rsi(close, 14) < 50");
-                                if (!nameEditedManually) setName("RSI(14) Pullback below 50");
                                 setScanError("");
                               }}
                             >

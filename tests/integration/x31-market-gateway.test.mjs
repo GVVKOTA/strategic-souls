@@ -373,6 +373,19 @@ test("owner Classic coverage uses longer candle history and saves a daily scan o
     scanRequestVersion: 2, universePreset: "INDIAN_EQUITIES", universe: "ECB_DAILY",
   });
   assert.equal(wrongSource.status, 400);
+  for (const [action, universe] of [
+    ["preflight-scan", "NIFTY_500"],
+    ["run-scan", "NIFTY_500"],
+    ["run-draw-scan", "NIFTY_500"],
+    ["run-scan", "ECB_DAILY"],
+  ]) {
+    const unlicensed = await call(action, "NSE:SBIN", {
+      scanRequestVersion: 2, universePreset: "NIFTY_500", universe,
+      requestId: webcrypto.randomUUID(),
+    });
+    assert.equal(unlicensed.status, 503);
+    assert.match(unlicensed.body.error, /No scan allowance was used/);
+  }
   const unsupportedEcbIntraday = await call("run-scan", "ECB:USDINR", {
     scanRequestVersion: 2, universePreset: "ECB_DAILY", universe: "ECB_DAILY",
     interval: "30m", requestId: webcrypto.randomUUID(),
