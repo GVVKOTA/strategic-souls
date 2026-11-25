@@ -76,6 +76,7 @@ type Props = {
   data: MarketSnapshot | null;
   workspace: WorkspaceState | null;
   authenticated?: boolean;
+  isOwner?: boolean;
   onRequireAuth?: () => void;
   reload: () => Promise<void>;
   notify: Notice;
@@ -132,7 +133,6 @@ const EXTRA_SCOPES: readonly { id: ScanUniversePreset; label: string }[] = [
   { id: "INDIAN_EQUITIES", label: "NSE / BSE" },
   { id: "NIFTY_500", label: "Nifty 500" },
   { id: "MCX_FUTURES", label: "MCX Futures" },
-  { id: "ECB_DAILY", label: "ECB FX (Daily)" },
   { id: "CUSTOM_CSV", label: "Private CSV" },
 ];
 
@@ -426,6 +426,7 @@ export function FinancialCalendar() {
 export default function Strategy({
   workspace,
   authenticated = true,
+  isOwner = false,
   onRequireAuth,
   reload,
   notify,
@@ -472,15 +473,19 @@ export default function Strategy({
   const [discoverBlueprint, setDiscoverBlueprint] = useState<DiscoverBlueprint | null>(null);
   const [discoverLoading, setDiscoverLoading] = useState(false);
 
-  // Scan Source (Market default; Watchlist + expandable scopes + single-asset deep-link scope)
+  // An explicit scope stays selected across session and capability refreshes.
   const [scopedInstrument, setScopedInstrument] = useState<string>(
     initialInstrument?.trim() ?? "",
   );
-  const [scanSource, setScanSource] = useState<ScanUniversePreset>(
+  const [chosenScope, setScanSource] = useState<ScanUniversePreset | null>(
     initialInstrument?.trim().startsWith("ECB:")
       ? "ECB_DAILY"
-      : initialUniversePreset ?? "MARKET",
+      : initialUniversePreset ?? (initialInstrument?.trim() ? "MARKET" : null),
   );
+  const exchangeAvailable = workspace?.marketScanAvailable ?? isOwner;
+  const scanSource = chosenScope ?? (exchangeAvailable ? "MARKET" : "ECB_DAILY");
+  const exchangeScopeUnavailable = !exchangeAvailable &&
+    (scanSource === "MARKET" || scanSource === "INDIAN_EQUITIES" || scanSource === "MCX_FUTURES");
   const [moreScopesOpen, setMoreScopesOpen] = useState(
     !!initialUniversePreset &&
       initialUniversePreset !== "MARKET" &&
@@ -721,6 +726,7 @@ export default function Strategy({
 
   function handleScopeChange(nextScope: ScanUniversePreset) {
     invalidatePendingRun();
+    if (nextScope !== scanSource) setScopedInstrument("");
     setScanSource(nextScope);
     setScanError("");
     if (
@@ -857,6 +863,7 @@ export default function Strategy({
       return;
     }
     if (lock.current || busy) return;
+    if (exchangeScopeUnavailable) return;
     if (scanSource === "NIFTY_500") {
       setScanPhase("BLOCKED");
       setScanError("Nifty 500 requires authorized constituents and eligible historical coverage.");
@@ -869,7 +876,7 @@ export default function Strategy({
     if (scanSource === "MY_WATCHLIST" && watchlistItems.length === 0) {
       setScanPhase("BLOCKED");
       setScanError(
-        "Your Watchlist is empty. Add instruments to your Watchlist or switch Scan Source to Market.",
+        "Your Watchlist is empty. Add instruments or choose ECB FX.",
       );
       return;
     }
@@ -970,7 +977,6 @@ export default function Strategy({
           : "FAILED",
       );
       setScanError(msg);
-      notify(msg, true);
     } finally {
       if (seq === runSeqRef.current) {
         lock.current = false;
@@ -1078,7 +1084,6 @@ export default function Strategy({
 
   const scopeAndTimeframeControls = (
     <>
-      {/* Scan Source: Market default + Watchlist + expandable scopes */}
       <div className="x54-field-group">
         <div className="x54-field-label">
           <span>Scan Source</span>
@@ -1113,7 +1118,6 @@ export default function Strategy({
               style={{ padding: "2px 6px", fontSize: "0.78rem" }}
               onClick={() => {
                 setScopedInstrument("");
-                if (scanSource === "ECB_DAILY") setScanSource("MARKET");
               }}
             >
               Scan all
@@ -1126,6 +1130,14 @@ export default function Strategy({
           role="group"
           aria-label="Primary scan source"
         >
+          <button
+            type="button"
+            aria-pressed={scanSource === "ECB_DAILY"}
+            className={"ss-v3-seg-btn" + (scanSource === "ECB_DAILY" ? " is-active" : "")}
+            onClick={() => handleScopeChange("ECB_DAILY")}
+          >
+            ECB FX
+          </button>
           <button
             type="button"
             aria-pressed={scanSource === "MY_WATCHLIST"}
@@ -1145,10 +1157,18 @@ export default function Strategy({
             }
             onClick={() => handleScopeChange("MARKET")}
           >
-            Market
+            Indian markets
           </button>
         </div>
 
+        {exchangeScopeUnavailable && (
+          <div className="x1-callout" role="status">
+            <span>Shared NSE, BSE and MCX history requires a licensed feed. ECB daily FX is available.</span>
+            <button type="button" className="x1-secondary" onClick={() => handleScopeChange("ECB_DAILY")}>
+              Choose ECB FX
+            </button>
+          </div>
+        )}
         {moreScopesOpen && (
           <div
             className="ss-v31-extra-scopes"
@@ -1194,16 +1214,15 @@ export default function Strategy({
         {scanSource === "MY_WATCHLIST" && watchlistItems.length === 0 && (
           <div className="x54-quota-popover" role="note">
             <div>
-              Your Watchlist is empty. Add instruments to scan your Watchlist, or
-              switch directly to Market.
+              Your Watchlist is empty. Add instruments or choose an available scan scope.
             </div>
             <div className="x1-actions" style={{ marginTop: 8, gap: 8 }}>
               <button
                 type="button"
                 className="x1-secondary"
-                onClick={() => handleScopeChange("MARKET")}
+                onClick={() => handleScopeChange(exchangeAvailable ? "MARKET" : "ECB_DAILY")}
               >
-                Switch to Market
+                {exchangeAvailable ? "Choose Indian markets" : "Choose ECB FX"}
               </button>
               {onOpenWatchlist && (
                 <button
@@ -1778,7 +1797,7 @@ export default function Strategy({
                 <button
                   type="button"
                   className="x1-secondary"
-                  disabled={busy}
+                  disabled={busy || exchangeScopeUnavailable}
                   onClick={() => void executeScan()}
                 >
                   <RefreshCw size={14} aria-hidden="true" />
@@ -1793,7 +1812,7 @@ export default function Strategy({
                 <button
                   type="button"
                   className="ss-v3-run-cta"
-                  disabled={busy}
+                  disabled={busy || exchangeScopeUnavailable}
                   aria-busy={busy}
                   onClick={() => void executeScan()}
                 >

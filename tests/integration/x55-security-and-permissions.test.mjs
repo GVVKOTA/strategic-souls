@@ -176,13 +176,14 @@ function load(path) {
     }
     if (normalized.endsWith("/backend/services/market-data/data-service.ts")) {
       return new vm.SyntheticModule(
-        ["researchUniverse", "currentDisplayRights"],
+        ["researchUniverse", "exchangeScanAvailable", "currentDisplayRights"],
         function () {
           this.setExport("currentDisplayRights", async () => ({
             displayAllowed: true,
             derivedDisplayAllowed: true,
             rightsExpiresAt: null,
           }));
+          this.setExport("exchangeScanAvailable", async () => false);
           this.setExport("researchUniverse", async () => ({
             datasets: [],
             excluded: [],

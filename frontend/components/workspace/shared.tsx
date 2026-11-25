@@ -417,6 +417,7 @@ export type WorkspaceState = {
   scanHistoryNextBefore?: string | null;
   scanEventsHasMore?: boolean;
   scanQuota?: import("../../../backend/services/research/scan-quota").ScanQuotaSummary;
+  marketScanAvailable?: boolean;
   pinnedFormulaIds?: string[];
   portfolios: (WorkspaceRecord & { summary: PortfolioSummary })[];
   transactions: {

@@ -15,6 +15,7 @@ import {
   type MarketOverviewCard,
 } from "../../../backend/services/market-data/nine-card-types";
 import { registryInstrument } from "../../../backend/services/market-data/instrument-registry";
+import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import { api, Modal, number, type Notice } from "../../components/workspace/shared";
 
 type OverviewResponse = {
@@ -26,6 +27,7 @@ type OverviewResponse = {
 
 type Props = {
   authenticated: boolean;
+  market: MarketSnapshot | null;
   onOpenAsset: (id: string) => void;
   onRequireAuth?: () => void;
   onCelebration?: (label: string, mutationId: string) => void;
@@ -34,6 +36,7 @@ type Props = {
 
 const GUEST_STORAGE_KEY = "ss-v3-guest-market-grid-v2";
 const OVERVIEW_TIMEOUT_MS = 10_000;
+const PUBLIC_REFERENCE_IDS = ["ECB:USDINR", "ECB:EURINR", "ECB:EURUSD", "UST:10Y"];
 
 function guestMarketIds(): string[] {
   try {
@@ -88,7 +91,7 @@ function formatCompactObservation(
 ): { text: string; statusKind: "live" | "closed" | "delayed" | "reference" | "stale" | "unavailable"; statusText: string } {
   if (card.value === null || card.quality === "UNAVAILABLE" || card.quality === "NOT_CONNECTED" || card.quality === "RESTRICTED") {
     return {
-      text: card.sessionLabel && card.sessionLabel !== "Market hours" ? card.sessionLabel : "Unavailable",
+      text: card.canonicalId === "GLOBAL:CLF27" ? "Unavailable · No authorized source" : "Quote unavailable",
       statusKind: "unavailable",
       statusText: "Unavailable",
     };
@@ -106,7 +109,7 @@ function formatCompactObservation(
         }).format(new Date(`${rawDate}T00:00:00Z`))
       : "";
     return {
-      text: shortDate ? `As of ${shortDate} · ECB reference` : "ECB reference",
+        text: shortDate ? `As of ${shortDate} · ECB cross-rate` : "ECB cross-rate",
       statusKind: "reference",
       statusText: "Reference",
     };
@@ -250,6 +253,7 @@ function MiniSpark({
  */
 export default function MarketOverviewGrid({
   authenticated,
+  market,
   onOpenAsset,
   onRequireAuth,
   onCelebration,
@@ -346,6 +350,14 @@ export default function MarketOverviewGrid({
 
   const showQuotes = !error && loadedForAuthenticated === authenticated;
   const layoutIds = loadedForAuthenticated === authenticated ? layout.ids : DEFAULT_EIGHT_CARD_IDS;
+  const hasExchangePrices = showQuotes && cards.some((card) =>
+    card.canonicalId !== "ECB:USDINR" && card.value !== null,
+  );
+  const publicReferences = PUBLIC_REFERENCE_IDS.flatMap((id) => {
+    const point = market?.quotes.find((quote) => quote.id === id) ??
+      market?.yields.find((quote) => quote.id === id);
+    return point && point.value !== null && point.sourceDate ? [point] : [];
+  });
 
   function openCustomize() {
     setDraftIds([...layoutIds]);
@@ -481,6 +493,24 @@ export default function MarketOverviewGrid({
           </button>
         </div>
       )}
+
+      {!hasExchangePrices && publicReferences.length > 0 && (
+        <section className="x11-public-references" aria-labelledby="x11-public-reference-heading">
+          <h2 id="x11-public-reference-heading">Public market references</h2>
+          <div className="x11-reference-grid">
+            {publicReferences.map((point) => (
+              <button type="button" key={point.id} className="x11-reference-card" onClick={() => onOpenAsset(point.id)}>
+                <span>{point.label}</span>
+                <strong>{number(point.value, point.assetClass === "BOND_YIELD" ? 2 : 4)}{point.assetClass === "BOND_YIELD" ? "%" : ""}</strong>
+                <small>{point.derivation ? "ECB cross-rate" : point.provider} · {point.sourceDate}{point.state === "STALE" ? " · Stale" : ""}</small>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+      {!hasExchangePrices && !loading && <p className="x1-caption x11-exchange-coverage">
+        Exchange and futures quotes appear when a permitted feed returns data.
+      </p>}
 
       <div
         className={"x51-market-grid ss-v3-market-grid-8" + (showAllMarkets ? "" : " x11-markets-collapsed")}

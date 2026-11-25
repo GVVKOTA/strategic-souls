@@ -647,6 +647,7 @@ export default function Global({
           {/* BLOCK A: Centered "Strategic Dashboard" + 8 Market Tiles */}
           <MarketOverviewGrid
             authenticated={authenticated}
+            market={data}
             onOpenAsset={openAsset}
             onRequireAuth={onRequireAuth}
             onCelebration={(label, mutationId) =>

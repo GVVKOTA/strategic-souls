@@ -192,9 +192,9 @@ async function loadModule(relOrAbsPath) {
 
   const promise = (async () => {
     const normalized = file.replaceAll("\\", "/");
-    if (normalized.endsWith("/backend/services/market-data/market-data.ts")) {
+    if (normalized.endsWith("/backend/services/market-data/official-references.ts")) {
       return new vm.SyntheticModule(
-        ["loadMarketData", "marketSnapshot"],
+        ["loadOfficialReferences"],
         function () {
           const snap = async () => ({
             asOf: "2026-11-24T08:00:00.000Z",
@@ -220,8 +220,7 @@ async function loadModule(relOrAbsPath) {
             yields: [],
             fxHistory: [],
           });
-          this.setExport("loadMarketData", snap);
-          this.setExport("marketSnapshot", snap);
+          this.setExport("loadOfficialReferences", snap);
         },
         { context },
       );
