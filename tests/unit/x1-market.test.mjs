@@ -65,6 +65,28 @@ test('published rates preserve source date and retrieval time; derived FX uses s
   assert.ok(data.quotes.every(x=>!String(x.state).includes('LIVE')));
   const hist=data.fxHistory.find(x=>x.id==='ECB:USDINR');assert.equal(hist.points.length,2);assert.ok(hist.points.every(x=>x.knownAt===data.asOf));
 });
+test("a cold request reuses shared official snapshots and keeps their original timestamps", async () => {
+  clearMarketCacheForTests();
+  const storage = new Map();
+  const shared = {
+    async read(url) { return storage.get(url) ?? null; },
+    async write(url, { text, retrievedAt }) { storage.set(url, { text, retrievedAt }); },
+  };
+  const first = fetchFixture();
+  await marketSnapshot(first.fetcher, NOW, shared);
+  assert.equal(storage.size, 2);
+  clearMarketCacheForTests();
+  const cold = fetchFixture({ ecbFail: true, treasuryFail: true });
+  const reused = await marketSnapshot(cold.fetcher, NOW + 60_000, shared);
+  assert.deepEqual(cold.calls, []);
+  assert.equal(reused.quotes.find((q) => q.id === "ECB:USDINR").retrievedAt, new Date(NOW).toISOString());
+  assert.equal(reused.fxHistory.find((q) => q.id === "ECB:USDINR").canAnalyze, true);
+  clearMarketCacheForTests();
+  const expired = await marketSnapshot(cold.fetcher, NOW + 16 * 60_000, shared);
+  assert.equal(expired.quotes.find((q) => q.id === "ECB:USDINR").state, "STALE");
+  assert.equal(expired.fxHistory.find((q) => q.id === "ECB:USDINR").canAnalyze, false);
+  assert.equal(storage.size, 2);
+});
 test('yield changes are basis points and absent tenors remain null rather than zero',async()=>{
   clearMarketCacheForTests();const f=fetchFixture();const data=await marketSnapshot(f.fetcher,NOW);
   const ten=data.yields.find(x=>x.id==='UST:10Y');assert.ok(Math.abs(ten.change-20)<1e-10);assert.equal(ten.changeUnit,'bp');assert.equal(ten.unit,'% annual par yield');

@@ -8,7 +8,7 @@ import {
   type Transaction,
 } from "../../engines/portfolio";
 import { compileFormula, computeScanMetrics, requiredScanBars } from "../../engines/scan";
-import { researchUniverse, type ResearchUniverse } from "../market-data/data-service";
+import { exchangeScanAvailable, researchUniverse, type ResearchUniverse } from "../market-data/data-service";
 import { backtestResearch } from "../../engines/backtest";
 import {
   projectResearchSnapshot,
@@ -180,7 +180,7 @@ export async function workspaceState(
       "A complete snapshot export cannot use a history cursor.",
     );
   const archivedLimit = includeSnapshots ? 1000 : 100;
-  const [records, archived, ledger, scans, events, scanQuota, pinnedFormulaIds] = await Promise.all([
+  const [records, archived, ledger, scans, events, scanQuota, pinnedFormulaIds, marketScanAvailable] = await Promise.all([
     db
       .prepare(
         "SELECT * FROM x1_records WHERE subject=? AND archived=0 ORDER BY created_at,id LIMIT 101",
@@ -223,6 +223,7 @@ export async function workspaceState(
       .all(),
     getScanQuotaSummary(db, subject),
     listPinnedFormulaIds(db, subject),
+    exchangeScanAvailable(subject).catch(() => false),
   ]);
   if (
     records.results.length > 100 ||
@@ -290,6 +291,7 @@ export async function workspaceState(
         "Classic: 20 completed scans / IST day · Advanced: 1 completed scan / rolling 60 min · Zero paid credits.",
     },
     scanQuota,
+    marketScanAvailable,
     pinnedFormulaIds,
   };
 }

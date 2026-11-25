@@ -1213,6 +1213,7 @@ export default function X1Workspace() {
                   }
                   data={data}
                   workspace={workspace}
+                  isOwner={isOwner}
                   authenticated={isSignedIn && accepted === true}
                   onRequireAuth={() => setAuthModal("signin")}
                   reload={reload}

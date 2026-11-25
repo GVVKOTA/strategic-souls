@@ -147,3 +147,8 @@ To connect the deployed Cloudflare Worker (`https://strategic-souls.vishnukota20
 Use **Check coverage** to verify historical candles for the selected symbols and timeframe. An available dashboard quote only verifies the quote path. Soul Scan requests a separate candle window for Classic presets, up to 365 calendar days. Coverage shows the preset's minimum and the available bars when there is too little history.
 
 Broker scans exclude developing daily bars and the current calendar week or month from grouped history. The first weekly or monthly group is also omitted because the request can start partway through it. An owner scan requests up to 24 broker instruments at a time and lists any deferred symbols. The 30-minute and hourly Soul Scan options remain unavailable.
+## Public references in Global and Soul Scan
+
+Guests and standard accounts can open dated ECB and US Treasury references from Global. Standard accounts start Soul Scan on ECB FX when their workspace has no configured exchange history. Choosing Indian markets preserves that scope. If it is unavailable, the user can explicitly switch to ECB FX or use their own permitted daily CSV.
+
+Apply `drizzle/0020_official_reference_cache.sql` before promoting this feature. The shared D1 cache stores up to two validated official source documents and reuses them for 15 minutes across Worker instances. It retains original retrieval timestamps and labels stale display data. Soul Scan excludes stale history. Existing private quotes, account records, requests and provider credentials stay outside this cache.

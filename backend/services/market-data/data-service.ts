@@ -1,7 +1,8 @@
 import { env } from "cloudflare:workers";
 import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
-import { loadMarketData, type DataPoint } from "./market-data";
+import type { DataPoint } from "./market-data";
+import { loadOfficialReferences as loadMarketData } from "./official-references";
 import type { ScanDataset } from "../../engines/scan";
 import { matchesScanMarketPreset, type ScanSourceExclusion, type ScanUniversePreset } from "../research/research";
 import type {
@@ -233,6 +234,19 @@ export async function providerConfigs(): Promise<ProviderConfig[]> {
   return rows.results
     .map((r) => JSON.parse(r.payload))
     .sort((a, b) => a.priority - b.priority);
+}
+
+export async function exchangeScanAvailable(subject: string): Promise<boolean> {
+  const { flags } = resolveGatewayConfig(environment());
+  if (isDataOwner(subject) && flags.enablePrivateBrokerData) return true;
+  if (flags.mode === "public_licensed" && flags.enablePublicExchangeQuotes) return true;
+  const configs = await providerConfigs();
+  return configs.some((config) =>
+    rightsActive(config, "analysis") && rightsActive(config, "storage") &&
+    config.datasets.includes("candles") && config.instruments.some((instrument) =>
+      matchesScanMarketPreset("MARKET", instrument.market, instrument.type, instrument.expiry),
+    ),
+  );
 }
 export async function instrumentRegistry(subject?: string) {
   const configs = await providerConfigs();

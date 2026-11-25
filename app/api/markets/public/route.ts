@@ -4,7 +4,7 @@ import type {
   Interval,
 } from "../../../../backend/services/market-data/data-types";
 import { registryInstrument } from "../../../../backend/services/market-data/instrument-registry";
-import { marketSnapshot } from "../../../../backend/services/market-data/market-data";
+import { loadOfficialReferences } from "../../../../backend/services/market-data/official-references";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +30,7 @@ export async function GET(request: Request): Promise<Response> {
     const id = params.get("id");
 
     if (!id) {
-      return Response.json(await marketSnapshot(), { headers: PUBLIC_HEADERS });
+      return Response.json(await loadOfficialReferences(), { headers: PUBLIC_HEADERS });
     }
 
     if (id.length > 80) {
@@ -100,7 +100,7 @@ export async function GET(request: Request): Promise<Response> {
       );
     }
 
-    const m = await marketSnapshot();
+    const m = await loadOfficialReferences();
     const q = [...m.quotes, ...m.yields].find((p) => p.id === id);
     const h = m.fxHistory.find((p) => p.id === id);
     if (!q) {

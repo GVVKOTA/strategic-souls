@@ -152,7 +152,7 @@ async function load(path) {
   }
   if (normalized.endsWith("/backend/services/market-data/data-service.ts")) {
     const m = new vm.SyntheticModule(
-      ["researchUniverse", "currentDisplayRights"],
+      ["researchUniverse", "exchangeScanAvailable", "currentDisplayRights"],
       function () {
         this.setExport("currentDisplayRights", async (id, provider) =>
           provider === "UNVERIFIED"
@@ -167,6 +167,7 @@ async function load(path) {
                 rightsExpiresAt: null,
               }),
         );
+        this.setExport("exchangeScanAvailable", async () => false);
         this.setExport("researchUniverse", async (subject, options = {}) => {
           marketCalls++;
           const datasets =
@@ -220,11 +221,11 @@ async function load(path) {
     cache.set(file, m);
     return m;
   }
-  if (normalized.endsWith("/backend/services/market-data/market-data.ts")) {
+  if (normalized.endsWith("/backend/services/market-data/official-references.ts")) {
     const m = new vm.SyntheticModule(
-      ["loadMarketData"],
+      ["loadOfficialReferences"],
       function () {
-        this.setExport("loadMarketData", async () => {
+        this.setExport("loadOfficialReferences", async () => {
           marketCalls++;
           return structuredClone(marketFixture);
         });

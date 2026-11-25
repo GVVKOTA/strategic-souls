@@ -7,7 +7,8 @@
 import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import { registryInstrument } from "./instrument-registry";
-import { marketSnapshot, type MarketSnapshot } from "./market-data";
+import type { MarketSnapshot } from "./market-data";
+import { loadOfficialReferences } from "./official-references";
 import { isDataOwner } from "./data-service";
 import {
   getIndianExchangeSession,
@@ -583,7 +584,7 @@ export async function getMarketOverviewPayload(
     layoutPromise,
     (async () => {
       try {
-        return overrideSnapshot ?? await marketSnapshot();
+        return overrideSnapshot ?? await loadOfficialReferences();
       } catch {
         console.warn({ event: "market_overview_source_unavailable", source: "official_references" });
         return { asOf: now, quotes: [], fxHistory: [], yields: [], providers: [], disclosure: "", nextRefreshAfter: now };

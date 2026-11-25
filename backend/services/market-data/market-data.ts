@@ -91,6 +91,10 @@ type Cached = {
   lastFailure: string | null;
   retryAt: number;
 };
+export type OfficialReferenceCache = {
+  read: (url: string) => Promise<{ text: string; retrievedAt: string } | null>;
+  write: (url: string, entry: { text: string; retrievedAt: string }) => Promise<void>;
+};
 const cache = new Map<string, Cached>();
 const inFlight = new Map<string, Promise<Cached>>();
 
@@ -212,12 +216,30 @@ async function fetchText(
   url: string,
   fetcher: Fetcher,
   now: number,
+  shared?: OfficialReferenceCache,
 ): Promise<Cached> {
-  const prior = cache.get(url);
-  if (prior && (prior.expiresAt > now || prior.retryAt > now)) return prior;
+  const local = cache.get(url);
+  if (local && (local.expiresAt > now || local.retryAt > now)) return local;
   const running = inFlight.get(url);
   if (running) return running;
   const task = (async () => {
+    let prior = local;
+    if (shared) {
+      try {
+        const entry = await shared.read(url);
+        const readAt = Date.parse(entry?.retrievedAt ?? "");
+        if (entry && readAt <= now && now - readAt <= 7 * DAY_MS &&
+            readAt > Date.parse(prior?.retrievedAt ?? "1970-01-01")) {
+          if (url === ECB_HISTORY_URL) parseEcb(entry.text, now);
+          else parseTreasury(entry.text, now);
+          prior = { ...entry, expiresAt: readAt + CACHE_MS, lastFailure: null, retryAt: 0 };
+          cache.set(url, prior);
+          if (prior.expiresAt > now) return prior;
+        }
+      } catch {
+        // Keep the upstream path available if the shared store cannot be read.
+      }
+    }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
     let failureReason =
@@ -291,6 +313,7 @@ async function fetchText(
       if (url.includes("ecb.europa.eu")) parseEcb(text, now);
       else parseTreasury(text, now);
       cache.set(url, result);
+      if (shared) await shared.write(url, result).catch(() => {});
       return result;
     } catch (error) {
       // Network/runtime/parser exception text is never copied into the product API.
@@ -479,14 +502,15 @@ function treasuryPoints(
 export async function marketSnapshot(
   fetcher: Fetcher = fetch,
   now = Date.now(),
+  shared?: OfficialReferenceCache,
 ): Promise<MarketSnapshot> {
   if (!Number.isFinite(now)) throw new Error("Valid server time required.");
   const asOf = new Date(now).toISOString(),
     month = asOf.slice(0, 7).replace("-", "");
   const treasuryUrl = `https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value_month=${month}`;
   const [ecb, treasury] = await Promise.all([
-    fetchText(ECB_HISTORY_URL, fetcher, now),
-    fetchText(treasuryUrl, fetcher, now),
+    fetchText(ECB_HISTORY_URL, fetcher, now, shared),
+    fetchText(treasuryUrl, fetcher, now, shared),
   ]);
   let fxDays: EcbDay[] = [],
     yieldDays: TreasuryDay[] = [];

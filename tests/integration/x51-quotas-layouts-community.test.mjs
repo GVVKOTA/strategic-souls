@@ -194,7 +194,7 @@ function load(path) {
     }
     if (normalized.endsWith("/backend/services/market-data/data-service.ts")) {
       return new vm.SyntheticModule(
-        ["researchUniverse", "currentDisplayRights", "isDataOwner", "PRIVATE_EXCHANGE_FEED_LABEL"],
+        ["researchUniverse", "exchangeScanAvailable", "currentDisplayRights", "isDataOwner", "PRIVATE_EXCHANGE_FEED_LABEL"],
         function () {
           this.setExport("isDataOwner", () => false);
           this.setExport("PRIVATE_EXCHANGE_FEED_LABEL", "Configured Exchange Feed (Private)");
@@ -203,6 +203,7 @@ function load(path) {
             derivedDisplayAllowed: true,
             rightsExpiresAt: null,
           }));
+          this.setExport("exchangeScanAvailable", async () => false);
           this.setExport("researchUniverse", async () => {
             const datasets = [
               {
@@ -244,13 +245,12 @@ function load(path) {
         { context },
       );
     }
-    if (normalized.endsWith("/backend/services/market-data/market-data.ts")) {
+    if (normalized.endsWith("/backend/services/market-data/official-references.ts")) {
       return new vm.SyntheticModule(
-        ["loadMarketData", "marketSnapshot"],
+        ["loadOfficialReferences"],
         function () {
           const fn = async () => structuredClone(marketFixture);
-          this.setExport("loadMarketData", fn);
-          this.setExport("marketSnapshot", fn);
+          this.setExport("loadOfficialReferences", fn);
         },
         { context },
       );

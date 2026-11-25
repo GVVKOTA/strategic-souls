@@ -109,6 +109,21 @@
   .x1-app .x11-markets-collapsed > .ss-v3-mcard:nth-child(n + 5) { display: none !important; }
 }
 .x11-feed-filters { margin-bottom: 12px; }
+.x11-public-references { margin: 0 0 14px; }
+.x11-public-references h2 { font-size: 1rem; margin: 0 0 8px; }
+.x11-reference-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr)); }
+.x11-reference-card {
+  display: grid;
+  gap: 3px;
+  padding: 9px 11px;
+  text-align: start;
+  background: var(--x51-surface-card);
+  border: 1px solid var(--x51-hairline-strong);
+  border-radius: 10px;
+}
+.x11-reference-card strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.x11-reference-card small { color: var(--x1-text-secondary); overflow-wrap: anywhere; }
+.x11-exchange-coverage { margin: 0 0 8px; }
 .x11-feed-filters > summary { width: fit-content; padding: 11px; min-height: 44px; cursor: pointer; }
 .x11-welcome-summary { cursor: pointer; padding: 10px; }
 .x1-alert-selected { outline: 1px solid var(--x1-title-blue); }
