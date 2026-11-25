@@ -76,6 +76,7 @@ type Props = {
   data: MarketSnapshot | null;
   workspace: WorkspaceState | null;
   authenticated?: boolean;
+  sessionPending: boolean;
   isOwner?: boolean;
   onRequireAuth?: () => void;
   reload: () => Promise<void>;
@@ -89,7 +90,8 @@ type Props = {
   initialUniversePreset?: ScanUniversePreset;
   initialWatchlistId?: string;
   initialRunId?: string;
-  initialPanel?: string;
+  panel: StrategyTab;
+  onPanelChange: (panel: StrategyTab) => void;
 };
 
 type StrategyTab = "scan" | "lab";
@@ -426,6 +428,7 @@ export function FinancialCalendar() {
 export default function Strategy({
   workspace,
   authenticated = true,
+  sessionPending,
   isOwner = false,
   onRequireAuth,
   reload,
@@ -438,11 +441,9 @@ export default function Strategy({
   initialUniversePreset,
   initialWatchlistId,
   initialRunId,
-  initialPanel,
+  panel: section,
+  onPanelChange,
 }: Props) {
-  const [section, setSection] = useState<StrategyTab>(
-    initialPanel === "lab" ? "lab" : "scan",
-  );
   const [scanTier, setScanTier] = useState<ScanTierMode>("CLASSIC");
   const [advancedEntry, setAdvancedEntry] = useState<AdvancedEntryMode>("BUILD");
 
@@ -557,18 +558,6 @@ export default function Strategy({
     };
   }, [workspace?.pinnedFormulaIds]);
 
-  // Sync section when initialPanel changes (e.g. Strategy -> Formula Lab)
-  useEffect(() => {
-    if (initialPanel !== "lab" && initialPanel !== "scan") return;
-    let alive = true;
-    queueMicrotask(() => {
-      if (alive) setSection(initialPanel);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [initialPanel]);
-
   // Sync single-asset scope when launched via "Scan Asset"
   useEffect(() => {
     const clean = (initialInstrument ?? "").trim();
@@ -576,7 +565,6 @@ export default function Strategy({
     let alive = true;
     queueMicrotask(() => {
       if (!alive) return;
-      setSection("scan");
       setScopedInstrument(clean);
       if (clean.startsWith("ECB:")) {
         setScanSource("ECB_DAILY");
@@ -598,7 +586,6 @@ export default function Strategy({
     let alive = true;
     queueMicrotask(() => {
       if (!alive) return;
-      setSection("scan");
       const matched = findClassicPresetByFormula(clean);
       if (matched) {
         setScanTier("CLASSIC");
@@ -858,6 +845,7 @@ export default function Strategy({
   }
 
   async function executeScan() {
+    if (sessionPending) return;
     if (!authenticated) {
       onRequireAuth?.();
       return;
@@ -1317,7 +1305,7 @@ export default function Strategy({
           role="tab"
           aria-selected={section === "scan"}
           className={"x52-full-tab" + (section === "scan" ? " is-active" : "")}
-          onClick={() => setSection("scan")}
+          onClick={() => onPanelChange("scan")}
         >
           <IconStrategy size={18} />
           <span>Soul Scan</span>
@@ -1327,7 +1315,7 @@ export default function Strategy({
           role="tab"
           aria-selected={section === "lab"}
           className={"x52-full-tab" + (section === "lab" ? " is-active" : "")}
-          onClick={() => setSection("lab")}
+          onClick={() => onPanelChange("lab")}
         >
           <SlidersHorizontal size={17} aria-hidden="true" />
           <span>Formula Lab</span>
@@ -1713,7 +1701,7 @@ export default function Strategy({
                         instrumentIds={scopedInstrument ? [scopedInstrument] : undefined}
                         savedPatterns={workspace?.savedPatterns ?? []}
                         onPatternSaved={reload}
-                        busy={busy}
+                        busy={busy || sessionPending}
                         onScanComplete={async (res) => {
                           await reload();
                           setSelectedScanId(res.id);
@@ -1797,7 +1785,7 @@ export default function Strategy({
                 <button
                   type="button"
                   className="x1-secondary"
-                  disabled={busy || exchangeScopeUnavailable}
+                  disabled={sessionPending || busy || exchangeScopeUnavailable}
                   onClick={() => void executeScan()}
                 >
                   <RefreshCw size={14} aria-hidden="true" />
@@ -1812,12 +1800,12 @@ export default function Strategy({
                 <button
                   type="button"
                   className="ss-v3-run-cta"
-                  disabled={busy || exchangeScopeUnavailable}
-                  aria-busy={busy}
+                    disabled={sessionPending || busy || exchangeScopeUnavailable}
+                    aria-busy={sessionPending || busy}
                   onClick={() => void executeScan()}
                 >
-                  <span>{busy ? "Scanning completed bars…" : "Run Scan"}</span>
-                  {!busy && <ArrowRight size={17} aria-hidden="true" />}
+                   <span>{sessionPending ? "Checking session…" : busy ? "Scanning completed bars…" : "Run Scan"}</span>
+                   {!sessionPending && !busy && <ArrowRight size={17} aria-hidden="true" />}
                 </button>
                 {busy && (
                   <button

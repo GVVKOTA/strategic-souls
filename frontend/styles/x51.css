@@ -84,6 +84,25 @@
 }
 .x11-help-options button:hover,
 .x11-help-options button:focus-visible { background: var(--x1-bg); }
+@media (prefers-reduced-motion: no-preference) {
+  .x1-app:not([data-motion="minimal"]) .x11-help-options {
+    animation: ssHelpAppear var(--x51-dur-tap) var(--x51-ease) backwards;
+  }
+  .x1-app:not([data-motion="minimal"]) .x11-settings-sheet[open] {
+    animation: ssSettingsAppear var(--x51-dur-menu) var(--x51-ease) backwards;
+  }
+  .x1-app:not([data-motion="minimal"]) .ss-v31-breakdown-row {
+    animation: ssHelpAppear var(--x51-dur-panel) var(--x51-ease) backwards;
+  }
+}
+@keyframes ssHelpAppear {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes ssSettingsAppear {
+  from { opacity: 0.65; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
 @media (max-width: 56rem) {
   .x1-app .x1-topbar.x11-header-global {
     grid-template-columns: minmax(0, 1fr) auto auto;
@@ -108,7 +127,18 @@
   .x1-app .x11-market-expand { display: flex; }
   .x1-app .x11-markets-collapsed > .ss-v3-mcard:nth-child(n + 5) { display: none !important; }
 }
+@media (max-width: 767px) and (prefers-reduced-motion: no-preference) {
+  .x1-app:not([data-motion="minimal"]) .ss-v3-market-grid-8:not(.x11-markets-collapsed) > .ss-v3-mcard:nth-child(n + 5) {
+    animation: ssMarketAppear var(--x51-dur-menu) var(--x51-ease) backwards;
+  }
+}
+@keyframes ssMarketAppear {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .x11-feed-filters { margin-bottom: 12px; }
+.x11-feed-error p { margin: 4px 0 10px; }
+.x11-feed-error .x1-secondary { min-height: 44px; }
 .x11-public-references { margin: 0 0 14px; }
 .x11-public-references h2 { font-size: 1rem; margin: 0 0 8px; }
 .x11-reference-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr)); }
