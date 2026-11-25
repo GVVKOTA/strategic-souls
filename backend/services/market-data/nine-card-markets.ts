@@ -501,6 +501,7 @@ export async function getMarketOverviewPayload(
 
     const access = { authenticated: !!subject, isOwner };
     const nowMs = Date.now();
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(nowMs);
     const mcxAliasMap = new Map<string, string>();
     const fetchIds = await Promise.all(ids.map(async (id) => {
       if (id === "MCX:GOLD" || id === "MCX:SILVER") {
@@ -557,9 +558,18 @@ export async function getMarketOverviewPayload(
     const quotedIds = new Set(quotes.map((quote) => quote.id));
     const candleResults = await Promise.allSettled(
       uniqueFetchIds.filter((id) => quotedIds.has(id)).map(async (id) => {
-        const { candles } = await gatewayCandles({ ...access, id, interval: "1d", days: 45, timeoutMs: 1_200 });
-        const closes = candles.map(({ close }) => close).filter((close) => Number.isFinite(close) && close > 0);
-        return { id, closes };
+        const series = await gatewayCandles({ ...access, id, interval: "1d", days: 45, timeoutMs: 1_200 });
+        if (series.instrument.id !== id || series.interval !== "1d" || series.sourceMode !== "PRIVATE_OWNER_FEED") {
+          return { id, closes: [] };
+        }
+        // The adapter may include the current session's developing daily bar.
+        const completed = new Map<string, number>();
+        for (const { close, dateIST } of series.candles) {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(dateIST) && dateIST < today && Number.isFinite(close) && close > 0) {
+            completed.set(dateIST, close);
+          }
+        }
+        return { id, closes: [...completed].sort(([a], [b]) => a.localeCompare(b)).map(([, close]) => close) };
       }),
     );
     for (const item of candleResults) {
@@ -596,7 +606,7 @@ export async function getMarketOverviewPayload(
       mappingStatus: i.mappingStatus,
     }));
   return {
-    asOf: references.asOf,
+    asOf: new Date().toISOString(),
     layout,
     cards: buildMarketOverviewCards(
       layout.ids,

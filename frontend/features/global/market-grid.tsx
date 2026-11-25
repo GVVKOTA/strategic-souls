@@ -370,6 +370,7 @@ export default function MarketOverviewGrid({
         ok: boolean;
         layout: MarketLayoutRecord;
         cards: MarketOverviewCard[];
+        asOf: string;
       }>("/api/markets/overview", {
         action: isReset ? "reset" : "save",
         ids: cleanIds,
@@ -377,6 +378,7 @@ export default function MarketOverviewGrid({
       });
       setLayout(res.layout);
       setCards(res.cards);
+      setAsOfUTC(res.asOf);
       setLoadedForAuthenticated(authenticated);
       setDraftIds(res.layout.ids);
       setSaveBadge(isReset ? "Reset to defaults" : "Order saved");

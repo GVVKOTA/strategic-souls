@@ -62,7 +62,7 @@ export async function POST(request: Request): Promise<Response> {
     const layout = await saveUserMarketLayout(user.userId, expectedVersion, ids);
     const overview = await getMarketOverviewPayload(user.userId);
     return Response.json(
-      { ok: true, layout, cards: overview.cards },
+      { ok: true, layout, cards: overview.cards, asOf: overview.asOf },
       {
         headers: {
           "Cache-Control": "private, no-store",
