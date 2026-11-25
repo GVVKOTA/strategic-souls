@@ -204,6 +204,7 @@ export default function ResearchNetworkShell({
 
   const [posts, setPosts] = useState<PublishedSoulCard[]>([]);
   const [loadingFeed, setLoadingFeed] = useState(true);
+  const [feedError, setFeedError] = useState("");
   const [myProfile, setMyProfile] = useState<UserProfileSnapshot | null>(null);
   // Author-only Post Insights modal
   const [insightsPost, setInsightsPost] = useState<PublishedSoulCard | null>(null);
@@ -350,6 +351,7 @@ export default function ResearchNetworkShell({
     const controller = new AbortController();
     feedAbortRef.current = controller;
     const seq = ++feedSeqRef.current;
+    setFeedError("");
     setLoadingFeed(true);
     try {
       const qs = new URLSearchParams({
@@ -369,18 +371,13 @@ export default function ResearchNetworkShell({
       setPosts(res.posts ?? []);
     } catch (err) {
       if (controller.signal.aborted || seq !== feedSeqRef.current) return;
-      notify(
-        err instanceof Error
-          ? err.message
-          : "Could not load Souls.",
-        true,
-      );
+      setFeedError(err instanceof Error ? err.message : "Please try again.");
     } finally {
       if (!controller.signal.aborted && seq === feedSeqRef.current) {
         setLoadingFeed(false);
       }
     }
-  }, [modeFilter, tfFilter, sort, savedOnly, searchQuery, notify]);
+  }, [modeFilter, tfFilter, sort, savedOnly, searchQuery]);
 
   useEffect(() => {
     if (tab !== "web") return;
@@ -1150,6 +1147,14 @@ export default function ResearchNetworkShell({
             <div className="x55-feed-skeleton" aria-busy="true" aria-label="Loading Souls">
               <div className="x55-skel-card" />
               <div className="x55-skel-card" />
+            </div>
+          ) : feedError ? (
+            <div className="x1-callout x11-feed-error" role="alert">
+              <strong>Could not load the feed</strong>
+              <p>{feedError}</p>
+              <button type="button" className="x1-secondary" onClick={() => void loadWebFeed()}>
+                Retry feed
+              </button>
             </div>
           ) : posts.length === 0 ? (
             <Empty
