@@ -2,11 +2,33 @@ import { calendarPeriodKey } from "../../engines/chart-analytics";
 import { env } from "cloudflare:workers";
 import { database } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
-import type { Candle, Instrument, Interval, ProviderConfig, ProviderId, SharedHistoryGrant } from "./data-types";
+import type {
+  Candle,
+  Instrument,
+  Interval,
+  ProviderConfig,
+  ProviderId,
+  SharedErrorCode,
+  SharedHistoryGrant,
+  SharedRightsMode,
+} from "./data-types";
 import { recordProviderBackoff, reserveProviderCall } from "./provider-budget";
-import { indianDailyPrices, type IndianDailyPrice, providerCandles, providerIntradayCandles, ProviderFailure, requiresCreditWindow, rightsActive, secretFrom, verifiedCreditWindow } from "./providers";
+import {
+  indianDailyPrices,
+  type IndianDailyPrice,
+  providerCandles,
+  providerIntradayCandles,
+  ProviderFailure,
+  requiresCreditWindow,
+  rightsActive,
+  secretFrom,
+  verifiedCreditWindow,
+} from "./providers";
 import { getExchangeSessionWindowMinutes, getIstDateAndMinutes } from "./exchange-calendar";
 import { intradayBarCloseMs } from "./candle-sessions";
+import { OFFICIAL_FX_PAIRS } from "./market-data";
+import { niftyUniverse } from "./nifty-500";
+import { matchesScanMarketPreset, type ScanUniversePreset } from "../research/research";
 
 import { SHARED_HISTORY_LABEL } from "./data-types";
 export { SHARED_HISTORY_LABEL } from "./data-types";
@@ -17,35 +39,175 @@ const MAX_BARS = 3000;
 const MAX_BYTES = 800_000;
 export type NativeHistoryInterval = "1d" | "30m" | "1h";
 
-type Grant = ProviderConfig & { sharedHistory: SharedHistoryGrant };
+export type SharedGrant = ProviderConfig & { sharedHistory: SharedHistoryGrant };
 type Task = {
   provider: ProviderId; config_version: number; instrument_id: string;
   interval: NativeHistoryInterval; lease_token: string; failures: number;
 };
 type SnapshotRow = { bars: string; received_at: number; expires_at: number; first_event: string; last_event: string; bar_count: number };
 export type SharedHistory = {
-  config: Grant; instrument: Instrument; row: SnapshotRow; candles: Candle[]; prices?: IndianDailyPrice[];
+  config: SharedGrant; instrument: Instrument; row: SnapshotRow; candles: Candle[]; prices?: IndianDailyPrice[];
   interval: NativeHistoryInterval; state: "PUBLISHED_EOD" | "DELAYED" | "STALE";
+};
+export type SharedUniverseReadiness = {
+  membership: {
+    version: string;
+    effectiveDate: string;
+    validatedAt: string;
+    expectedCount: number;
+    distinctCount: number;
+    count: number;
+    rightsExpiresAt: string;
+  } | null;
+  status: "READY" | "WARMING" | "RATE_LIMITED" | "BLOCKED_BY_UNIVERSE" | "BLOCKED_BY_DATA_RIGHTS" | "EXPIRED";
+  reasonCode: SharedErrorCode | null;
+  reason: string;
+  rightsMode: SharedRightsMode;
+  warming: boolean;
+  sourceQuality: "PUBLISHED_EOD" | "STALE" | "UNAVAILABLE";
+  eligibleIntervals: Interval[];
+  latestEventDate: string | null;
+  lastRefreshAt: string | null;
+  nextRefreshAt: string | null;
+  pausedUntil: string | null;
+  lastError: string | null;
+  attribution: { label: string; url: string } | null;
+  coverage: {
+    expected: number;
+    mapped: number;
+    fetched: number;
+    ready: number;
+    stale: number;
+    unavailable: number;
+    pct: number;
+  };
+  providers: {
+    provider: ProviderId;
+    active: boolean;
+    secretConfigured: boolean;
+    rightsMode: SharedRightsMode;
+    expiresAt: string | null;
+    mappedCount: number;
+    readyCount: number;
+    staleCount: number;
+    pausedUntil: string | null;
+    lastError: string | null;
+  }[];
 };
 
 const runtime = () => env as unknown as Record<string, unknown>;
+export function isOwnerSubject(subject: string) {
+  const owner = runtime().X2_OWNER_SUBJECT;
+  return typeof owner === "string" && owner.length > 0 && owner === subject;
+}
+export async function canScanExchange(
+  interval: Interval,
+  instrumentIds?: readonly string[],
+  provider?: ProviderId,
+) {
+  const grants = await sharedHistoryGrants(Date.now(), "research");
+  return hasReadySharedHistory(
+    provider ? grants.filter((grant) => grant.provider === provider) : grants,
+    interval,
+    instrumentIds,
+  );
+}
+export async function scanScopeInstruments(preset: ScanUniversePreset, interval: Interval) {
+  if (preset === "ECB_DAILY") return OFFICIAL_FX_PAIRS.map(({ id }) => id).sort();
+  if (preset === "NIFTY_500") {
+    const active = await niftyUniverse().catch(() => null);
+    return active ? active.constituents.map(({ id }) => id) : [];
+  }
+  const now = Date.now();
+  const ids = (await sharedHistoryGrants(now, "research"))
+    .filter((grant) => grant.sharedHistory.intervals.includes(nativeInterval(interval)))
+    .flatMap((grant) => grant.instruments)
+    .filter((instrument) => activeContract(instrument, now) &&
+      matchesScanMarketPreset(preset, instrument.market, instrument.type, instrument.expiry))
+    .map(({ id }) => id);
+  return [...new Set(ids)].sort();
+}
+export async function hasLegacySharedCommercialConfig(now = Date.now()): Promise<boolean> {
+  try {
+    const rows = await database().prepare("SELECT payload FROM x2_providers ORDER BY provider").all<{ payload: string }>();
+    return rows.results
+      .map((r) => JSON.parse(r.payload) as ProviderConfig)
+      .some((c) => !c.sharedHistory && c.rights.redistribution && rightsActive(c, "analysis", now) && rightsActive(c, "storage", now));
+  } catch {
+    return false;
+  }
+}
 export const nativeInterval = (interval: Interval): NativeHistoryInterval =>
   interval === "30m" || interval === "1h" ? interval : "1d";
 
-export function hasSharedRights(config: ProviderConfig, now = Date.now()): config is Grant {
-  return !!config.sharedHistory && config.datasets.includes(config.provider === "INDIANAPI" ? "prices" : "candles") &&
+/**
+ * Derived-only shared rights permit server-side ingestion, caching, analysis, and returning
+ * derived PASS/FAIL/UNKNOWN outcomes without exposing raw exchange prices or OHLCV bars.
+ */
+export function hasSharedDerivedRights(config: ProviderConfig, now = Date.now()): config is SharedGrant {
+  return (
+    !!config.sharedHistory &&
+    config.datasets.includes(config.provider === "INDIANAPI" ? "prices" : "candles") &&
     (!requiresCreditWindow(config.provider) || !!verifiedCreditWindow(config.sharedHistory.creditWindow)) &&
-    rightsActive(config, "display", now) && rightsActive(config, "analysis", now) &&
-    rightsActive(config, "storage", now) && config.rights.derivedDisplay === true &&
-    config.rights.redistribution === true;
+    rightsActive(config, "analysis", now) &&
+    rightsActive(config, "storage", now) &&
+    config.rights.derivedDisplay === true
+  );
 }
 
-export async function sharedHistoryGrants(now = Date.now(), purpose: "research" | "dashboard" | "ingestion" = "research") {
-  const rows = await database().prepare("SELECT payload FROM x2_providers ORDER BY provider")
-    .all<{ payload: string }>();
-  return rows.results.map(({ payload }) => JSON.parse(payload) as ProviderConfig)
-    .filter((config): config is Grant => hasSharedRights(config, now) && !!secretFrom(config.provider, runtime()))
-    .filter(({ provider }) => purpose === "ingestion" || (provider === "BHARATSTOCK") === (purpose === "dashboard"))
+/**
+ * Full shared display rights additionally require explicit display and redistribution entitlements.
+ */
+export function hasSharedDisplayRights(config: ProviderConfig, now = Date.now()): config is SharedGrant {
+  return (
+    hasSharedDerivedRights(config, now) &&
+    rightsActive(config, "display", now) &&
+    config.rights.redistribution === true
+  );
+}
+
+export function hasSharedRights(
+  config: ProviderConfig,
+  now = Date.now(),
+  mode: "display" | "derived" = "display",
+): config is SharedGrant {
+  return mode === "derived" ? hasSharedDerivedRights(config, now) : hasSharedDisplayRights(config, now);
+}
+
+export function sharedRightsMode(config: ProviderConfig, now = Date.now()): SharedRightsMode {
+  if (hasSharedDisplayRights(config, now)) return "DISPLAY_AND_DERIVED";
+  if (hasSharedDerivedRights(config, now)) return "DERIVED_ONLY";
+  return "NONE";
+}
+
+export async function sharedHistoryGrants(
+  now = Date.now(),
+  purpose: "research" | "display" | "dashboard" | "ingestion" = "display",
+): Promise<SharedGrant[]> {
+  let rows: { results: { payload: string }[] };
+  try {
+    rows = await database().prepare("SELECT payload FROM x2_providers ORDER BY provider")
+      .all<{ payload: string }>();
+  } catch {
+    return [];
+  }
+  const mode = purpose === "research" || purpose === "ingestion" ? "derived" : "display";
+  return rows.results
+    .map(({ payload }) => JSON.parse(payload) as ProviderConfig)
+    .filter((config): config is SharedGrant =>
+      hasSharedRights(config, now, mode) && !!secretFrom(config.provider, runtime()),
+    )
+    .filter((config) => {
+      if (purpose === "ingestion") return true;
+      if (purpose === "dashboard") {
+        return config.provider === "BHARATSTOCK" && config.instruments.some((inst) => inst.type === "INDEX");
+      }
+      // Research and equity display exclude index-only BharatStock dashboard configs.
+      if (config.provider === "BHARATSTOCK") {
+        return config.instruments.some((inst) => inst.type === "EQUITY");
+      }
+      return true;
+    })
     .sort((a, b) => a.priority - b.priority);
 }
 
@@ -112,7 +274,7 @@ export function normalizedSharedBars(
   return [...unique.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-MAX_BARS);
 }
 
-export function eligibleSharedPeriods<T extends {date: string}>(
+export function eligibleSharedPeriods<T extends { date: string }>(
   bars: T[], instrument: Instrument, interval: Interval, at: number,
 ): T[] {
   if (interval !== "1wk" && interval !== "1mo") return bars;
@@ -175,53 +337,78 @@ function dataState(
   return previous && eventDate >= previous ? "DELAYED" : "STALE";
 }
 
-type HistoryReadOptions = { cutoff?: number; provider?: ProviderId; now?: number };
+type HistoryReadOptions = {
+  cutoff?: number;
+  provider?: ProviderId;
+  now?: number;
+  requireDisplay?: boolean;
+};
 
 export async function readSharedHistoryBatch(
-  ids: readonly string[], interval: Interval, grants: readonly Grant[],
+  ids: readonly string[], interval: Interval, grants: readonly SharedGrant[],
   options: HistoryReadOptions = {},
 ): Promise<Map<string, SharedHistory>> {
   const resolution = nativeInterval(interval);
   const now = options.now ?? Date.now();
   const cutoff = Math.min(options.cutoff ?? now, now);
+  const mode = options.requireDisplay ? "display" : "derived";
   const result = new Map<string, SharedHistory>();
   for (const config of grants) {
-    if (!hasSharedRights(config, now) || (options.provider && config.provider !== options.provider) ||
+    if (!hasSharedRights(config, now, mode) || (options.provider && config.provider !== options.provider) ||
         !config.sharedHistory.intervals.includes(resolution)) continue;
     const mappings = new Map(ids.flatMap((id) => {
       const instrument = resolveSharedInstrument(config, id, cutoff);
       return instrument && !result.has(id) ? [[id, instrument] as const] : [];
     }));
     if (!mappings.size) continue;
-    const rows = await database().prepare(
-      `WITH wanted(id) AS (SELECT value FROM json_each(?))
-       SELECT s.instrument_id,s.bars,s.received_at,s.expires_at,s.first_event,s.last_event,s.bar_count
-       FROM wanted w JOIN x8_shared_history_snapshot s ON s.rowid=(
-         SELECT t.rowid FROM x8_shared_history_snapshot t
-         WHERE t.provider=? AND t.config_version=? AND t.instrument_id=w.id AND t.interval=?
-           AND t.received_at<=? AND t.expires_at>? ORDER BY t.received_at DESC LIMIT 1
-       ) WHERE EXISTS(SELECT 1 FROM x2_providers p WHERE p.provider=s.provider AND p.version=s.config_version)`,
-    ).bind(JSON.stringify([...new Set([...mappings.values()].map(({ id }) => id))]),
-      config.provider, config.version, resolution, cutoff, now).all<SnapshotRow & { instrument_id: string }>();
+    let rows: { results: (SnapshotRow & { instrument_id: string })[] };
+    try {
+      rows = await database().prepare(
+        `WITH wanted(id) AS (SELECT value FROM json_each(?))
+         SELECT s.instrument_id,s.bars,s.received_at,s.expires_at,s.first_event,s.last_event,s.bar_count
+         FROM wanted w JOIN x8_shared_history_snapshot s ON s.rowid=(
+           SELECT t.rowid FROM x8_shared_history_snapshot t
+           WHERE t.provider=? AND t.config_version=? AND t.instrument_id=w.id AND t.interval=?
+             AND t.received_at<=? AND t.expires_at>? ORDER BY t.received_at DESC LIMIT 1
+         ) WHERE EXISTS(SELECT 1 FROM x2_providers p WHERE p.provider=s.provider AND p.version=s.config_version)`,
+      ).bind(JSON.stringify([...new Set([...mappings.values()].map(({ id }) => id))]),
+        config.provider, config.version, resolution, cutoff, now).all<SnapshotRow & { instrument_id: string }>();
+    } catch {
+      continue;
+    }
     const byId = new Map(rows.results.map((row) => [row.instrument_id, row]));
     for (const [id, instrument] of mappings) {
       const row = byId.get(instrument.id);
       if (!row) continue;
       const state = dataState(instrument, resolution, row.last_event, cutoff, config.sharedHistory.lagMinutes);
-      result.set(id, { config, instrument, row, interval: resolution, ...(config.provider === "INDIANAPI" ? { prices: JSON.parse(row.bars) as IndianDailyPrice[], candles: [] } : { candles: JSON.parse(row.bars) as Candle[] }), state });
+      result.set(id, {
+        config,
+        instrument,
+        row,
+        interval: resolution,
+        ...(config.provider === "INDIANAPI"
+          ? { prices: JSON.parse(row.bars) as IndianDailyPrice[], candles: [] }
+          : { candles: JSON.parse(row.bars) as Candle[] }),
+        state,
+      });
     }
   }
   return result;
 }
 
-export async function readSharedHistory(id: string, interval: Interval, grants: readonly Grant[], options: HistoryReadOptions = {}) {
+export async function readSharedHistory(
+  id: string,
+  interval: Interval,
+  grants: readonly SharedGrant[],
+  options: HistoryReadOptions = {},
+) {
   return (await readSharedHistoryBatch([id], interval, grants, options)).get(id) ?? null;
 }
 
 export const activeContract = (instrument: Instrument, at: number) =>
   instrument.type !== "FUTURE" || (!!instrument.expiry && instrument.expiry >= dateAt(instrument, at));
 
-function resolveSharedInstrument(config: Grant, id: string, now: number) {
+function resolveSharedInstrument(config: SharedGrant, id: string, now: number) {
   const direct = config.instruments.find((row) => row.id === id && activeContract(row, now));
   if (direct) return direct;
   if (!["MCX:GOLD", "MCX:SILVER", "GLOBAL:CL"].includes(id)) return undefined;
@@ -236,7 +423,7 @@ type DailySummary = {
   prior_close: number | null; prior_event: string | null; last_volume: number | null;
   period_day?: string | null; period_close?: number | null; period_anchor?: string;
 };
-export async function readSharedDailyQuotes(ids: readonly string[], grants: readonly Grant[], now = Date.now(),
+export async function readSharedDailyQuotes(ids: readonly string[], grants: readonly SharedGrant[], now = Date.now(),
   period: "1D" | "1W" | "1M" | "YTD" = "1D") {
   const result = new Map<string, {
     id: string; value: number; priorClose: number | null; pctChange: number | null; change: number | null;
@@ -245,7 +432,8 @@ export async function readSharedDailyQuotes(ids: readonly string[], grants: read
     attribution: { label: string; url: string }; instrument: Instrument;
   }>();
   for (const config of grants) {
-    if (!hasSharedRights(config, now) || !config.sharedHistory.intervals.includes("1d")) continue;
+    // Raw price quotes strictly require full display + redistribution rights.
+    if (!hasSharedDisplayRights(config, now) || !config.sharedHistory.intervals.includes("1d")) continue;
     const mappings = new Map(ids.flatMap((id) => {
       const instrument = resolveSharedInstrument(config, id, now);
       return instrument && !result.has(id) ? [[id, instrument] as const] : [];
@@ -262,16 +450,21 @@ export async function readSharedDailyQuotes(ids: readonly string[], grants: read
         ) WHERE EXISTS(SELECT 1 FROM x2_providers p WHERE p.provider=s.provider AND p.version=s.config_version)
       )`;
     const params = [JSON.stringify([...new Set([...mappings.values()].map(({ id }) => id))]), config.provider, config.version, now, now];
-    const rows = await (history ? database().prepare(snapshots + `, anchored AS (
-        SELECT latest.*, date(last_event,?,?) period_anchor FROM latest
-      ), bases AS (
-        SELECT anchored.*, (SELECT value FROM json_each(anchored.bars) j
-          WHERE json_extract(value,'$.date')<=period_anchor AND json_extract(value,'$.date')>=date(period_anchor,'-10 days')
-          ORDER BY CAST(j.key AS INTEGER) DESC LIMIT 1) base FROM anchored
-      ) SELECT instrument_id,received_at,expires_at,last_event,last_close,prior_close,prior_event,last_volume,period_anchor,
-        json_extract(base,'$.date') period_day,json_extract(base,'$.close') period_close FROM bases`)
-        .bind(...params, history, period === "YTD" ? "-1 day" : "+0 days")
-      : database().prepare(snapshots + " SELECT * FROM latest").bind(...params)).all<DailySummary>();
+    let rows: { results: DailySummary[] };
+    try {
+      rows = await (history ? database().prepare(snapshots + `, anchored AS (
+          SELECT latest.*, date(last_event,?,?) period_anchor FROM latest
+        ), bases AS (
+          SELECT anchored.*, (SELECT value FROM json_each(anchored.bars) j
+            WHERE json_extract(value,'$.date')<=period_anchor AND json_extract(value,'$.date')>=date(period_anchor,'-10 days')
+            ORDER BY CAST(j.key AS INTEGER) DESC LIMIT 1) base FROM anchored
+        ) SELECT instrument_id,received_at,expires_at,last_event,last_close,prior_close,prior_event,last_volume,period_anchor,
+          json_extract(base,'$.date') period_day,json_extract(base,'$.close') period_close FROM bases`)
+          .bind(...params, history, period === "YTD" ? "-1 day" : "+0 days")
+        : database().prepare(snapshots + " SELECT * FROM latest").bind(...params)).all<DailySummary>();
+    } catch {
+      continue;
+    }
     const byId = new Map(rows.results.map((row) => [row.instrument_id, row]));
     for (const [id, instrument] of mappings) {
       const row = byId.get(instrument.id);
@@ -301,7 +494,7 @@ export async function readSharedDailyQuotes(ids: readonly string[], grants: read
   return result;
 }
 
-async function configurePlan(config: Grant, now: number) {
+async function configurePlan(config: SharedGrant, now: number) {
   const db = database();
   const previous = await db.prepare("SELECT config_version FROM x8_shared_history_plan WHERE provider=?")
     .bind(config.provider).first<number>("config_version");
@@ -325,7 +518,7 @@ async function configurePlan(config: Grant, now: number) {
   ]);
 }
 
-async function acquire(config: Grant, now: number) {
+async function acquire(config: SharedGrant, now: number) {
   const token = crypto.randomUUID();
   return database().prepare(
     `UPDATE x8_shared_history_task SET lease_token=?,lease_until=?
@@ -339,12 +532,12 @@ async function acquire(config: Grant, now: number) {
   ).bind(token, now + LEASE_MS, config.provider, config.version, now, now, now, config.provider, now).first<Task>();
 }
 
-const providerHistory = (config: Grant, instrument: Instrument, secret: string, interval: NativeHistoryInterval, now: number) =>
+const providerHistory = (config: SharedGrant, instrument: Instrument, secret: string, interval: NativeHistoryInterval, now: number) =>
   interval === "1d"
     ? providerCandles(config, instrument, secret, fetch, now, config.sharedHistory.dailyLookbackDays)
     : providerIntradayCandles(config, instrument, secret, interval, 45, fetch, now);
 
-async function refresh(task: Task, config: Grant, fetchHistory: typeof providerHistory) {
+async function refresh(task: Task, config: SharedGrant, fetchHistory: typeof providerHistory) {
   const db = database();
   const instrument = config.instruments.find((row) => row.id === task.instrument_id);
   const started = Date.now();
@@ -352,7 +545,7 @@ async function refresh(task: Task, config: Grant, fetchHistory: typeof providerH
   const keys = [task.provider, task.config_version, task.instrument_id, task.interval, task.lease_token] as const;
   const condition = "provider=? AND config_version=? AND instrument_id=? AND interval=? AND lease_token=?";
   try {
-    if (!instrument || !activeContract(instrument, started) || !secret || !hasSharedRights(config, started)) {
+    if (!instrument || !activeContract(instrument, started) || !secret || !hasSharedDerivedRights(config, started)) {
       await db.prepare("DELETE FROM x8_shared_history_task WHERE " + condition).bind(...keys).run();
       return;
     }
@@ -415,7 +608,7 @@ async function refresh(task: Task, config: Grant, fetchHistory: typeof providerH
 }
 
 export async function hasReadySharedHistory(
-  grants: readonly Grant[], interval: Interval, instrumentIds?: readonly string[],
+  grants: readonly SharedGrant[], interval: Interval, instrumentIds?: readonly string[],
   mode: "some" | "all" = "some",
 ) {
   const resolution = nativeInterval(interval);
@@ -427,18 +620,23 @@ export async function hasReadySharedHistory(
     const earliest = needsCompletedSession
       ? expectedDailyDate(grant.instruments[0], now, grant.sharedHistory.lagMinutes) : null;
     if (needsCompletedSession && (!earliest || interval === "1h" || interval === "30m")) continue;
-    const ready = await database().prepare(
-      `SELECT ${mode === "all" ? "count(DISTINCT instrument_id)" : "1"} AS ready
-        FROM x8_shared_history_snapshot WHERE provider=? AND config_version=? AND interval=?
-        AND expires_at>? AND received_at<=?
-        AND (? IS NULL OR last_event >= ?)
-        AND (?=0 OR julianday(last_event)-julianday(first_event)>=?)
-        AND EXISTS(SELECT 1 FROM x2_providers p WHERE p.provider=? AND p.version=?)
-        AND (? IS NULL OR instrument_id IN (SELECT value FROM json_each(?))) LIMIT 1`,
-    ).bind(grant.provider, grant.version, resolution, now, now, earliest, earliest,
-      interval === "1wk" || interval === "1mo" ? 1 : 0, interval === "1mo" ? 62 : 14, grant.provider, grant.version,
-      instrumentIds ? "filtered" : null,
-      JSON.stringify(instrumentIds ?? [])).first<number>("ready");
+    let ready: number | null = null;
+    try {
+      ready = await database().prepare(
+        `SELECT ${mode === "all" ? "count(DISTINCT instrument_id)" : "1"} AS ready
+          FROM x8_shared_history_snapshot WHERE provider=? AND config_version=? AND interval=?
+          AND expires_at>? AND received_at<=?
+          AND (? IS NULL OR last_event >= ?)
+          AND (?=0 OR julianday(last_event)-julianday(first_event)>=?)
+          AND EXISTS(SELECT 1 FROM x2_providers p WHERE p.provider=? AND p.version=?)
+          AND (? IS NULL OR instrument_id IN (SELECT value FROM json_each(?))) LIMIT 1`,
+      ).bind(grant.provider, grant.version, resolution, now, now, earliest, earliest,
+        interval === "1wk" || interval === "1mo" ? 1 : 0, interval === "1mo" ? 62 : 14, grant.provider, grant.version,
+        instrumentIds ? "filtered" : null,
+        JSON.stringify(instrumentIds ?? [])).first<number>("ready");
+    } catch {
+      continue;
+    }
     if (mode === "all" ? !!instrumentIds?.length && ready === new Set(instrumentIds).size : !!ready) return true;
   }
   return false;
@@ -446,28 +644,245 @@ export async function hasReadySharedHistory(
 
 export async function sharedIngestionHealth() {
   const now = Date.now();
-  return (await database().prepare(
-    `SELECT t.provider,p.config_version,p.last_error,p.paused_until,count(*) AS mapped_intervals,
-        sum(t.latest_event IS NOT NULL) AS fetched_intervals,
-        sum(t.next_attempt<=?) AS due_intervals,
-        min(t.last_checked) AS oldest_checked,max(t.last_checked) AS newest_checked
-      FROM x8_shared_history_task t JOIN x8_shared_history_plan p USING(provider,config_version)
-      GROUP BY t.provider,p.config_version,p.last_error,p.paused_until`,
-  ).bind(now).all()).results;
+  try {
+    return (await database().prepare(
+      `SELECT t.provider,p.config_version,p.last_error,p.paused_until,count(*) AS mapped_intervals,
+          sum(t.latest_event IS NOT NULL) AS fetched_intervals,
+          sum(t.next_attempt<=?) AS due_intervals,
+          min(t.last_checked) AS oldest_checked,max(t.last_checked) AS newest_checked
+        FROM x8_shared_history_task t JOIN x8_shared_history_plan p USING(provider,config_version)
+        GROUP BY t.provider,p.config_version,p.last_error,p.paused_until`,
+    ).bind(now).all()).results;
+  } catch {
+    return [];
+  }
+}
+
+export async function sharedUniverseReadiness(now = Date.now()): Promise<SharedUniverseReadiness> {
+  const db = database();
+  const [membership, rawProviderRows] = await Promise.all([
+    niftyUniverse().catch(() => null),
+    db.prepare("SELECT payload FROM x2_providers ORDER BY provider")
+      .all<{ payload: string }>()
+      .then((res) => res.results.map((r) => JSON.parse(r.payload) as ProviderConfig))
+      .catch(() => [] as ProviderConfig[]),
+  ]);
+  const sharedConfigs = rawProviderRows
+    .filter((c) => !!c.sharedHistory && (c.provider !== "BHARATSTOCK" || c.instruments.some((i) => i.type === "EQUITY")))
+    .sort((a, b) => a.priority - b.priority);
+  const activeGrants = sharedConfigs.filter(
+    (c): c is SharedGrant => hasSharedDerivedRights(c, now) && !!secretFrom(c.provider, runtime()),
+  );
+  const expiredShared = sharedConfigs.some(
+    (c) => c.enabled && c.rights.verified && Date.parse(c.rights.expiresAt) <= now,
+  );
+  const membershipIds = membership ? new Set(membership.constituents.map((c) => c.id)) : null;
+
+  const providerSummaries: SharedUniverseReadiness["providers"] = [];
+  let totalMapped = 0;
+  let totalFetched = 0;
+  let totalReady = 0;
+  let totalStale = 0;
+  let latestEventDate: string | null = null;
+  let lastRefreshMs: number | null = null;
+  let nextRefreshMs: number | null = null;
+  let pausedUntilMs: number | null = null;
+  let lastError: string | null = null;
+  const intervalSet = new Set<Interval>();
+
+  for (const config of sharedConfigs) {
+    const mode = sharedRightsMode(config, now);
+    const secretConfigured = !!secretFrom(config.provider, runtime());
+    const active = mode !== "NONE" && secretConfigured;
+    const equityInstruments = config.instruments.filter((i) => i.type === "EQUITY" && (!membershipIds || membershipIds.has(i.id)));
+    const mappedCount = equityInstruments.length;
+    let readyCount = 0;
+    let staleCount = 0;
+    let pPaused: number | null = null;
+    let pError: string | null = null;
+
+    if (active && config.sharedHistory) {
+      if (config.sharedHistory.intervals.includes("1d")) {
+        intervalSet.add("1d");
+        intervalSet.add("1wk");
+        intervalSet.add("1mo");
+      }
+      if (config.sharedHistory.intervals.includes("30m")) intervalSet.add("30m");
+      if (config.sharedHistory.intervals.includes("1h")) intervalSet.add("1h");
+
+      const sampleInst = equityInstruments[0] ?? config.instruments[0];
+      const expectedDay = sampleInst ? expectedDailyDate(sampleInst, now, config.sharedHistory.lagMinutes) : null;
+      try {
+        const [snapStats, planRow, taskRow] = await Promise.all([
+          db.prepare(
+            `WITH latest AS (
+               SELECT s.instrument_id, s.last_event, s.received_at
+               FROM x8_shared_history_snapshot s
+               WHERE s.provider=? AND s.config_version=? AND s.interval='1d'
+                 AND s.expires_at>? AND s.received_at<=?
+                 AND s.rowid = (
+                   SELECT t.rowid FROM x8_shared_history_snapshot t
+                   WHERE t.provider=s.provider AND t.config_version=s.config_version
+                     AND t.instrument_id=s.instrument_id AND t.interval='1d'
+                     AND t.expires_at>? AND t.received_at<=?
+                   ORDER BY t.received_at DESC LIMIT 1
+                 )
+             )
+             SELECT count(*) AS fetched,
+               sum(CASE WHEN ? IS NULL OR last_event >= ? THEN 1 ELSE 0 END) AS fresh,
+               max(last_event) AS max_event,
+               max(received_at) AS max_received
+             FROM latest`,
+          ).bind(config.provider, config.version, now, now, now, now, expectedDay, expectedDay)
+            .first<{ fetched: number; fresh: number | null; max_event: string | null; max_received: number | null }>(),
+          db.prepare("SELECT paused_until, last_error FROM x8_shared_history_plan WHERE provider=? AND config_version=?")
+            .bind(config.provider, config.version)
+            .first<{ paused_until: number; last_error: string | null }>(),
+          db.prepare("SELECT min(next_attempt) AS next_at, max(last_checked) AS last_chk FROM x8_shared_history_task WHERE provider=? AND config_version=? AND interval='1d'")
+            .bind(config.provider, config.version)
+            .first<{ next_at: number | null; last_chk: number | null }>(),
+        ]);
+        const fetched = Number(snapStats?.fetched ?? 0);
+        readyCount = Number(snapStats?.fresh ?? 0);
+        staleCount = Math.max(0, fetched - readyCount);
+        totalMapped = Math.max(totalMapped, mappedCount);
+        totalFetched = Math.max(totalFetched, fetched);
+        totalReady = Math.max(totalReady, readyCount);
+        totalStale = Math.max(totalStale, staleCount);
+        if (snapStats?.max_event && (!latestEventDate || snapStats.max_event > latestEventDate)) {
+          latestEventDate = snapStats.max_event;
+        }
+        const checked = Math.max(Number(snapStats?.max_received ?? 0), Number(taskRow?.last_chk ?? 0));
+        if (checked > 0 && (!lastRefreshMs || checked > lastRefreshMs)) lastRefreshMs = checked;
+        if (taskRow?.next_at && (!nextRefreshMs || taskRow.next_at < nextRefreshMs)) nextRefreshMs = taskRow.next_at;
+        if (planRow && planRow.paused_until > now) {
+          pPaused = planRow.paused_until;
+          pError = planRow.last_error;
+          if (!pausedUntilMs || pPaused > pausedUntilMs) pausedUntilMs = pPaused;
+          if (pError) lastError = pError;
+        } else if (planRow?.last_error) {
+          pError = planRow.last_error;
+          lastError ??= pError;
+        }
+      } catch {
+        /* Fail closed with zero ready count if shared tables are unavailable */
+      }
+    }
+
+    providerSummaries.push({
+      provider: config.provider,
+      active,
+      secretConfigured,
+      rightsMode: mode,
+      expiresAt: config.rights.expiresAt ?? null,
+      mappedCount,
+      readyCount,
+      staleCount,
+      pausedUntil: pPaused ? new Date(pPaused).toISOString() : null,
+      lastError: pError,
+    });
+  }
+
+  const primaryGrant = activeGrants[0] ?? null;
+  const rightsMode: SharedRightsMode = primaryGrant ? sharedRightsMode(primaryGrant, now) : "NONE";
+  const expected = membership?.distinctCount ?? 500;
+  const unavailable = Math.max(0, (totalMapped || expected) - totalReady - totalStale);
+  const pct = expected > 0 ? Math.round((totalReady / expected) * 1000) / 10 : 0;
+
+  let status: SharedUniverseReadiness["status"];
+  let reasonCode: SharedErrorCode | null;
+  let reason: string;
+  if (!membership) {
+    status = "BLOCKED_BY_UNIVERSE";
+    reasonCode = "NIFTY_UNIVERSE_UNAVAILABLE";
+    reason = "An authorized, unexpired Nifty 500 constituent snapshot has not been imported yet.";
+  } else if (!primaryGrant) {
+    if (expiredShared) {
+      status = "EXPIRED";
+      reasonCode = "DATA_EXPIRED";
+      reason = "The configured shared market-data entitlement has expired. Renew rights before scanning.";
+    } else {
+      status = "BLOCKED_BY_DATA_RIGHTS";
+      reasonCode = "MISSING_PERMISSION";
+      reason = "No active shared NSE market-data provider grant is configured for standard accounts.";
+    }
+  } else if (totalReady === 0) {
+    if (pausedUntilMs && pausedUntilMs > now && (lastError === "RATE_LIMITED" || lastError === "LOCAL_RATE_BUDGET")) {
+      status = "RATE_LIMITED";
+      reasonCode = "PROVIDER_RATE_LIMITED";
+      reason = "Shared market-data ingestion is paused due to provider request limits and will resume automatically.";
+    } else {
+      status = "WARMING";
+      reasonCode = "PENDING_INITIAL_INGEST";
+      reason = `Preparing Nifty 500 daily data — ${totalFetched} of ${totalMapped || expected} instruments cached; scans will unlock once completed history is indexed.`;
+    }
+  } else {
+    status = "READY";
+    reasonCode = null;
+    reason = totalReady < (totalMapped || expected)
+      ? `Nifty 500 daily data is warming (${totalReady} of ${totalMapped || expected} instruments ready).`
+      : `Nifty 500 daily data ready (${totalReady} of ${expected} instruments).`;
+  }
+
+  return {
+    membership: membership
+      ? {
+          version: membership.version,
+          effectiveDate: membership.effectiveDate,
+          validatedAt: membership.validatedAt,
+          expectedCount: membership.expectedCount,
+          distinctCount: membership.distinctCount,
+          count: membership.constituents.length,
+          rightsExpiresAt: membership.rightsExpiresAt,
+        }
+      : null,
+    status,
+    reasonCode,
+    reason,
+    rightsMode,
+    warming: status === "WARMING" || (status === "READY" && totalReady < (totalMapped || expected)),
+    sourceQuality: totalReady > 0 ? "PUBLISHED_EOD" : totalStale > 0 ? "STALE" : "UNAVAILABLE",
+    eligibleIntervals: [...intervalSet],
+    latestEventDate,
+    lastRefreshAt: lastRefreshMs ? new Date(lastRefreshMs).toISOString() : null,
+    nextRefreshAt: nextRefreshMs ? new Date(nextRefreshMs).toISOString() : null,
+    pausedUntil: pausedUntilMs ? new Date(pausedUntilMs).toISOString() : null,
+    lastError,
+    attribution: primaryGrant
+      ? { label: primaryGrant.sharedHistory.attribution, url: primaryGrant.sharedHistory.attributionUrl }
+      : null,
+    coverage: {
+      expected,
+      mapped: totalMapped,
+      fetched: totalFetched,
+      ready: totalReady,
+      stale: totalStale,
+      unavailable,
+      pct,
+    },
+    providers: providerSummaries,
+  };
+}
+
+export async function purgeExpiredSharedHistory(now = Date.now()) {
+  try {
+    await database().prepare(
+      "DELETE FROM x8_shared_history_snapshot WHERE rowid IN (SELECT rowid FROM x8_shared_history_snapshot WHERE expires_at<=? LIMIT 1200)",
+    ).bind(now).run();
+  } catch {
+    /* Table unavailable in legacy test harness */
+  }
 }
 
 export async function refreshSharedHistory(fetchHistory = providerHistory) {
   const now = Date.now();
-  const db = database();
-  await db.prepare(
-    "DELETE FROM x8_shared_history_snapshot WHERE rowid IN (SELECT rowid FROM x8_shared_history_snapshot WHERE expires_at<=? LIMIT 1200)",
-  ).bind(now).run();
+  await purgeExpiredSharedHistory(now);
   const grants = await sharedHistoryGrants(now, "ingestion");
   for (const config of grants) await configurePlan(config, now);
   if (!grants.length) return;
   const first = Math.trunc(now / (2 * MINUTE)) % grants.length;
   const stopAt = now + 25_000;
-  for (let count = 0; count < 4 && Date.now() < stopAt; count++) {
+  for (let count = 0; count < 6 && Date.now() < stopAt; count++) {
     let task: Task | null = null;
     for (let offset = 0; offset < grants.length; offset++) {
       const config = grants[(first + count + offset) % grants.length];

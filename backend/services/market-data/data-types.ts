@@ -96,6 +96,18 @@ export type SharedHistoryGrant = {
   attribution: string;
   attributionUrl: string;
 };
+export type SharedRightsMode = "DISPLAY_AND_DERIVED" | "DERIVED_ONLY" | "NONE";
+export type SharedErrorCode =
+  | "NIFTY_UNIVERSE_UNAVAILABLE"
+  | "MISSING_PERMISSION"
+  | "PENDING_INITIAL_INGEST"
+  | "PROVIDER_RATE_LIMITED"
+  | "INTRADAY_NOT_SUPPORTED"
+  | "SOURCE_DELAYED"
+  | "INSUFFICIENT_HISTORY"
+  | "DATA_EXPIRED"
+  | "MARKET_CLOSED_LAST_EOD"
+  | "TRANSIENT_FAILURE";
 export type ProviderConfig = {
   provider: ProviderId;
   constituentGrant?: { version: string; expiresAt: string };

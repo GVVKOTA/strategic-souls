@@ -62,7 +62,7 @@ export function api<T = Record<string, unknown>>(
         signal: controller.signal,
         cache: "no-store",
       });
-      let data: T & { error?: string };
+      let data: T & { error?: string; errorCode?: string; retryable?: boolean; traceId?: string };
       try {
         data = await res.json();
       } catch {
@@ -72,7 +72,19 @@ export function api<T = Record<string, unknown>>(
             : "The service returned an unreadable response. Your input is preserved; retry safely.",
         );
       }
-      if (!res.ok) throw new Error(data.error || "The service is unavailable.");
+      if (!res.ok) {
+        const err = new Error(data.error || "The service is unavailable.") as Error & {
+          status?: number;
+          errorCode?: string;
+          retryable?: boolean;
+          traceId?: string;
+        };
+        err.status = res.status;
+        if (typeof data.errorCode === "string") err.errorCode = data.errorCode;
+        if (typeof data.retryable === "boolean") err.retryable = data.retryable;
+        if (typeof data.traceId === "string") err.traceId = data.traceId;
+        throw err;
+      }
       return data as T;
     } catch (error) {
       if (controller.signal.aborted)
@@ -366,6 +378,13 @@ export type ScanRun = {
   mode: string;
   digest: string;
   created_at: string;
+  redaction?: {
+    applied: boolean;
+    mode?: "NONE" | "DERIVED_ONLY" | "WITHHELD";
+    rawInstrumentIds?: string[];
+    derivedInstrumentIds?: string[];
+    reason?: string | null;
+  };
   payload: {
     rule: { formula: string; presetId?: string | null };
     research?: import("../../../backend/services/research/research").ResearchDefinition;

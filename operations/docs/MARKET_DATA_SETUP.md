@@ -152,3 +152,20 @@ Broker scans exclude developing daily bars and the current calendar week or mont
 Guests and standard accounts can open dated ECB and US Treasury references from Global. Standard accounts start Soul Scan on ECB FX when their workspace has no configured exchange history. Choosing Indian markets preserves that scope. If it is unavailable, the user can explicitly switch to ECB FX or use their own permitted daily CSV.
 
 Apply `drizzle/0020_official_reference_cache.sql` before promoting this feature. The shared D1 cache stores up to two validated official source documents and reuses them for 15 minutes across Worker instances. It retains original retrieval timestamps and labels stale display data. Soul Scan excludes stale history. Existing private quotes, account records, requests and provider credentials stay outside this cache.
+
+## 9. Shared Public Market Data & Nifty 500 Activation (Owner-Only Setup)
+
+Ordinary signed-in members never supply API keys and never touch the owner's private Angel One SmartAPI adapter. Shared NSE daily scanning for ordinary accounts requires **two** independently verified owner steps inside **Data Connections**:
+
+1. **Authorized Nifty 500 Constituent Snapshot (`PUT /api/strategy/universe`):**
+   - Obtain a licensed constituent list from NSE Indices Ltd. (`indices@nseids.co.in` / `https://www.niftyindices.com/offerings/data-subscription`) or an authorized redistribution vendor. Do **not** scrape `ind_nifty500list.csv` without prior written permission.
+   - Upload the validated JSON snapshot (including `effectiveDate`, exact `expectedCount` in `[450, 550]` — e.g. `501` if official list includes `EQ`/`BE`/`RR` lines, `provenance`, `rightsExpiresAt`, and `constituents` array) in **Data Connections -> Nifty 500 constituent snapshot**.
+2. **Verified Shared Provider Grant (`POST /api/x2/providers`):**
+   - Install the paid server-only key via Cloudflare Worker encrypted secrets (`BHARATSTOCK_API_KEY` or `INDIA_API_KEY` + plan-matching `INDIA_API_HOST`). Never paste keys into code, chat, or D1.
+   - **Recommended lawful path (Derived-Only Full OHLCV):** Upgrade BharatStock to a Paid tier (Starter `1,000 req/day` or Growth `5,000 req/day`), enable `Map the current licensed Nifty 500 snapshot as NSE equities`, set `sharedHistory` (`intervals: ["1d"]`, verified `creditWindow`, `retentionHours <= 48`, `attribution`), and configure **Derived-Only** rights: `verified: true`, `analysis: true`, `storage: true`, `derivedDisplay: true`, **`display: false`**, **`redistribution: false`**.
+   - In `DERIVED_ONLY` mode, ordinary accounts run full Nifty 500 Classic and Advanced Daily/Weekly/Monthly scans using real OHLCV history and persist private derived `PASS`/`FAIL`/`UNKNOWN` outcomes to GRAVEYARD, while raw exchange prices, charts, raw metrics, and raw CSV price exports remain strictly withheld until a direct NSE display/redistribution license is recorded.
+3. **Cloudflare Cron Triggers:**
+   - `*/2 * * * *` runs `refreshSharedHistory()` (bounded incremental D1 ingestion respecting `creditWindow`, `dailyCallLimit`, and `Retry-After` backoff, plus expired snapshot/report purging).
+   - `* * * * *` runs `processMarketScanBatch()` to advance durable multi-batch Nifty 500 jobs (`x78_market_scan_jobs`) even if users close their browser tab.
+   - Monitor readiness at `GET /api/strategy/universe` and `GET /api/market/health`.
+

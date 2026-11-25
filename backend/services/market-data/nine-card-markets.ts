@@ -10,6 +10,7 @@ import { registryInstrument } from "./instrument-registry";
 import type { MarketSnapshot } from "./market-data";
 import { loadOfficialReferences } from "./official-references";
 import { isDataOwner } from "./data-service";
+import { readSharedDailyQuotes, sharedHistoryGrants } from "./shared-history";
 import {
   getIndianExchangeSession,
   getNymexGlobexSession,
@@ -312,12 +313,26 @@ export async function saveUserMarketLayout(
   };
 }
 
+type SharedDashboardQuote = {
+  id: string;
+  value: number;
+  priorClose: number | null;
+  pctChange: number | null;
+  change: number | null;
+  latestDate: string;
+  receivedAt: string;
+  quality: "PUBLISHED_EOD" | "STALE";
+  unit: string;
+  attribution: { label: string; url: string };
+};
+
 export function buildMarketOverviewCards(
   ids: readonly string[],
   snapshot: MarketSnapshot,
   privateQuotes: readonly NormalizedMarketQuote[] = [],
   mcxAliasMap: ReadonlyMap<string, string> = new Map(),
   privateSparklines: ReadonlyMap<string, number[]> = new Map(),
+  sharedQuotes: ReadonlyMap<string, SharedDashboardQuote> = new Map(),
 ): MarketOverviewCard[] {
   const reconciled = reconcileGlobalMarketIds(ids);
   const allPoints = [...snapshot.quotes, ...snapshot.yields];
@@ -434,6 +449,42 @@ export function buildMarketOverviewCards(
         marketSession: session.state,
         sessionLabel: session.label,
         reasonCode: point.reason,
+        redistributable: true,
+      };
+    }
+
+    const sharedQuote = sharedQuotes.get(canonicalId);
+    if (sharedQuote && Number.isFinite(sharedQuote.value) && sharedQuote.value > 0) {
+      return {
+        canonicalId: entry?.id ?? canonicalId,
+        shortLabel: entry?.label ?? canonicalId.split(":")[1] ?? canonicalId,
+        name: entry?.name ?? canonicalId,
+        venue: market,
+        assetClass: entry?.assetClass ?? "INDEX",
+        currency: entry?.currency ?? "INR",
+        quoteUnit: entry?.assetClass === "INDEX" ? "pts" : sharedQuote.unit,
+        value: sharedQuote.value,
+        absoluteChange:
+          sharedQuote.change !== null ? Math.round(sharedQuote.change * 100) / 100 : null,
+        percentChange:
+          sharedQuote.pctChange !== null ? Math.round(sharedQuote.pctChange * 100) / 100 : null,
+        previousClose: sharedQuote.priorClose,
+        changeUnit: "%",
+        sparkline: null,
+        sparklinePeriodLabel: null,
+        sparklineReturnPct: null,
+        contractLabel: null,
+        marketTimezone: session.timezone,
+        isLive: false,
+        provider: sharedQuote.attribution.label,
+        sourceUrl: sharedQuote.attribution.url,
+        sourceObservedAtUTC: sharedQuote.latestDate,
+        sourceObservedPrecision: "DATE_ONLY",
+        ingestedAtUTC: sharedQuote.receivedAt,
+        quality: sharedQuote.quality,
+        marketSession: session.state,
+        sessionLabel: session.label,
+        reasonCode: "Published end-of-day index close (not a live tick quote).",
         redistributable: true,
       };
     }
@@ -580,7 +631,16 @@ export async function getMarketOverviewPayload(
     }
     return { quotes, mcxAliasMap, sparklines };
   });
-  const [layout, references, exchange] = await Promise.all([
+  const sharedDashboardPromise = layoutPromise.then(async ({ ids }) => {
+    const nowMs = Date.now();
+    const grants = await sharedHistoryGrants(nowMs, "dashboard");
+    if (!grants.length) return new Map<string, SharedDashboardQuote>();
+    const quotes = await readSharedDailyQuotes(ids, grants, nowMs, "1D");
+    return new Map<string, SharedDashboardQuote>(
+      [...quotes].map(([id, q]) => [id, q]),
+    );
+  }).catch(() => new Map<string, SharedDashboardQuote>());
+  const [layout, references, exchange, sharedQuotes] = await Promise.all([
     layoutPromise,
     (async () => {
       try {
@@ -594,6 +654,7 @@ export async function getMarketOverviewPayload(
       console.warn({ event: "market_overview_source_unavailable", source: "exchange" });
       return emptyExchange;
     }),
+    sharedDashboardPromise,
   ]);
   const allowedCatalog = DEFAULT_EIGHT_CARD_IDS.map((id) => registryInstrument(id))
     .filter((i): i is NonNullable<typeof i> => !!i)
@@ -615,6 +676,7 @@ export async function getMarketOverviewPayload(
       exchange.quotes,
       exchange.mcxAliasMap,
       exchange.sparklines,
+      sharedQuotes,
     ),
     catalog: allowedCatalog,
     disclosure:

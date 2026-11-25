@@ -1,3 +1,5 @@
+import { archivalScanRows, isSharedExchangeDataset } from "./scan-retention";
+import { ScanActionError } from "./scan-error";
 import { database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
 import { digest } from "../../../database/queries/notebook-repository";
@@ -546,16 +548,23 @@ async function scanSource(
     const label =
       preset === "MARKET"
         ? "Market"
-        : preset === "MCX_FUTURES"
-          ? "MCX Futures"
-          : preset === "INDIAN_EQUITIES"
-            ? "Indian Equities"
-            : "ECB Daily Reference FX";
-    const reason =
-      data.diagnostics?.failureCategory === "SHARED_MARKET_DATA_UNCONFIGURED"
-        ? "Shared NSE, BSE, and MCX market history is not yet active for standard accounts on this deployment. Your scan quota was not charged."
-        : "Eligible historical market data is temporarily unavailable for this timeframe. Retry shortly; your scan quota was not charged.";
-    return unavailable(label, reason);
+        : preset === "NIFTY_500"
+          ? "Nifty 500"
+          : preset === "MCX_FUTURES"
+            ? "MCX Futures"
+            : preset === "INDIAN_EQUITIES"
+              ? "Indian Equities"
+              : "ECB Daily Reference FX";
+    if (data.diagnostics?.failureCategory === "SHARED_MARKET_DATA_UNCONFIGURED") {
+      return unavailable(
+        label,
+        "Shared NSE, BSE, and MCX market history is not yet active for standard accounts on this deployment. Your scan quota was not charged.",
+      );
+    }
+    return unavailable(
+      label,
+      "Eligible historical market data is temporarily unavailable for this timeframe. Retry shortly; your scan quota was not charged.",
+    );
   }
   const datasets =
     !ecb
@@ -573,7 +582,12 @@ export async function mutateWorkspace(
     now = new Date().toISOString();
   if (action === "preflight-scan" || action === "run-scan" || action === "run-draw-scan") {
     if (input.universePreset === "NIFTY_500" || input.universe === "NIFTY_500") {
-      throw new HttpError(503, "Nifty 500 is unavailable. An authorized constituent snapshot and eligible historical coverage are required. No scan allowance was used.");
+      throw new ScanActionError(
+        503,
+        "Nifty 500 is unavailable. An authorized constituent snapshot and eligible historical coverage are required. No scan allowance was used.",
+        "NIFTY_UNIVERSE_UNAVAILABLE",
+        false,
+      );
     }
     try {
       validateScanRequestScope(input);
@@ -1179,12 +1193,15 @@ export async function mutateWorkspace(
           `No instrument had at least ${windowBars} eligible closed bars. Reduce window length or provide a longer CSV history. No quota consumed.`,
         );
       }
-      const soulGenome = runSoulGenomeEvidence(data.datasets, {
-        windowBars,
-        horizonBars,
-        asOf,
-        querySeries: drawReport.matches[0]?.normalizedQuery,
-      });
+      const soulGenome = runSoulGenomeEvidence(
+        data.datasets.filter((dataset) => !isSharedExchangeDataset(dataset)),
+        {
+          windowBars,
+          horizonBars,
+          asOf,
+          querySeries: drawReport.matches[0]?.normalizedQuery,
+        },
+      );
       const datasetById = new Map(data.datasets.map((d) => [d.instrumentId, d]));
       const results = {
         version: "x1-rule-1" as const,
@@ -1223,11 +1240,12 @@ export async function mutateWorkspace(
         research: definition,
         description,
         drawReport,
+        patternRecipe: { points: strokePoints, windowBars, minPatternFit },
         soulGenome,
         requestDigest: signature,
         rule: { version: "x1-rule-1", formula: results.formula },
-        results,
-        datasets: data.datasets,
+        results: { ...results, results: archivalScanRows(results.results) },
+        datasets: data.datasets.filter((dataset) => !isSharedExchangeDataset(dataset)),
         sourceSnapshot: data.asOf,
         ...(traceId ? { traceId } : {}),
         sourceLineage: data.lineage ?? [],
@@ -1337,11 +1355,14 @@ export async function mutateWorkspace(
             };
       const soulGenome =
         scanTier === "ADVANCED"
-          ? runSoulGenomeEvidence(datasets, {
-              windowBars: 15,
-              horizonBars: definition.outcome.horizon,
-              asOf,
-            })
+          ? runSoulGenomeEvidence(
+              datasets.filter((dataset) => !isSharedExchangeDataset(dataset)),
+              {
+                windowBars: 15,
+                horizonBars: definition.outcome.horizon,
+                asOf,
+              },
+            )
           : undefined;
       const payload = {
         scanTier,
@@ -1376,8 +1397,8 @@ export async function mutateWorkspace(
               },
         requestDigest: signature,
         rule,
-        results,
-        datasets,
+        results: { ...results, results: archivalScanRows(results.results) },
+        datasets: datasets.filter((dataset) => !isSharedExchangeDataset(dataset)),
         sourceSnapshot: data.asOf,
         ...(traceId ? { traceId } : {}),
         sourceLineage: data.lineage ?? [],

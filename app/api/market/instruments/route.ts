@@ -2,6 +2,7 @@ import { getAuthenticatedUser } from "../../../../backend/auth/session";
 import { gatewaySearchInstruments } from "../../../../backend/services/market-data/angelone/gateway";
 import type { ExchangeCode, SegmentType } from "../../../../backend/services/market-data/angelone/types";
 import { isDataOwner } from "../../../../backend/services/market-data/data-service";
+import { niftyUniverse } from "../../../../backend/services/market-data/nifty-500";
 import {
   X2_INSTRUMENTS,
   searchCanonicalInstruments,
@@ -47,19 +48,23 @@ export async function GET(request: Request): Promise<Response> {
 
     const brokerExch =
       exchRaw === "NSE" || exchRaw === "BSE" || exchRaw === "MCX" ? exchRaw : "ALL";
-    const result =
+    const [result, activeNifty] = await Promise.all([
       exchRaw === "GLOBAL"
-        ? { source: "IDENTITY_SEED" as const, instruments: [] }
-        : await gatewaySearchInstruments({
+        ? Promise.resolve({ source: "IDENTITY_SEED" as const, instruments: [] })
+        : gatewaySearchInstruments({
             isOwner: owner,
             q,
             exchange: brokerExch as ExchangeCode | "ALL",
             segment: segRaw as SegmentType | "ALL",
             limit,
             requestUrl: request.url,
-          });
+          }),
+      exchRaw === "ALL" || exchRaw === "NSE"
+        ? niftyUniverse().catch(() => null)
+        : Promise.resolve(null),
+    ]);
 
-    // Combine broker master / seed matches with public X2_INSTRUMENTS identity catalogue, ranked deterministically
+    // Combine broker master / seed matches with authorized Nifty 500 constituents and public X2_INSTRUMENTS identity catalogue
     const merged = searchCanonicalInstruments(
       q,
       [
@@ -73,6 +78,30 @@ export async function GET(request: Request): Promise<Response> {
               ? ("DATA_CONNECTED" as const)
               : ("IDENTIFIED_ONLY" as const),
         })),
+        ...(activeNifty?.constituents.map((entry) => ({
+          id: entry.id,
+          exchange: "NSE" as ExchangeCode,
+          segment: "EQUITY" as SegmentType,
+          tradingSymbol: entry.id.slice(4),
+          symbol: entry.id.slice(4),
+          token: "",
+          name: entry.name,
+          mic: "XNSE",
+          currency: "INR",
+          unit: "INR per share",
+          timezone: "Asia/Kolkata",
+          expiry: null,
+          lotSize: 1,
+          tickSize: null,
+          instrumentType: "EQUITY",
+          label: entry.id.slice(4),
+          market: "NSE",
+          assetClass: "EQUITY",
+          sector: entry.industry,
+          aliases: [entry.id.slice(4), entry.name, entry.isin],
+          mappingStatus: "OFFICIAL_CONSTITUENT",
+          availabilityState: "IDENTIFIED_ONLY" as const,
+        })) ?? []),
         ...X2_INSTRUMENTS.map((entry) => ({
           id: entry.id,
           exchange: entry.market as ExchangeCode,

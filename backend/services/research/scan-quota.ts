@@ -96,8 +96,8 @@ export async function getScanQuotaSummary(
       db
         .prepare(
           `SELECT count(*) AS n FROM x51_scan_reservations
-           WHERE subject=? AND tier='CLASSIC' AND ist_day=?
-             AND (state='COMPLETED' OR (state IN ('RESERVED','RUNNING') AND lease_expires_at >= ?))`,
+           WHERE subject=? AND tier='CLASSIC'
+             AND ((state='COMPLETED' AND ist_day=?) OR (state IN ('RESERVED','RUNNING') AND lease_expires_at >= ?))`,
         )
         .bind(subject, istDay, nowIso)
         .first<{ n: number }>(),
@@ -222,8 +222,8 @@ export async function reserveScanSlot(
          SELECT ?, ?, 'CLASSIC', ?, ?, 'RESERVED', ?, NULL, NULL, ?
          WHERE (
            SELECT count(*) FROM x51_scan_reservations
-           WHERE subject=? AND tier='CLASSIC' AND ist_day=?
-             AND (state='COMPLETED' OR (state IN ('RESERVED','RUNNING') AND lease_expires_at >= ?))
+           WHERE subject=? AND tier='CLASSIC'
+             AND ((state='COMPLETED' AND ist_day=?) OR (state IN ('RESERVED','RUNNING') AND lease_expires_at >= ?))
          ) < ?`,
       )
       .bind(
@@ -318,10 +318,10 @@ export async function persistReservedScan(
     `).bind(scan.id, scan.subject, scan.requestKey, scan.mode, scan.name, scan.payload,
       scan.digest, scan.completedAt, scan.reservationId, scan.subject, scan.requestKey, scan.completedAt),
     db.prepare(`
-      UPDATE x51_scan_reservations SET state='COMPLETED', completed_at=?, scan_id=?
+      UPDATE x51_scan_reservations SET state='COMPLETED', completed_at=?, scan_id=?, ist_day=?
       WHERE id=? AND subject=? AND idempotency_key=? AND state IN ('RESERVED','RUNNING')
         AND EXISTS (SELECT 1 FROM x1_scans WHERE id=? AND subject=? AND request_key=?)
-    `).bind(scan.completedAt, scan.id, scan.reservationId, scan.subject, scan.requestKey,
+    `).bind(scan.completedAt, scan.id, istCalendarDay(Date.parse(scan.completedAt)), scan.reservationId, scan.subject, scan.requestKey,
       scan.id, scan.subject, scan.requestKey),
   ]);
   if (stored.meta.changes !== 1 || completed.meta.changes !== 1)

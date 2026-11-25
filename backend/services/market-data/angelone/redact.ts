@@ -105,8 +105,14 @@ export function parseAdapterConfig(
       ? totpSecretRaw.replace(/\s+/g, "").toUpperCase()
       : null;
 
-  const portRaw = Number(cleanEnvValue(env.MARKET_ADAPTER_PORT) || "8791");
-  const port = Number.isInteger(portRaw) && portRaw >= 1024 && portRaw <= 65535 ? portRaw : 8791;
+  const rawPortText = cleanEnvValue(env.MARKET_ADAPTER_PORT);
+  const portRaw = Number(rawPortText || "8791");
+  const port =
+    rawPortText === "0"
+      ? 0
+      : Number.isInteger(portRaw) && portRaw >= 1024 && portRaw <= 65535
+        ? portRaw
+        : 8791;
 
   const localIpRaw = cleanEnvValue(env.ANGELONE_CLIENT_LOCAL_IP);
   const localIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(localIpRaw) ? localIpRaw : "127.0.0.1";
