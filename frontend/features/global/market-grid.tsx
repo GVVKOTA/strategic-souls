@@ -45,7 +45,9 @@ function guestMarketIds(): string[] {
   }
 }
 
-function cardIsGenuinelyLive(card: MarketOverviewCard, checkedAt: string | null): boolean {
+const LIVE_OBSERVATION_FRESHNESS_MS = 60_000;
+
+function cardIsGenuinelyLive(card: MarketOverviewCard, checkedAt: string | null, clockMs: number): boolean {
   const observedAt = Date.parse(card.sourceObservedAtUTC ?? "");
   const retrievalTime = Date.parse(checkedAt ?? "");
   return (
@@ -57,7 +59,8 @@ function cardIsGenuinelyLive(card: MarketOverviewCard, checkedAt: string | null)
     !!card.sourceObservedAtUTC?.includes("T") &&
     Number.isFinite(observedAt) &&
     Number.isFinite(retrievalTime) &&
-    observedAt <= retrievalTime
+    observedAt <= retrievalTime &&
+    Math.max(retrievalTime, clockMs) - observedAt < LIVE_OBSERVATION_FRESHNESS_MS
   );
 }
 
@@ -81,6 +84,7 @@ function formatPriceWithUnit(card: MarketOverviewCard): string {
 function formatCompactObservation(
   card: MarketOverviewCard,
   serverNowIso: string | null,
+  clockMs: number,
 ): { text: string; statusKind: "live" | "closed" | "delayed" | "reference" | "stale" | "unavailable"; statusText: string } {
   if (card.value === null || card.quality === "UNAVAILABLE" || card.quality === "NOT_CONNECTED" || card.quality === "RESTRICTED") {
     return {
@@ -149,11 +153,18 @@ function formatCompactObservation(
     }
   }
 
-  if (cardIsGenuinelyLive(card, serverNowIso)) {
+  if (cardIsGenuinelyLive(card, serverNowIso, clockMs)) {
     return {
       text: `As of ${obsLabel}`,
       statusKind: "live",
       statusText: "LIVE",
+    };
+  }
+  if (card.quality === "REAL_TIME") {
+    return {
+      text: obsLabel ? `As of ${obsLabel}` : "Observation time unavailable",
+      statusKind: "stale",
+      statusText: "Last observation",
     };
   }
   if (card.quality === "DELAYED") {
@@ -253,6 +264,7 @@ export default function MarketOverviewGrid({
     isDefault: true,
   });
   const [asOfUTC, setAsOfUTC] = useState<string | null>(null);
+  const [quoteClock, setQuoteClock] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [editOpen, setEditOpen] = useState(false);
@@ -264,6 +276,16 @@ export default function MarketOverviewGrid({
   const [showAllMarkets, setShowAllMarkets] = useState(false);
   const overviewRequest = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const deadlines = cards
+      .filter((card) => cardIsGenuinelyLive(card, asOfUTC, quoteClock))
+      .map((card) => Date.parse(card.sourceObservedAtUTC!) + LIVE_OBSERVATION_FRESHNESS_MS);
+    if (!deadlines.length) return;
+    const next = Math.min(...deadlines);
+    const timer = window.setTimeout(() => setQuoteClock(Math.max(Date.now(), next)), Math.max(0, next - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [cards, asOfUTC, quoteClock]);
 
   useEffect(() => {
     if (!saveBadge) return;
@@ -290,6 +312,7 @@ export default function MarketOverviewGrid({
       const orderedCards = orderedIds.map((id) => cardMap.get(id));
       if (orderedCards.some((card) => !card)) throw new Error("Incomplete market overview.");
       setAsOfUTC(res.asOf);
+      setQuoteClock(Date.now());
       setLayout({ ...res.layout, ids: orderedIds });
       setCards(orderedCards.filter((card): card is MarketOverviewCard => !!card));
       setLoadedForAuthenticated(authenticated);
@@ -379,6 +402,7 @@ export default function MarketOverviewGrid({
       setLayout(res.layout);
       setCards(res.cards);
       setAsOfUTC(res.asOf);
+      setQuoteClock(Date.now());
       setLoadedForAuthenticated(authenticated);
       setDraftIds(res.layout.ids);
       setSaveBadge(isReset ? "Reset to defaults" : "Order saved");
@@ -490,7 +514,7 @@ export default function MarketOverviewGrid({
                 : card.percentChange < 0
                   ? "is-neg"
                   : "is-flat";
-          const obs = formatCompactObservation(card, asOfUTC);
+          const obs = formatCompactObservation(card, asOfUTC, quoteClock);
           const sparkReturn = card.sparklineReturnPct ?? null;
 
           const venueInName = card.name.toUpperCase().includes(card.venue.toUpperCase());
