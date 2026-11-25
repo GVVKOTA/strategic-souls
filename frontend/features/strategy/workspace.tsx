@@ -1333,7 +1333,7 @@ export default function Strategy({
           </div>
         )}
 
-        {scanSource === "NIFTY_500" && !niftyReady && (
+        {!exchangeScopeUnavailable && scanSource === "NIFTY_500" && !niftyReady && (
           <p className="x1-caption" role="status">
             {universeReadiness?.reason ??
               "Nifty 500 is unavailable. It requires authorized constituents and eligible historical coverage."}
@@ -1858,7 +1858,7 @@ export default function Strategy({
                         instrumentIds={scopedInstrument ? [scopedInstrument] : undefined}
                         savedPatterns={workspace?.savedPatterns ?? []}
                         onPatternSaved={reload}
-                        busy={busy || sessionPending}
+                        busy={busy || sessionPending || (authenticated && exchangeScopeUnavailable)}
                         onScanComplete={async (res) => {
                           await reload();
                           setSelectedScanId(res.id);
@@ -2579,8 +2579,9 @@ export default function Strategy({
               })()
             ) : (
               <Empty title="Ready for your first scan">
-                Classic mode with Market and Daily is pre-configured — tap Run
-                Scan above whenever you are ready.
+                {exchangeScopeUnavailable
+                  ? `${sourceBadgeLabel(scanSource)} is locked until a licensed feed is active — switch to ECB FX or Watchlist above, then tap Run Scan.`
+                  : `${scanTier === "CLASSIC" ? "Classic" : isDrawMode ? "Pattern Scan" : "Advanced"} mode with ${sourceBadgeLabel(scanSource)} and ${TIMEFRAME_LABEL[interval] ?? interval} is selected — tap ${isDrawMode ? "Find Similar Patterns" : "Run Scan"} above whenever you are ready.`}
               </Empty>
             )}
           </section>

@@ -384,7 +384,7 @@ export function buildMarketOverviewCards(
       const pts = hist?.points.map((p) => p.close) ?? sharedSparklines.get(canonicalId) ?? null;
       const spark = pts && pts.length >= 10 ? pts.slice(-30) : null;
       const prevClose =
-        hist && pts && pts.length >= 2
+        (hist || sharedSparklines.has(canonicalId)) && pts && pts.length >= 2
           ? pts[pts.length - 2]
           : point.change !== null && point.changeUnit === "%"
             ? point.value / (1 + point.change / 100)
@@ -593,7 +593,8 @@ export async function getMarketOverviewPayload(
       readSharedHistoryBatch(ids, "1d", grants, { now: checkedAt, requireDisplay: true }),
     ]);
     for (const [id, quote] of daily) {
-      if (id !== quote.instrument.id || quote.instrument.type !== "INDEX" ||
+      if (id !== quote.instrument.id ||
+          (quote.instrument.type !== "INDEX" && quote.instrument.type !== "FUTURE") ||
           !Number.isFinite(quote.value) || quote.value <= 0) continue;
       const series = history.get(id);
       if (series && series.row.last_event === quote.latestDate &&
@@ -602,7 +603,10 @@ export async function getMarketOverviewPayload(
         sparklines.set(id, series.candles.slice(-30).map(({ close }) => close));
       }
       quotes.push({
-        id, label: quote.instrument.name, assetClass: "INDEX", value: quote.value,
+        id,
+        label: quote.instrument.name,
+        assetClass: quote.instrument.type === "FUTURE" ? "FUTURE" : "INDEX",
+        value: quote.value,
         unit: quote.unit, currency: quote.instrument.currency, provider: quote.attribution.label,
         sourceUrl: quote.attribution.url, rightsUrl: quote.attribution.url,
         eventAt: quote.latestDate, sourceDate: quote.latestDate, eventTimePrecision: "DATE",

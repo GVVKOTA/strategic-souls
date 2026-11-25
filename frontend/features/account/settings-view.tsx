@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-html-link-for-pages -- Preserve native document transitions for archive/export routes. */
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -56,8 +56,11 @@ import AvatarBadge from "./avatar-badge";
 import AvatarStudio from "./avatar-studio";
 import type { SettingsSection } from "./account-quick-panel";
 
+const DataControl = lazy(() => import("../global/data-control"));
+
 type Props = {
   initialSection?: SettingsSection | null;
+  isOwner?: boolean;
   notify: Notice;
   onProfileSynced: (profile: UserProfileSnapshot) => void;
   onSignOut: () => void;
@@ -146,6 +149,12 @@ const SECTIONS: {
     icon: Info,
   },
   {
+    id: "data",
+    label: "Data Connections",
+    desc: "Nifty 500 snapshot, shared grants & broker session",
+    icon: Database,
+  },
+  {
     id: "account",
     label: "Account & Data",
     desc: "Export JSON, archive & permanent deletion",
@@ -155,13 +164,16 @@ const SECTIONS: {
 
 export default function SettingsView({
   initialSection = null,
+  isOwner = false,
   notify,
   onProfileSynced,
   onSignOut,
   onOpenNotification,
   onOpenPriceAlerts,
 }: Props) {
-  const [section, setSection] = useState<SettingsSection | null>(initialSection);
+  const [section, setSection] = useState<SettingsSection | null>(() =>
+    initialSection === "data" && !isOwner ? "profile" : initialSection,
+  );
   const [profile, setProfile] = useState<UserProfileSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -658,7 +670,7 @@ export default function SettingsView({
           aria-label="Settings categories"
         >
           <div className="ss-v3-settings-list">
-            {SECTIONS.map((item) => {
+            {SECTIONS.filter((item) => item.id !== "data" || isOwner).map((item) => {
               const Icon = item.icon;
               const active = section === item.id;
               return (
@@ -2232,6 +2244,13 @@ export default function SettingsView({
                       </form>
                     )}
                   </div>
+                </div>
+              )}
+              {isOwner && section === "data" && (
+                <div className="x6-setting-panel">
+                  <Suspense fallback={<p role="status">Loading data controls…</p>}>
+                    <DataControl notify={notify} />
+                  </Suspense>
                 </div>
               )}
             </>

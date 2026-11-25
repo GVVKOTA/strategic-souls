@@ -923,3 +923,236 @@ test("Close-only Indian API evaluates close-based SMA/RSI cleanly and marks OHLC
   assert.equal(ohlcScan.matches, 0);
   assert.equal(ohlcScan.unknown, 1, "ATR on close-only history MUST be UNKNOWN, never fabricated OHLC");
 });
+
+test("Shared quote, sector-quotes, release & dashboard cards honor display+redistribution grants across providers and keep owner controls isolated", async () => {
+  const h = createTestHarness();
+  const dataService = await h.load("backend/services/market-data/data-service.ts");
+  const nifty = await h.load("backend/services/market-data/nifty-500.ts");
+  const nineCard = await h.load("backend/services/market-data/nine-card-markets.ts");
+  const quoteRoute = await h.load("app/api/market/quote/route.ts");
+  const sectorQuotesRoute = await h.load("app/api/market/sector-quotes/route.ts");
+  const providersRoute = await h.load("app/api/x2/providers/route.ts");
+  const releaseRoute = await h.load("app/api/release/route.ts");
+
+  // 1. Before any commercial grant, /api/release reports honest capability flags and zero vendor leaks
+  const relBefore = await (await releaseRoute.GET(new Request("https://site.invalid/api/release"))).json();
+  assert.equal(relBefore.capabilities.sharedCommercialMarketData, false);
+  assert.deepEqual(relBefore.capabilities.intradayIntervalsSupported, []);
+  assert.equal(/angel\s*one|smartapi|bharatstock|indianapi/i.test(JSON.stringify(relBefore)), false);
+
+  // 2. Non-owner fails closed on owner provider routes and on raw broker /api/market/quote (no scope=shared)
+  h.setUser({ userId: "alice" });
+  const ownerOnlyDenied = await providersRoute.POST(
+    new Request("https://site.invalid/api/x2/providers", {
+      method: "POST",
+      headers: { origin: "https://site.invalid", "content-type": "application/json" },
+      body: JSON.stringify({ op: "refresh-history" }),
+    }),
+  );
+  assert.equal(ownerOnlyDenied.status, 404);
+
+  const directQuoteDenied = await quoteRoute.GET(new Request("https://site.invalid/api/market/quote?ids=NSE:RELIANCE"));
+  assert.equal(directQuoteDenied.status, 403);
+  assert.equal((await directQuoteDenied.json()).errorCode, "PUBLIC_LICENSE_REQUIRED");
+
+  const emptySharedBefore = await (
+    await quoteRoute.GET(new Request("https://site.invalid/api/market/quote?scope=shared&ids=NSE:RELIANCE"))
+  ).json();
+  assert.deepEqual(emptySharedBefore.quotes, []);
+
+  // 3. Owner configures BharatStock with DERIVED_ONLY + Nifty 500 + NSE:NIFTY index + MCX:GOLD future
+  h.setUser({ userId: "owner" });
+  const constituents = makeNifty501Fixture();
+  await nifty.importNiftyUniverse({
+    effectiveDate: "2026-11-23",
+    expectedCount: 501,
+    provenance: "Authorized NSE Nifty 500 delivery fixture",
+    rightsConfirmed: true,
+    rightsExpiresAt: "2027-06-30T23:59:59.000Z",
+    constituents,
+  });
+
+  const dashboardInstruments = [
+    {
+      id: "NSE:RELIANCE",
+      name: "Reliance Industries",
+      symbol: "RELIANCE",
+      providerSymbol: "RELIANCE",
+      market: "NSE",
+      mic: "XNSE",
+      type: "EQUITY",
+      currency: "INR",
+      unit: "INR per share",
+      timezone: "Asia/Kolkata",
+    },
+    {
+      id: "NSE:NIFTY",
+      name: "NIFTY 50",
+      symbol: "NIFTY",
+      providerSymbol: "NIFTY",
+      market: "NSE",
+      mic: "XNSE",
+      type: "INDEX",
+      currency: "INR",
+      unit: "pts",
+      timezone: "Asia/Kolkata",
+    },
+  ];
+  const baseRights = {
+    display: false,
+    analysis: true,
+    storage: true,
+    redistribution: false,
+    derivedDisplay: true,
+    verified: true,
+    cacheSeconds: 300,
+    contractReference: "BHARATSTOCK-DERIVED-AND-DISPLAY-FIXTURE",
+    expiresAt: "2027-06-30T23:59:59.000Z",
+  };
+  const sharedHistoryCfg = {
+    intervals: ["1d"],
+    lagMinutes: 30,
+    retentionHours: 48,
+    dailyLookbackDays: 400,
+    dailyRefreshMinutes: 720,
+    intradayRefreshMinutes: 120,
+    attribution: "BharatStock EOD Feed",
+    attributionUrl: "https://bharatstockapi.com/reference",
+    creditWindow: {
+      startsAt: "2026-11-01T00:00:00.000Z",
+      endsAt: "2026-12-01T00:00:00.000Z",
+      availableCredits: 5000,
+      callsPerMinute: 120,
+    },
+  };
+
+  await dataService.configureProvider("owner", {
+    config: {
+      provider: "BHARATSTOCK",
+      enabled: true,
+      priority: 1,
+      version: 0,
+      dailyCallLimit: 5000,
+      lastWrite: randomUUID(),
+      datasets: ["candles"],
+      instruments: dashboardInstruments,
+      rights: baseRights,
+      sharedHistory: sharedHistoryCfg,
+    },
+  });
+
+  const dates = makeWeekdayDates(15, "2026-11-25");
+  const expiresAt = NOW + 48 * 3_600_000;
+  const insertSnap = h.sql.prepare(
+    `INSERT INTO x8_shared_history_snapshot
+      (provider,config_version,instrument_id,interval,received_at,expires_at,first_event,last_event,bar_count,last_close,prior_close,prior_event,last_volume,bars)
+     VALUES ('BHARATSTOCK',?,?,'1d',?,?,?,?,?,?,?,?,?,?)`,
+  );
+  const seedRows = [
+    { id: "NSE:RELIANCE", base: 2950, step: 10 },
+    { id: "NSE:NIFTY", base: 24200, step: 45 },
+  ];
+  function seedVersion(cfgVersion) {
+    for (const row of seedRows) {
+      const bars = dates.map((d, idx) => {
+        const c = row.base + idx * row.step;
+        return {
+          date: d,
+          open: c - 5,
+          high: c + 8,
+          low: c - 8,
+          close: c,
+          adjustedClose: c,
+          volume: 100_000 + idx * 500,
+          openInterest: null,
+          knownAt: new FixedClock().toISOString(),
+          adjustment: "RAW_OHLC_ADJUSTED_CLOSE",
+          provider: "BharatStock EOD Feed",
+        };
+      });
+      const last = bars.at(-1);
+      const prior = bars.at(-2);
+      insertSnap.run(
+        cfgVersion,
+        row.id,
+        NOW - 60_000,
+        expiresAt,
+        bars[0].date,
+        last.date,
+        bars.length,
+        last.close,
+        prior.close,
+        prior.date,
+        last.volume,
+        JSON.stringify(bars),
+      );
+    }
+  }
+  seedVersion(1);
+
+  // 4. With DERIVED_ONLY, shared quote / sector-quotes / Global tiles NEVER expose raw prices, while /api/release reflects READY screening
+  h.setUser({ userId: "alice" });
+  const derivedSharedQuotes = await (
+    await quoteRoute.GET(new Request("https://site.invalid/api/market/quote?scope=shared&ids=NSE:RELIANCE"))
+  ).json();
+  assert.deepEqual(derivedSharedQuotes.quotes, []);
+
+  const derivedSectorQuotes = await (
+    await sectorQuotesRoute.GET(new Request("https://site.invalid/api/market/sector-quotes"))
+  ).json();
+  assert.deepEqual(derivedSectorQuotes.quotes, []);
+  assert.deepEqual(derivedSectorQuotes.industryQuotes, []);
+
+  const derivedOverview = await nineCard.getMarketOverviewPayload("alice");
+  const niftyDerivedCard = derivedOverview.cards.find((c) => c.canonicalId === "NSE:NIFTY");
+  assert.equal(niftyDerivedCard?.value, null, "DERIVED_ONLY grant must not expose raw index quote on dashboard");
+
+  const relReady = await (await releaseRoute.GET(new Request("https://site.invalid/api/release"))).json();
+  assert.equal(relReady.capabilities.sharedCommercialMarketData, true);
+  assert.deepEqual(relReady.capabilities.intradayIntervalsSupported, []);
+
+  // 5. Upgrade BHARATSTOCK grant to full display + redistribution (version 1 -> 2): multi-provider quotes & FUTURE cards light up
+  h.setUser({ userId: "owner" });
+  const upgraded = await dataService.configureProvider("owner", {
+    config: {
+      provider: "BHARATSTOCK",
+      enabled: true,
+      priority: 1,
+      version: 1,
+      dailyCallLimit: 5000,
+      lastWrite: randomUUID(),
+      datasets: ["candles"],
+      instruments: dashboardInstruments,
+      rights: { ...baseRights, display: true, redistribution: true },
+      sharedHistory: sharedHistoryCfg,
+    },
+  });
+  const upgradedVersion = upgraded.providers.find((p) => p.id === "BHARATSTOCK")?.config?.version ?? 2;
+  seedVersion(upgradedVersion);
+
+  h.setUser({ userId: "alice" });
+  const displayShared = await (
+    await quoteRoute.GET(new Request("https://site.invalid/api/market/quote?scope=shared&ids=NSE:RELIANCE,UNKNOWN:SYM"))
+  ).json();
+  assert.equal(displayShared.quotes.length, 1);
+  assert.equal(displayShared.quotes[0].id, "NSE:RELIANCE");
+  assert.equal(displayShared.quotes[0].providerId, "BHARATSTOCK");
+  assert.equal(displayShared.quotes[0].attribution.label, "BharatStock EOD Feed");
+
+  const displaySector = await (
+    await sectorQuotesRoute.GET(new Request("https://site.invalid/api/market/sector-quotes"))
+  ).json();
+  const relIndustryQuote = displaySector.industryQuotes.find((q) => q.id === "NSE:RELIANCE");
+  assert.ok(relIndustryQuote, "sector-quotes must include non-INDIANAPI equity display providers such as BHARATSTOCK");
+  assert.equal(relIndustryQuote.providerId, "BHARATSTOCK");
+
+  const displayOverview = await nineCard.getMarketOverviewPayload("alice");
+  const niftyDisplayCard = displayOverview.cards.find((c) => c.canonicalId === "NSE:NIFTY");
+  assert.ok(niftyDisplayCard && niftyDisplayCard.value > 0, "NSE:NIFTY card should populate from shared display snapshot");
+  assert.equal(niftyDisplayCard.assetClass, "INDEX");
+  assert.ok(niftyDisplayCard.previousClose && niftyDisplayCard.previousClose > 0, "NSE:NIFTY card should retain previous close from sparkline series");
+
+  const tooManyIds = Array.from({ length: 161 }, (_, i) => `NSE:SYM${i}`).join(",");
+  const tooManyRes = await quoteRoute.GET(new Request(`https://site.invalid/api/market/quote?scope=shared&ids=${tooManyIds}`));
+  assert.equal(tooManyRes.status, 400);
+});

@@ -5,6 +5,7 @@ import {
   Bell,
   Bookmark,
   ChevronRight,
+  Database,
   HelpCircle,
   LogIn,
   LogOut,
@@ -20,6 +21,7 @@ export type SettingsSection =
   | "profile"
   | "security"
   | "privacy"
+  | "data"
   | "notifications"
   | "sessions"
   | "appearance"
@@ -32,6 +34,7 @@ type Props = {
   onClose: () => void;
   triggerRef: React.RefObject<HTMLButtonElement | null>;
   signedIn: boolean;
+  isOwner?: boolean;
   displayName?: string | null;
   handle?: string | null;
   avatarId?: string | null;
@@ -61,6 +64,7 @@ export default function AccountQuickPanel({
   onClose,
   triggerRef,
   signedIn,
+  isOwner = false,
   displayName,
   handle,
   avatarId,
@@ -264,6 +268,23 @@ export default function AccountQuickPanel({
                 </span>
                 <ChevronRight size={15} />
               </button>
+              {isOwner && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="x6-quick-row"
+                  onClick={() => {
+                    onClose();
+                    onOpenSettings("data");
+                  }}
+                >
+                  <span className="x6-quick-row-left">
+                    <Database size={16} />
+                    <span>Data Connections</span>
+                  </span>
+                  <ChevronRight size={15} />
+                </button>
+              )}
 
               <button
                 type="button"

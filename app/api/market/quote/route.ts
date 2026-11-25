@@ -5,6 +5,10 @@ import {
   gatewayQuotes,
 } from "../../../../backend/services/market-data/angelone/gateway";
 import { isDataOwner } from "../../../../backend/services/market-data/data-service";
+import {
+  readSharedDailyQuotes,
+  sharedHistoryGrants,
+} from "../../../../backend/services/market-data/shared-history";
 import { account, rate } from "../../../../database/queries/repository";
 
 export const dynamic = "force-dynamic";
@@ -34,11 +38,49 @@ export async function GET(request: Request): Promise<Response> {
     );
 
     const params = new URL(request.url).searchParams;
+    const scope = params.get("scope");
     const rawIds = params.get("ids") ?? "";
     const ids = rawIds
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
+
+    if (scope === "shared") {
+      if (ids.length > 160) {
+        throw new MarketGatewayError(
+          400,
+          "INVALID_SYMBOL",
+          "Request at most 160 instruments per shared quote query.",
+          "Split shared quote requests into chunks of at most 160 instrument IDs.",
+        );
+      }
+      if (ids.length === 0) {
+        return Response.json({ quotes: [] }, { status: 200, headers: HEADERS });
+      }
+      const grants = await sharedHistoryGrants(Date.now(), "display");
+      if (grants.length === 0) {
+        return Response.json({ quotes: [] }, { status: 200, headers: HEADERS });
+      }
+      const shared = await readSharedDailyQuotes(ids, grants);
+      const quotes = ids.flatMap((id) => {
+        const quote = shared.get(id);
+        if (!quote) return [];
+        return [{
+          id: quote.id,
+          name: quote.instrument.name,
+          assetClass: quote.instrument.type,
+          currency: quote.instrument.currency,
+          providerId: quote.providerId,
+          value: quote.value,
+          pctChange: quote.quality === "STALE" ? null : quote.pctChange,
+          latestDate: quote.latestDate,
+          quality: quote.quality,
+          attribution: quote.attribution,
+        }];
+      });
+      return Response.json({ quotes }, { status: 200, headers: HEADERS });
+    }
+
     if (ids.length > 20) {
       throw new MarketGatewayError(
         400,

@@ -252,10 +252,16 @@ export default function DataControl({
       key.current = null;
     });
   }, [selected, current?.config]);
-  async function run(op: "configure" | "test") {
+  async function run(op: "configure" | "test" | "refresh-history") {
     if (active.current) return;
     active.current = true;
-    setBusy(op === "test" ? "Testing source…" : "Saving configuration…");
+    setBusy(
+      op === "test"
+        ? "Testing source…"
+        : op === "refresh-history"
+          ? "Refreshing shared history…"
+          : "Saving configuration…",
+    );
     setError("");
     try {
       let payload: unknown;
@@ -296,15 +302,20 @@ export default function DataControl({
             },
           },
         };
+      } else if (op === "refresh-history") {
+        payload = { op };
       } else payload = { op, provider: selected };
-      const result = await request<Settings>(payload);
+      const response = await request<Settings & { history?: SharedIngestionRow[] }>(payload);
+      const result = op === "refresh-history" ? await request<Settings>() : response;
       setState(result);
       window.dispatchEvent(new Event("x2-data-updated"));
       key.current = null;
       notify?.(
         op === "test"
           ? "Source test recorded. Review actual coverage."
-          : "Provider configuration saved.",
+          : op === "refresh-history"
+            ? "Shared market-data ingestion batch completed."
+            : "Provider configuration saved.",
       );
     } catch (e) {
       setError(
@@ -705,6 +716,13 @@ export default function DataControl({
             >
               <RefreshCw size={15} />
               {busy === "Testing source…" ? busy : "Test connection"}
+            </button>
+            <button
+              disabled={!!busy || !(state.sharedIngestion?.length || (current?.config?.enabled && current.secretConfigured))}
+              onClick={() => run("refresh-history")}
+            >
+              <RefreshCw size={15} />
+              {busy === "Refreshing shared history…" ? busy : "Refresh shared history"}
             </button>
           </div>
           <p role="status">{busy}</p>

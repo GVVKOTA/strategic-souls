@@ -102,6 +102,7 @@ type IntelligenceApiPayload = {
 const AssetTerminal = lazy(() => import("./asset-terminal"));
 const PriceAlerts = lazy(() => import("./price-alerts"));
 const NiftyMarketTable = lazy(() => import("./nifty-market-table"));
+const PrivateMarketPanel = lazy(() => import("./private-market-panel"));
 
 type Props = {
   data: MarketSnapshot | null;
@@ -437,7 +438,7 @@ export default function Global({
     const controller = new AbortController();
     const ids = quoteKey.split(",");
     const fetchChunk = (start: number) => api<{ quotes: ResearchQuote[] }>(
-      "/api/market/quote?" + new URLSearchParams({ ids: ids.slice(start, start + 160).join(",") }),
+      "/api/market/quote?" + new URLSearchParams({ scope: "shared", ids: ids.slice(start, start + 160).join(",") }),
       undefined, { signal: controller.signal });
     void Promise.all(Array.from({ length: Math.ceil(ids.length / 160) }, (_, index) => fetchChunk(index * 160)))
       .then((responses) => {
@@ -450,7 +451,7 @@ export default function Global({
   const openHoldings = (portfolio?.summary.holdings ?? []).filter((holding) => holding.quantity > 0);
   const marks = new Map(openHoldings.flatMap((holding) => {
     const q = quotes.get(holding.symbol);
-    return q?.assetClass === "EQUITY" && q.providerId === "INDIANAPI" && q.quality === "PUBLISHED_EOD" &&
+    return q?.assetClass === "EQUITY" && q.quality === "PUBLISHED_EOD" &&
         q.currency === (portfolio?.payload.currency || "INR")
       ? [[holding.symbol, { quote: q, value: holding.quantity * q.value, basis: holding.basis }] as const] : [];
   }));
@@ -1558,7 +1559,12 @@ export default function Global({
               <Panel title="Completed-session valuation">
                 {scopedQuoteError && <p role="status">{scopedQuoteError}</p>}
                 <p className="x1-caption">{marks.size} of {openHoldings.length} holdings marked
-                  {markDate ? " · " + markDate + " · Indian API" : ""}</p>
+                  {markDate
+                    ? ` · ${markDate}${(() => {
+                        const labels = [...new Set([...marks.values()].map(({ quote }) => quote.attribution.label).filter(Boolean))];
+                        return labels.length ? ` · ${labels.join(", ")}` : "";
+                      })()}`
+                    : ""}</p>
                 {marks.size ? <dl className="x1-data-grid">
                   <div className="x1-data-card"><dt>{marks.size < openHoldings.length ? "Marked subtotal" : "Market value"}</dt>
                     <dd>{formatCurrency(markedValue, portfolio.payload.currency)}</dd></div>
@@ -1685,7 +1691,17 @@ export default function Global({
         </>
       )}
       {globalView === "MARKET_EXPLORER" && (
-        <><Suspense fallback={<p role="status">Loading the instrument universe…</p>}>
+        <>{authenticated && isOwner && (
+          <Suspense fallback={<p role="status">Loading private broker board…</p>}>
+            <PrivateMarketPanel
+              isOwner={isOwner}
+              authenticated={authenticated}
+              openAsset={openAsset}
+              analyze={analyze}
+              notify={notify}
+            />
+          </Suspense>
+        )}<Suspense fallback={<p role="status">Loading the instrument universe…</p>}>
           <NiftyMarketTable openAsset={openAsset} onScan={(id) => analyze(undefined, id)} />
         </Suspense><MarketExplorer
           data={data}

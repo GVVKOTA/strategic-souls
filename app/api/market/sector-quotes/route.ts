@@ -25,7 +25,7 @@ export async function GET(request: Request) {
       if (sectorId?.startsWith("INDUSTRY:")) {
         const industry = (await approvedIndustryGroups()).find((entry) => entry.id === sectorId);
         if (!industry) throw new HttpError(404, "This constituent group is unavailable.");
-        const grants = (await sharedHistoryGrants()).filter((grant) => grant.provider === "INDIANAPI");
+        const grants = await sharedHistoryGrants(Date.now(), "display");
         const shared = await readSharedDailyQuotes(industry.constituents.map((stock) => stock.id), grants, Date.now(), period);
         const quotes = [...shared.values()].filter((quote) => quote.quality !== "STALE" && quote.pctChange !== null)
           .map(({ instrument, expiresAt, ...quote }) => { void instrument; void expiresAt; return quote; });
@@ -58,7 +58,7 @@ export async function GET(request: Request) {
       sector.id, ...sector.constituents.map((stock) => stock.id),
     ]))];
     const ids = [...new Set([...standardIds, ...groups.flatMap((group) => group.constituents.map((stock) => stock.id))])];
-    const grants = await sharedHistoryGrants();
+    const grants = await sharedHistoryGrants(Date.now(), "display");
     const shared = await readSharedDailyQuotes(ids, grants);
     const quotes = ids.flatMap((id) => {
       const sharedQuote = shared.get(id);
@@ -68,7 +68,7 @@ export async function GET(request: Request) {
       void expiresAt;
       return [{ ...details, pctChange: sharedQuote.quality === "STALE" ? null : sharedQuote.pctChange }];
     });
-    const industryQuotes = [...shared.values()].filter((value) => value.providerId === "INDIANAPI").map(({ instrument: internal, expiresAt, ...quote }) => {
+    const industryQuotes = [...shared.values()].filter((value) => value.instrument.type === "EQUITY").map(({ instrument: internal, expiresAt, ...quote }) => {
       void internal;
       void expiresAt;
       return { ...quote, pctChange: quote.quality === "STALE" ? null : quote.pctChange };

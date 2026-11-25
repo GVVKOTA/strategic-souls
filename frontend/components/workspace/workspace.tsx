@@ -63,7 +63,7 @@ type View = "Global" | "Strategy" | "Community";
 type StrategyPanel = "scan" | "lab";
 
 const SETTINGS_SECTIONS: readonly SettingsSection[] = [
-  "profile", "appearance", "notifications", "privacy", "account",
+  "profile", "appearance", "notifications", "privacy", "data", "account",
   "security", "sessions", "help", "about",
 ];
 
@@ -1051,6 +1051,7 @@ export default function X1Workspace() {
               onClose={() => setQuickMenuOpen(false)}
               triggerRef={avatarTriggerRef}
               signedIn={isSignedIn}
+              isOwner={isOwner}
               displayName={authUser?.displayName}
               handle={authUser?.handle}
               avatarId={authUser?.avatarId}
@@ -1536,6 +1537,7 @@ export default function X1Workspace() {
               <SettingsView
                 key={settingsSection ?? "all"}
                 initialSection={settingsSection}
+                isOwner={isOwner}
                 notify={notify}
                 onProfileSynced={handleProfileSynced}
                 onSignOut={() => void handleSignOut()}

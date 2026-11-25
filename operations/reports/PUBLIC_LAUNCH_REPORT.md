@@ -29,6 +29,7 @@ Per **Phase 9.7**, production D1 remains completely clean (`x2_providers = 0`, `
   - D1 Database: `ss` (`1cda2b05-6b99-4d04-896f-b3542ad2ce7f`, APAC, migrations `0000`–`0020` applied, `70` tables, `6,705,152` bytes)
   - D1 Time Travel Rollback Bookmark: `00000153-00000000-0000512e-8076d162e011331b3ae49f6640000c7d`
   - Pre-Change User Data Counts: `accounts = 5`, `x1_scans = 30`, `x2_providers = 0`, `x78_market_universes = 1` (sentinel)
+  - Verified Recheck User Data Counts (pre-deploy `ss`): `accounts = 5`, `x1_scans = 34`, `x2_providers = 0`, `x78_market_universes = 1` (sentinel), `x78_market_scan_jobs = 0`, `x8_shared_history_snapshot = 0` (`7,262,208` bytes)
 - **Cloudflare Worker Bindings (Names Only — Zero Secret Values Logged):**
   - D1 Database: `DB` -> `ss`
   - VPC Service Binding: `MARKET_DATA_ADAPTER`
@@ -37,7 +38,7 @@ Per **Phase 9.7**, production D1 remains completely clean (`x2_providers = 0`, `
   - Encrypted Secrets: `BHARATSTOCK_API_KEY`, `INDIA_API_KEY`, `MARKET_ADAPTER_AUTH_TOKEN`, `X2_OWNER_SUBJECT`
   - Cron Triggers Configured: `["* * * * *", "*/2 * * * *"]` (`processMarketScanBatch` every minute; `refreshSharedHistory` + `clearExpiredReports` every 2 minutes; price alerts NOT activated)
 - **D1 Schema Migrations:** Zero destructive or new migrations required (`0000`–`0020` already contain all `x78_market_*` tables and columns).
-- **Post-Deployment Live SHA, Worker Version ID & IST Timestamp:** Recorded verbatim in the release completion output after `main` merge, exact-SHA build, 0% candidate smoke, and 100% traffic promotion via `operations/scripts/check-production-release.mjs`.
+- **Post-Deployment Live SHA, Worker Version ID & IST Timestamp:** Recorded verbatim in the release completion output after `main` push, exact-SHA build, 0% candidate smoke, 100% traffic promotion via `operations/scripts/check-production-release.mjs`, and Cron trigger sync (`wrangler triggers deploy`).
 
 ---
 
@@ -49,24 +50,24 @@ Allowed statuses: `VERIFIED_PRODUCTION` | `VERIFIED_STAGING` | `CODE_COMPLETE_NO
 | --- | --- | --- | --- |
 | `REQ-01` | Baseline audit & exact reproduction of ordinary-account Market+Daily failure (`0` quota charged) | `VERIFIED_STAGING` | `PUBLIC_MARKET_ACCESS_BASELINE.md`; `5ac5b5b` trace `0dd98c58-1bd6-4887-a580-233db6aed832` (HTTP `503`, `20/20` quota) |
 | `REQ-02` | Provider legal rights & quota matrix (separating verbal owner claim from published ToS & derived vs display rights) | `VERIFIED_PRODUCTION` | `PUBLIC_PROVIDER_RIGHTS_MATRIX.md`; verified live ToS URLs + Free-tier limits |
-| `REQ-03` | Reconcile PRs #5/#6/#7 onto `main` without regressing hotfixes #8–#11, owner Angel One VPC, or 6 canonical CSS tokens | `VERIFIED_STAGING` | `check-x2-release.mjs` (`367/367` tests), `pytest` (`29/29`), empty `git diff frontend/styles/`, VPC binding verified in `dist/server/wrangler.json` |
+| `REQ-03` | Reconcile PRs #5/#6/#7 onto `main` without regressing hotfixes #8–#11, owner Angel One VPC, or 6 canonical CSS tokens | `VERIFIED_STAGING` | `check-x2-release.mjs` (`369/369` tests), `pytest` (`29/29`), empty `git diff frontend/styles/`, VPC binding verified in `dist/server/wrangler.json`; owner-only `DataControl` (with `refresh-history` control) & `PrivateMarketPanel` restored cleanly |
 | `REQ-04` | Canonical AST/indicator engine preserved (`crossesabove` event semantics, `UNKNOWN` never coerced, no invented OHLC) | `VERIFIED_STAGING` | `public-shared-market-data.test.mjs` + `29/29` Python quant tests + real Chromium `ECB` scan (`ATR(14) = —`) |
 | `REQ-05` | Classic (`20/IST day`) & Advanced (`1/rolling 60m`) quota integrity + atomic release on failure/cancel/unready/intraday | `VERIFIED_STAGING` | `scan-quota.ts` IST-day rollover fix + `market-scan-jobs.ts` atomic release + Chromium QA (`0` charged on blocked Market scan, `19/20` on Classic, `0/1` on Advanced) |
-| `REQ-06` | Versioned Nifty 500 constituent importer supporting flexible official counts (`450`–`550`, `EQ`/`BE`/`RR`) | `VERIFIED_STAGING` | `nifty-500.ts` + owner UI JSON importer (`data-control.tsx`) + `INT-03` (501-member import test) |
+| `REQ-06` | Versioned Nifty 500 constituent importer supporting flexible official counts (`450`–`550`, `EQ`/`BE`/`RR`) | `VERIFIED_STAGING` | `nifty-500.ts` + owner UI JSON importer (`data-control.tsx`, mounted in owner Settings `data`) + `INT-03` |
 | `REQ-07` | Live production import of authorized Nifty 500 constituent list | `BLOCKED` | `niftyindices.com/terms-of-use` requires written permission/subscription (`indices@nseids.co.in`) before importing `ind_nifty500list.csv` (`501` rows) |
-| `REQ-08` | Shared server-side provider adapter supporting BharatStock full OHLCV (`/v1/stocks/{ticker}/prices`) & Indian API close-only | `VERIFIED_STAGING` | `providers.ts`, `shared-history.ts`, `data-service.ts`, `INT-01` |
-| `REQ-09` | Granular read-time rights projection (`DERIVED_ONLY` vs `DISPLAY_AND_DERIVED` vs `WITHHELD`) on cache & GRAVEYARD | `VERIFIED_STAGING` | `scan-projection.ts`, `shared-history.ts`, `INT-02`, `INT-06` |
+| `REQ-08` | Shared server-side provider adapter supporting BharatStock full OHLCV (`/v1/stocks/{ticker}/prices`) & Indian API close-only | `VERIFIED_STAGING` | `providers.ts`, `shared-history.ts`, `data-service.ts`, `/api/market/quote` (`scope=shared`), `/api/market/sector-quotes`, `INT-01`, `INT-08` |
+| `REQ-09` | Granular read-time rights projection (`DERIVED_ONLY` vs `DISPLAY_AND_DERIVED` vs `WITHHELD`) on cache & GRAVEYARD | `VERIFIED_STAGING` | `scan-projection.ts`, `shared-history.ts`, `/api/market/quote`, `/api/market/sector-quotes`, `INT-02`, `INT-06`, `INT-08` |
 | `REQ-10` | Durable multi-batch 500-symbol scanner (`50`/batch), D1 leases, reload recovery, cancel, and cross-account cache reuse (`0` duplicate upstream fanout) | `VERIFIED_STAGING` | `market-scan-jobs.ts`, `app/api/strategy/scan/route.ts`, `INT-04` (two concurrent ordinary users scanning 501 cached symbols with `0` upstream calls) |
 | `REQ-11` | Cloudflare Cron Triggers (`* * * * *`, `*/2 * * * *`) for bounded shared-history refresh, durable scan worker & expired-data purge | `VERIFIED_STAGING` | `backend/middleware/index.ts`, `vite.config.ts`, verified in `dist/server/wrangler.json` |
-| `REQ-12` | Granular non-blanket error codes (`NIFTY_UNIVERSE_UNAVAILABLE`, `PENDING_INITIAL_INGEST`, `INTRADAY_NOT_SUPPORTED`, `DATA_EXPIRED`, etc.) & conditional Retry button | `VERIFIED_STAGING` | `scan-error.ts`, `workspace.tsx`, Chromium QA `BRW-02` (`hasRetryOnMarketBlocker: false`) |
-| `REQ-13` | Public discoverable `/api/strategy/universe` & extended `/api/market/health` (`accountType`, `sharedMarketData`, zero secret exposure) | `VERIFIED_STAGING` | `universe/route.ts`, `health/route.ts`, Chromium QA `BRW-02` |
-| `REQ-14` | Global 8 cards preservation (ECB USD/INR intact, WTI unavailable, zero fake `LIVE` badge, owner Angel One separate) | `VERIFIED_STAGING` | `nine-card-markets.ts`, Chromium QA `BRW-01` (`8` cards, `USD/INR ₹92.9189`, `hasFakeLiveBadge: false`) |
-| `REQ-15` | Mobile responsiveness at `320`, `360`, `375`, `390`, `412`, `430` CSS px (zero horizontal overflow) | `VERIFIED_STAGING` | Chromium QA `BRW-05` (`scrollWidth === innerWidth`, `offenders: []` across all 6 widths) |
-| `REQ-16` | Cross-account isolation (ordinary A vs ordinary B GRAVEYARD, quotas, `/api/x2/providers` `404`, `/api/market/quote` `403`) | `VERIFIED_STAGING` | Chromium QA `BRW-06` + `INT-07` |
+| `REQ-12` | Granular non-blanket error codes (`NIFTY_UNIVERSE_UNAVAILABLE`, `PENDING_INITIAL_INGEST`, `INTRADAY_NOT_SUPPORTED`, `DATA_EXPIRED`, etc.), dynamic Strategy empty copy & single blocker notice | `VERIFIED_STAGING` | `scan-error.ts`, `workspace.tsx`, Chromium QA `BRW-02` & `BRW-07` (`hasPreconfiguredMarket: false`, Pattern Scan CTA disabled when locked) |
+| `REQ-13` | Public discoverable `/api/strategy/universe`, live `/api/release` capabilities, & extended `/api/market/health` (`accountType`, `sharedMarketData`, zero secret exposure) | `VERIFIED_STAGING` | `universe/route.ts`, `release/route.ts`, `health/route.ts`, `INT-08`, Chromium QA `BRW-07` (`sharedCommercialMarketData: false`, `intradayIntervalsSupported: []`) |
+| `REQ-14` | Global 8 cards preservation (ECB USD/INR intact, WTI unavailable, zero fake `LIVE` badge, shared card & owner Angel One separate) | `VERIFIED_STAGING` | `nine-card-markets.ts`, `INT-08`, Chromium QA `BRW-01` & `BRW-07` (`USD/INR 92.9189`, `hasLiveBadge: false`) |
+| `REQ-15` | Mobile responsiveness at `320`, `360`, `375`, `390`, `412`, `430` CSS px (zero horizontal overflow) | `VERIFIED_STAGING` | Chromium QA `BRW-05` & `BRW-07` (`scrollWidth320 === 320`, `overflow320: false`) |
+| `REQ-16` | Cross-account & owner isolation (ordinary A vs ordinary B GRAVEYARD, Settings `?settings=data` fail-closed without mounting `DataControl`, `/api/x2/providers` `404`, `/api/market/quote` `403`, `?scope=shared` `200`) | `VERIFIED_STAGING` | Chromium QA `BRW-06`, `BRW-07` + `INT-07`, `INT-08` |
 | `REQ-17` | Live production ordinary-user NSE / Nifty 500 Daily scan | `BLOCKED` | Blocked externally by Free-tier data plans (Indian API 500/mo; BharatStock 60/day no-cache/no-public ToS) & Nifty 500 constituent license |
 | `REQ-18` | Live production BSE / MCX / Intraday / WTI public feeds | `BLOCKED` | No licensed commercial public BSE, MCX, intraday, or NYMEX WTI feed exists in current credentials |
 | `REQ-19` | Cost, D1 storage, and `100` / `1,000` / `10,000` registered-user capacity analysis | `VERIFIED_PRODUCTION` | `PUBLIC_PROVIDER_CAPACITY.md` |
-| `REQ-20` | Full secret scan (`0` findings), source policy scan (`0` findings), zero lost user data | `VERIFIED_STAGING` | `scan-secrets.mjs` (`0` across `870` files + `dist/`), `scan-v3-source.mjs` (`0` across `533` files) |
+| `REQ-20` | Full secret scan (`0` findings), source policy scan (`0` findings), zero lost user data | `VERIFIED_STAGING` | `scan-secrets.mjs` (`0` across `872` files + `dist/`), `scan-v3-source.mjs` (`0` across `535` files) |
 
 ---
 

@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { resolveGatewayConfig } from "../../../backend/services/market-data/angelone/gateway";
+import { sharedUniverseReadiness } from "../../../backend/services/market-data/shared-history";
 import { APP_RELEASE } from "../../../backend/services/release-meta";
 import {
   ADVANCED_ROLLING_LIMIT,
@@ -8,10 +9,14 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export function GET(request: Request) {
+export async function GET(request: Request) {
   const gw = resolveGatewayConfig(undefined, request.url);
+  const readiness = await sharedUniverseReadiness().catch(() => null);
   const buildCommit = typeof process === "undefined" ? null : process.env.STRATEGIC_SOULS_BUILD_SHA ?? null;
   const workerVersionId = env.CF_VERSION_METADATA?.id ?? null;
+  const intradayIntervalsSupported = (readiness?.eligibleIntervals ?? []).filter(
+    (interval): interval is "30m" | "1h" => interval === "30m" || interval === "1h",
+  );
   return Response.json(
     {
       product: APP_RELEASE.productName,
@@ -41,9 +46,9 @@ export function GET(request: Request) {
       capabilities: {
         publicOfficialReferences: true,
         sharedCommercialMarketData:
-          gw.flags.mode === "public_licensed" &&
-          gw.flags.enablePublicExchangeQuotes,
-        intradayIntervalsSupported: ["30m", "1h"],
+          (gw.flags.mode === "public_licensed" && gw.flags.enablePublicExchangeQuotes) ||
+          readiness?.status === "READY",
+        intradayIntervalsSupported,
         tradingExecutionEnabled: false,
       },
       marketData: {
