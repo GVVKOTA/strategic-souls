@@ -1,0 +1,16 @@
+name: Improvement Request
+description: Propose a product, engineering, or documentation improvement for Strategic Souls.
+title: "[Improvement] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Privacy & Security Notice:** Do not include credentials, private URLs, or personal data.
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Problem & Proposed Improvement
+      description: Explain what you want to improve and how it fits Strategic Souls governance and data-rights rules.
+    validations:
+      required: true

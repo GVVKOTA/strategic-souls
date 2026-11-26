@@ -1,0 +1,88 @@
+name: Production website monitor
+on:
+  schedule:
+    # GitHub Actions scheduled workflows are best-effort and may run slightly late during peak queue times.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run probes without creating, updating, or closing GitHub issues
+        required: false
+        type: boolean
+        default: false
+      target_url:
+        description: Optional HTTPS target override (defaults to SS_PRODUCTION_URL or canonical Workers URL)
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: production-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Restore prior monitor state artifact (if available)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/monitor"
+          node --input-type=module -e '
+            import { execFileSync } from "node:child_process";
+            import { writeFileSync } from "node:fs";
+            const repo = process.env.GITHUB_REPOSITORY;
+            const token = process.env.GITHUB_TOKEN;
+            const outZip = `${process.env.RUNNER_TEMP}/monitor/state.zip`;
+            const headers = {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/vnd.github+json",
+              "User-Agent": "StrategicSouls-Monitor/1.0",
+            };
+            try {
+              const res = await fetch(`https://api.github.com/repos/${repo}/actions/artifacts?name=production-monitor-state&per_page=5`, { headers });
+              if (!res.ok) process.exit(0);
+              const data = await res.json();
+              const latest = (data.artifacts ?? []).find((a) => !a.expired);
+              if (!latest) process.exit(0);
+              const zipRes = await fetch(latest.archive_download_url, { headers });
+              if (!zipRes.ok) process.exit(0);
+              writeFileSync(outZip, Buffer.from(await zipRes.arrayBuffer()));
+              execFileSync("unzip", ["-o", outZip, "-d", `${process.env.RUNNER_TEMP}/monitor`], { stdio: "ignore" });
+            } catch {
+              // Start from clean state if no prior artifact is readable.
+            }
+          '
+
+      - name: Run production website probes and reconcile GitHub incidents
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SS_PRODUCTION_URL: ${{ inputs.target_url || vars.SS_PRODUCTION_URL || 'https://strategic-souls.vishnukota20071005.workers.dev' }}
+        run: |
+          ARGS="--state-in $RUNNER_TEMP/monitor/monitor-state.json --state-out $RUNNER_TEMP/monitor/monitor-state.json --fail-on-incident"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          node operations/monitoring/run-monitor.mjs $ARGS
+
+      - name: Persist monitor state artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-monitor-state
+          path: ${{ runner.temp }}/monitor/monitor-state.json
+          if-no-files-found: ignore
+          retention-days: 7

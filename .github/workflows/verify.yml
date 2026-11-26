@@ -24,4 +24,4 @@ jobs:
           node operations/scripts/check-production-release.mjs artifact
           node operations/scripts/scan-secrets.mjs
           node operations/scripts/scan-v3-source.mjs
-          node --test operations/scripts/check-repo-layout.test.mjs
+          node --test operations/scripts/check-repo-layout.test.mjs operations/monitoring/monitor.test.mjs

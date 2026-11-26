@@ -1,0 +1,33 @@
+name: Production Incident
+description: Report a live Strategic Souls website outage, broken route, or unexpected API 5xx.
+title: "[Incident] "
+labels: ["incident", "production", "needs-attention"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Privacy & Security Notice:** Never paste passwords, session cookies, API tokens, broker credentials, or private user/portfolio records.
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Perceived Severity
+      options:
+        - critical (site down or security gate issue)
+        - high (core feature broken)
+        - medium (partial degradation or slow response)
+    validations:
+      required: true
+  - type: input
+    id: route
+    attributes:
+      label: Impacted Public URL or Route
+      placeholder: "https://strategic-souls.vishnukota20071005.workers.dev/"
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Expected vs Observed Behavior
+      description: Include HTTP status code, timestamp (UTC/IST), and reproducible steps.
+    validations:
+      required: true

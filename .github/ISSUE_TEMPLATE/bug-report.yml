@@ -1,0 +1,28 @@
+name: Bug Report
+description: Report a reproducible bug in Strategic Souls UI, Soul Scan, Formula Lab, or APIs.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Privacy & Security Notice:** Never include session cookies, tokens, `.env` values, broker credentials, or private account data.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Feature Area
+      options:
+        - Global Overview / Globe / Calendar
+        - Soul Scan / Formula Lab
+        - Community / Soul Feed / Chats / Rooms
+        - Account / Auth / Settings
+        - Build / CI / Operations
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Describe the exact steps, browser/device, and expected vs actual behavior.
+    validations:
+      required: true
