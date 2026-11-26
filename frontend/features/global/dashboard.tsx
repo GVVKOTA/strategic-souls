@@ -105,6 +105,7 @@ const NiftyMarketTable = lazy(() => import("./nifty-market-table"));
 const PrivateMarketPanel = lazy(() => import("./private-market-panel"));
 
 type Props = {
+  onReplayIntro?: () => void;
   data: MarketSnapshot | null;
   workspace: WorkspaceState | null;
   authenticated?: boolean;
@@ -253,6 +254,7 @@ export function AssetDialog({
 }
 
 export default function Global({
+  onReplayIntro,
   data,
   workspace,
   authenticated = true,
@@ -647,6 +649,7 @@ export default function Global({
         <div className="x53-dashboard-stack" data-global-layout="x53-4-blocks">
           {/* BLOCK A: Centered "Strategic Dashboard" + 8 Market Tiles */}
           <MarketOverviewGrid
+            onReplayIntro={onReplayIntro}
             authenticated={authenticated}
             market={data}
             onOpenAsset={openAsset}

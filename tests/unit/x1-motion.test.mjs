@@ -76,7 +76,7 @@ test("already-ready server rendering has no optional overlay or delayed dashboar
   assert.equal(render({ ready: true, preview: true }), "");
 });
 
-test("cold-entry SSR has immediate skip, inert SVG decoration and explicit nonblocking attributes", () => {
+test("cold-entry SSR has immediate skip, an aria-hidden lazy scene host and explicit nonblocking attributes", () => {
   const html = render({ ready: false });
   assert.match(html, /data-x1-intro=""/);
   assert.match(html, /data-phase="enter"/);
@@ -84,7 +84,8 @@ test("cold-entry SSR has immediate skip, inert SVG decoration and explicit nonbl
   assert.match(html, /style="pointer-events:none"/);
   assert.match(html, /<button[^>]*type="button"[^>]*tabindex="0"/);
   assert.match(html, /Skip introduction/);
-  assert.match(html, /<svg[^>]*aria-hidden="true"[^>]*focusable="false"/);
+  assert.match(html, /<div class="x1-eclipse-orbit" aria-hidden="true"/);
+  assert.doesNotMatch(html, /data-eligible/);
   assert.match(html, /aria-live="off"/);
   assert.doesNotMatch(
     html,
@@ -110,10 +111,10 @@ test("founder-approved GVV image and clean Strategic Souls identity use the supp
   );
 });
 
-test("repeat-session pre-paint guard and CSS-only failure deadline remove the overlay", () => {
+test("first-visit eligibility guard and CSS-only failure deadline remove the overlay", () => {
   assert.match(
     css,
-    /html\[data-x1-intro-seen\][^{]*\.x1-eclipse-intro:not\(\[data-preview="true"\]\)\s*\{\s*display:\s*none;/s,
+    /\.x1-eclipse-intro:not\(\[data-eligible\]\)\s*\{\s*display:\s*none;/s,
   );
   assert.match(css, /@supports\s*\(animation-name:\s*x1-intro-lifetime\)/);
   assert.match(css, /animation:\s*x1-intro-lifetime\s+1100ms\s+linear\s+both/);
@@ -124,7 +125,7 @@ test("repeat-session pre-paint guard and CSS-only failure deadline remove the ov
   assert.match(render({ ready: false, preview: true }), /data-preview="true"/);
   assert.doesNotMatch(
     source,
-    /preventDefault|stopPropagation|\.focus\(|overflow\s*=\s*["']hidden|aria-modal|inert=/,
+    /preventDefault|stopPropagation|overflow\s*=\s*["']hidden|aria-modal|inert=/,
   );
 });
 
@@ -141,13 +142,13 @@ test("pointer, keyboard, scroll, hidden-tab and motion preference changes dismis
   }
   assert.ok(source.includes('document.addEventListener("visibilitychange"'));
   assert.ok(source.includes('document.removeEventListener("visibilitychange"'));
-  assert.ok(source.includes('media?.addEventListener?.("change"'));
-  assert.ok(source.includes('media?.removeEventListener?.("change"'));
+  assert.ok(source.includes('media.addEventListener("change"'));
+  assert.ok(source.includes('media.removeEventListener("change"'));
   assert.match(source, /window\.clearTimeout\(timer\)/);
   assert.match(source, /window\.clearTimeout\(exitTimer\.current\)/);
   assert.doesNotMatch(
     source,
-    /setInterval|requestAnimationFrame|fetch\(|localStorage|navigator\.(?:vibrate|sendBeacon)/,
+    /setInterval|requestAnimationFrame|fetch\(|navigator\.(?:vibrate|sendBeacon)/,
   );
 });
 
@@ -194,4 +195,14 @@ test("timing contracts remain bounded and reduced motion bypasses all optional f
     /\.x1-app \*[^}]*animation:\s*none\s*!important;[^}]*transition:\s*none\s*!important;/s,
   );
   assert.doesNotMatch(css, /\binfinite\b/);
+});
+
+test("first-visit policy checks persistent storage, exact entry URL, visibility and bandwidth before loading WebGL", () => {
+  assert.match(source, /localStorage.getItem\(VISIT_KEY\)/);
+  assert.match(source, /localStorage.setItem\(VISIT_KEY, "1"\)/);
+  assert.match(source, /catch \{ allowed = false/);
+  assert.match(source, /location.pathname === "\/" && !location.search && !location.hash/);
+  assert.match(source, /!document.hidden && !connection\?\.saveData/);
+  assert.match(source, /if \(!eligible \|\| phase !== "enter" \|\| !host\) return/);
+  assert.match(source, /getElementById\("x1-main"\)\?\.focus\(\{ preventScroll: true \}\)/);
 });

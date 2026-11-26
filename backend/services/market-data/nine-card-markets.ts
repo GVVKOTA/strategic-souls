@@ -383,12 +383,12 @@ export function buildMarketOverviewCards(
     if (point && point.value !== null) {
       const pts = hist?.points.map((p) => p.close) ?? sharedSparklines.get(canonicalId) ?? null;
       const spark = pts && pts.length >= 10 ? pts.slice(-30) : null;
-      const prevClose =
-        (hist || sharedSparklines.has(canonicalId)) && pts && pts.length >= 2
-          ? pts[pts.length - 2]
-          : point.change !== null && point.changeUnit === "%"
-            ? point.value / (1 + point.change / 100)
-            : null;
+      // Chart points may skip a trading session. Only the quote source knows the daily basis.
+      const prevClose = point.previousSessionClose !== undefined ? point.previousSessionClose
+        : point.change === null ? null
+        : hist && hist.points.at(-1)?.date === point.sourceDate ? hist.points.at(-2)?.close ?? null
+        : point.changeUnit === "%" && point.change > -100 ? point.value / (1 + point.change / 100)
+        : null;
       const absChange =
         prevClose !== null && Number.isFinite(prevClose)
           ? point.value - prevClose
@@ -486,6 +486,7 @@ export function buildMarketOverviewCards(
 export async function getMarketOverviewPayload(
   subject: string | null,
   overrideSnapshot?: MarketSnapshot,
+  cacheOnly = false,
 ) {
   const layoutPromise = getUserMarketLayout(subject);
   const now = new Date().toISOString();
@@ -611,7 +612,7 @@ export async function getMarketOverviewPayload(
         sourceUrl: quote.attribution.url, rightsUrl: quote.attribution.url,
         eventAt: quote.latestDate, sourceDate: quote.latestDate, eventTimePrecision: "DATE",
         retrievedAt: quote.receivedAt, state: quote.quality, frequency: "DAILY_CLOSE",
-        reason: "Licensed, published daily close.", derivation: null, change: quote.pctChange,
+        reason: "Licensed, published daily close.", derivation: null, change: quote.pctChange, previousSessionClose: quote.priorClose,
         changeUnit: "%", canAnalyze: false,
       });
     }
@@ -621,7 +622,7 @@ export async function getMarketOverviewPayload(
     layoutPromise,
     (async () => {
       try {
-        return overrideSnapshot ?? await loadOfficialReferences();
+        return overrideSnapshot ?? await loadOfficialReferences(cacheOnly);
       } catch {
         console.warn({ event: "market_overview_source_unavailable", source: "official_references" });
         return { asOf: now, quotes: [], fxHistory: [], yields: [], providers: [], disclosure: "", nextRefreshAfter: now };

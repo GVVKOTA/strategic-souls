@@ -84,19 +84,22 @@ async function smoke(version, sha, override) {
     await new Promise((done) => setTimeout(done, 2_000));
   }
 
-  const [overview, home] = await Promise.all([get("/api/markets/overview"), get("/")]);
+  const [overview, home] = await Promise.all([get("/api/markets/overview?source=public-cache"), get("/")]);
   verify(overview.ok && home.ok, "Overview or homepage smoke test failed.");
   const { cards } = await overview.json();
   verify(Array.isArray(cards) && cards.length === 8 && new Set(cards.map((card) => card.canonicalId)).size === 8,
     "Overview did not return eight distinct market cards.");
   verify(cards.every((card) => card.value === null || card.redistributable === true), "Guest saw a private market price.");
   const html = await home.text();
-  const assets = [...new Set([...html.matchAll(/(?:href|src)="(\/_next\/static\/[^"\s]+\.(?:js|css))"/g)].map((match) => match[1]))];
-  verify(assets.length > 0, "Homepage did not reference generated static assets.");
+  const htmlAssets = [...html.matchAll(/(?:href|src|srcSet)="(\/[^"\s]+\.(?:js|css|woff2|png|jpe?g|webp|svg))"/gi)].map(match => match[1]);
+  verify(htmlAssets.some(path => path.startsWith("/_next/static/")), "Homepage did not reference generated static assets.");
+  const assets = [...new Set([...htmlAssets, "/eclipse-horizon.webp", "/eclipse-horizon-mobile.webp"])];
   for (let start = 0; start < assets.length; start += 8) {
     await Promise.all(assets.slice(start, start + 8).map(async (path) => {
       const response = await get(path);
-      verify(response.ok && /javascript|css/.test(response.headers.get("Content-Type") ?? ""), "A homepage asset is unavailable or returned HTML.");
+      const expected = path.endsWith(".js") ? /javascript/ : path.endsWith(".css") ? /text\/css/
+        : path.endsWith(".woff2") ? /font\/woff2|application\/font-woff/ : /image\//;
+      verify(response.ok && expected.test(response.headers.get("Content-Type") ?? ""), "A homepage asset is unavailable or returned an unexpected type.");
       await response.body?.cancel();
     }));
   }

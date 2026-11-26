@@ -40,6 +40,7 @@ export type DataPoint = {
   reason: string;
   derivation: string | null;
   change: number | null;
+  previousSessionClose?: number | null;
   changeUnit: "%" | "bp";
   canAnalyze: boolean;
 };
@@ -503,15 +504,25 @@ export async function marketSnapshot(
   fetcher: Fetcher = fetch,
   now = Date.now(),
   shared?: OfficialReferenceCache,
+  cacheOnly = false,
 ): Promise<MarketSnapshot> {
   if (!Number.isFinite(now)) throw new Error("Valid server time required.");
   const asOf = new Date(now).toISOString(),
     month = asOf.slice(0, 7).replace("-", "");
   const treasuryUrl = `https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value_month=${month}`;
-  const [ecb, treasury] = await Promise.all([
-    fetchText(ECB_HISTORY_URL, fetcher, now, shared),
-    fetchText(treasuryUrl, fetcher, now, shared),
-  ]);
+  async function load(url: string): Promise<Cached> {
+    if (!cacheOnly) return fetchText(url, fetcher, now, shared);
+    // Release probes must never refresh an upstream source or alter the shared cache.
+    const entry = await shared?.read(url);
+    const age = now - Date.parse(entry?.retrievedAt ?? "");
+    const usable = !!entry && age >= 0 && age <= 7 * DAY_MS;
+    return {
+      text: usable ? entry.text : "", retrievedAt: usable ? entry.retrievedAt : asOf,
+      expiresAt: 0, retryAt: now,
+      lastFailure: usable ? null : "No retained official reference is available.",
+    };
+  }
+  const [ecb, treasury] = await Promise.all([load(ECB_HISTORY_URL), load(treasuryUrl)]);
   let fxDays: EcbDay[] = [],
     yieldDays: TreasuryDay[] = [];
   try {

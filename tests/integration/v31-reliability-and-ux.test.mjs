@@ -710,3 +710,8 @@ test("Soul Scan UI exposes trading analysis metrics, breadth, sort, CSV export, 
   const projSrc = readFileSync("backend/services/research/scan-projection.ts", "utf8");
   assert.match(projSrc, /raw && derived && row\.metrics/);
 });
+
+test("unavailable quota storage never reports a fresh allowance", async () => {
+  const broken = { prepare() { throw new Error("quota store offline"); } };
+  await assert.rejects(getScanQuotaSummary(broken, "fixture"), /quota store offline/);
+});

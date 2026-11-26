@@ -571,11 +571,16 @@ async function refresh(task: Task, config: SharedGrant, fetchHistory: typeof pro
         `INSERT OR IGNORE INTO x8_shared_history_snapshot(provider,config_version,instrument_id,interval,
           received_at,expires_at,first_event,last_event,bar_count,last_close,prior_close,prior_event,last_volume,bars)
          SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM x8_shared_history_task WHERE ${condition} AND lease_until>?)
-         AND EXISTS(SELECT 1 FROM x2_providers WHERE provider=? AND version=?) AND ?>?`,
+         AND EXISTS(SELECT 1 FROM x2_providers WHERE provider=? AND version=?) AND ?>?
+         AND NOT EXISTS (
+           SELECT 1 FROM x8_shared_history_snapshot
+           WHERE provider=? AND config_version=? AND instrument_id=? AND interval=? AND expires_at>? AND last_event>?
+         )`,
       ).bind(task.provider, task.config_version, task.instrument_id, task.interval, now, expires,
-        bars[0].date, latest, bars.length, last.close, prior?.close ?? null, prior?.date ?? null, last.volume, payload, ...keys, now, config.provider, config.version, expires, now),
+        bars[0].date, latest, bars.length, last.close, prior?.close ?? null, prior?.date ?? null, last.volume, payload, ...keys, now, config.provider, config.version, expires, now,
+        task.provider, task.config_version, task.instrument_id, task.interval, now, latest),
       db.prepare(
-        "UPDATE x8_shared_history_task SET next_attempt=?,lease_token=NULL,lease_until=0,failures=0,latest_event=?,last_checked=?,last_error=NULL WHERE " + condition,
+        "UPDATE x8_shared_history_task SET next_attempt=?,lease_token=NULL,lease_until=0,failures=0,latest_event=CASE WHEN changes()=1 THEN ? ELSE latest_event END,last_checked=?,last_error=NULL WHERE " + condition,
       ).bind(next, latest, now, ...keys),
       db.prepare("UPDATE x8_shared_history_plan SET failures=0,last_error=NULL WHERE provider=? AND config_version=? AND paused_until<=?")
         .bind(config.provider, config.version, now),

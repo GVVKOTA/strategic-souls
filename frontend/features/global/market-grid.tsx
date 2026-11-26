@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   GripVertical,
+  Orbit,
   RefreshCw,
   RotateCcw,
   SlidersHorizontal,
@@ -26,6 +27,7 @@ type OverviewResponse = {
 };
 
 type Props = {
+  onReplayIntro?: () => void;
   authenticated: boolean;
   market: MarketSnapshot | null;
   onOpenAsset: (id: string) => void;
@@ -252,6 +254,7 @@ function MiniSpark({
  * in a balanced 2-col mobile / 4-col desktop grid with truthful timestamps and semantic sparklines.
  */
 export default function MarketOverviewGrid({
+  onReplayIntro,
   authenticated,
   market,
   onOpenAsset,
@@ -439,9 +442,18 @@ export default function MarketOverviewGrid({
   return (
     <section className="x53-dashboard-hero" aria-labelledby="x53-dashboard-title">
       <div className="x53-dashboard-head">
-        <h1 id="x53-dashboard-title" className="x53-dashboard-title ss-v31-page-title">
-          Strategic Dashboard
-        </h1>
+        <div className="ss-eclipse-horizon">
+          <picture aria-hidden="true">
+            <source media="(width < 768px)" srcSet="/eclipse-horizon-mobile.webp" />
+            <img src="/eclipse-horizon.webp" width="1280" height="400" alt="" fetchPriority="high" />
+          </picture>
+          <h1 id="x53-dashboard-title" className="x53-dashboard-title ss-v31-page-title">
+            Strategic Dashboard
+          </h1>
+          {onReplayIntro && <button className="ss-replay-eclipse" type="button" onClick={onReplayIntro}>
+            <Orbit size={16} aria-hidden="true" /> Replay eclipse
+          </button>}
+        </div>
         <div className="x53-dashboard-bar">
           <div className="x53-dashboard-meta" aria-live="polite">
             {saveBadge ? (
@@ -508,7 +520,7 @@ export default function MarketOverviewGrid({
           </div>
         </section>
       )}
-      {!hasExchangePrices && !loading && <p className="x1-caption x11-exchange-coverage">
+      {!hasExchangePrices && <p className="x1-caption x11-exchange-coverage">
         Exchange and futures quotes appear when a permitted feed returns data.
       </p>}
 
@@ -524,7 +536,7 @@ export default function MarketOverviewGrid({
             return (
               <div
                 key={id}
-                className="x51-mcard ss-v3-mcard"
+                className="x51-mcard ss-v3-mcard ss-v31-mcard"
                 role="listitem"
                 aria-busy={loading && !error}
               >

@@ -85,49 +85,34 @@ export async function getScanQuotaSummary(
     nowMs - ADVANCED_ROLLING_WINDOW_MS,
   ).toISOString();
 
-  await expireStaleReservations(db, nowIso);
-
-  let classicUsed = 0;
-  let advCompletedAt: string | null = null;
-  let advActiveCount = 0;
-
-  try {
-    const [classicRow, advRow] = await Promise.all([
-      db
-        .prepare(
-          `SELECT count(*) AS n FROM x51_scan_reservations
-           WHERE subject=? AND tier='CLASSIC'
-             AND ((state='COMPLETED' AND ist_day=?) OR (state IN ('RESERVED','RUNNING') AND lease_expires_at >= ?))`,
-        )
-        .bind(subject, istDay, nowIso)
-        .first<{ n: number }>(),
-      db
-        .prepare(
-          `SELECT
-             MAX(CASE WHEN state='COMPLETED' AND completed_at > ? THEN completed_at END) AS last_completed,
-             SUM(CASE WHEN (state='COMPLETED' AND completed_at > ?) OR (state IN ('RESERVED','RUNNING') AND lease_expires_at >= ?) THEN 1 ELSE 0 END) AS active_count
-           FROM x51_scan_reservations
-           WHERE subject=? AND tier='ADVANCED'`,
-        )
-        .bind(windowStartIso, windowStartIso, nowIso, subject)
-        .first<{ last_completed: string | null; active_count: number | null }>(),
-    ]);
-
-    classicUsed = Number(classicRow?.n ?? 0);
-    advCompletedAt = advRow?.last_completed ?? null;
-    advActiveCount = Number(advRow?.active_count ?? 0);
-  } catch {
-    // Fallback if table does not exist yet
-  }
-
-  const nextEligibleAtUTC =
-    advCompletedAt !== null
-      ? new Date(
-          Date.parse(advCompletedAt) + ADVANCED_ROLLING_WINDOW_MS,
-        ).toISOString()
-      : advActiveCount > 0
-        ? new Date(nowMs + RESERVATION_LEASE_MS).toISOString()
-        : null;
+  // The predicates ignore expired leases. A quota read never mutates account state.
+  const [classicRow, advRow] = await Promise.all([
+    db
+      .prepare(
+        `SELECT count(*) AS n FROM x51_scan_reservations
+         WHERE subject=? AND tier='CLASSIC'
+           AND ((state='COMPLETED' AND ist_day=?) OR (state IN ('RESERVED','RUNNING') AND lease_expires_at >= ?))`,
+      )
+      .bind(subject, istDay, nowIso)
+      .first<{ n: number }>(),
+    db
+      .prepare(
+        `SELECT
+           MAX(CASE WHEN state='COMPLETED' AND completed_at > ? THEN completed_at END) AS last_completed,
+           SUM(CASE WHEN (state='COMPLETED' AND completed_at > ?) OR (state IN ('RESERVED','RUNNING') AND lease_expires_at >= ?) THEN 1 ELSE 0 END) AS active_count
+         FROM x51_scan_reservations
+         WHERE subject=? AND tier='ADVANCED'`,
+      )
+      .bind(windowStartIso, windowStartIso, nowIso, subject)
+      .first<{ last_completed: string | null; active_count: number | null }>(),
+  ]);
+  if (!classicRow || !advRow) throw new Error("Scan quota summary unavailable.");
+  const classicUsed = Number(classicRow.n);
+  const advCompletedAt = advRow.last_completed;
+  const advActiveCount = Number(advRow.active_count ?? 0);
+  const nextEligibleAtUTC = advCompletedAt
+    ? new Date(Date.parse(advCompletedAt) + ADVANCED_ROLLING_WINDOW_MS).toISOString()
+    : null;
 
   return {
     classic: {

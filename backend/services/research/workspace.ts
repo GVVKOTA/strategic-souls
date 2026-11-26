@@ -223,7 +223,7 @@ export async function workspaceState(
       )
       .bind(subject)
       .all(),
-    getScanQuotaSummary(db, subject),
+    getScanQuotaSummary(db, subject).catch(() => null),
     listPinnedFormulaIds(db, subject),
     exchangeScanAvailable(subject).catch(() => false),
   ]);
@@ -1267,7 +1267,7 @@ export async function mutateWorkspace(
         results,
         drawReport,
         soulGenome,
-        scanQuota: await getScanQuotaSummary(db, subject),
+        scanQuota: await getScanQuotaSummary(db, subject).catch(() => null),
       };
     } catch (err) {
       await releaseScanReservation(db, reservation.id, subject, "FAILED");
@@ -1422,7 +1422,7 @@ export async function mutateWorkspace(
         results: projection.payload.results,
         redaction: projection.redaction,
         ...(soulGenome ? { soulGenome } : {}),
-        scanQuota: await getScanQuotaSummary(db, subject),
+        scanQuota: await getScanQuotaSummary(db, subject).catch(() => null),
       };
     } catch (err) {
       await releaseScanReservation(db, reservation.id, subject, "FAILED");
