@@ -38,7 +38,7 @@ export default function RootLayout({
         />
         <link
           rel="preload"
-          href="/fonts/space-grotesk-500.woff2"
+          href="/fonts/space-grotesk-400.woff2"
           as="font"
           type="font/woff2"
           crossOrigin="anonymous"

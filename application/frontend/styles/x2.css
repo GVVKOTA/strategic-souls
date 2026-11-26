@@ -430,11 +430,6 @@
   gap: 16px;
 }
 
-.x2-auth-oauth {
-  display: grid;
-  gap: 8px;
-}
-
 .x2-password-field {
   display: flex;
   align-items: center;

@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { isGoogleOAuthConfigured } from "../../backend/auth/session";
 import { documents } from "../../backend/services/legacy/content";
 import AuthPanel from "../../frontend/features/auth/auth-panel";
 
@@ -40,10 +39,7 @@ export default async function ProductPage({
           Soul Scans, chart layouts, and private Community research in
           Cloudflare D1.
         </p>
-        <AuthPanel
-          returnTo={returnTo}
-          googleEnabled={isGoogleOAuthConfigured()}
-        />
+        <AuthPanel returnTo={returnTo} />
         <p className="legal-note">
           Global Vertex Vectors · Research and education only. Sessions use
           HttpOnly cookies stored as SHA-256 hashes on Cloudflare Workers.

@@ -200,7 +200,7 @@ test("unauthenticated session returns 200 authenticated:false and ignores forged
   assert.equal(res.status, 200);
   assert.equal(res.data.authenticated, false);
   assert.equal(res.data.user, null);
-  assert.equal(res.data.googleEnabled, false);
+  assert.equal("googleEnabled" in res.data, false);
 });
 
 test("registration hashes passwords with PBKDF2, stores only hashed session token, and sets HttpOnly Secure cookie", async () => {
@@ -334,56 +334,71 @@ test("signin rejects wrong password or unknown email with uniform 401 and succee
   assert.equal(freshCheck.data.authenticated, true);
 });
 
-test("Google OAuth callback rejects mismatched state, clears OAuth cookies, and blocks upstream redirects", async () => {
-  env.GOOGLE_CLIENT_ID = "test-client-id";
-  env.GOOGLE_CLIENT_SECRET = "test-client-secret";
-  try {
-    const start = await callAuth("google?return_to=%2Fworkspace");
-    assert.equal(start.status, 302);
-    const location = start.headers.get("location") || "";
-    assert.match(location, /^https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?/);
-
-    const badState = await callAuth(
-      "google/callback?code=fake-code&state=wrong-state",
-      undefined,
-      { cookie: "__ss_oauth_state=expected-state; __ss_oauth_pkce=verifier123" },
-    );
-    assert.equal(badState.status, 400);
-    const cleared = badState.headers.get("set-cookie") || "";
-    assert.match(cleared, /__ss_oauth_state=;/);
-    assert.match(cleared, /Max-Age=0/);
-
-    let sawManual = false;
-    mockFetch = async (_url, init) => {
-      sawManual = init?.redirect === "manual";
-      return new Response(null, { status: 302, headers: { location: "https://evil.invalid" } });
-    };
-    const redirected = await callAuth(
-      "google/callback?code=fake-code&state=expected-state",
-      undefined,
-      { cookie: "__ss_oauth_state=expected-state; __ss_oauth_pkce=verifier123" },
-    );
-    assert.equal(sawManual, true);
-    assert.equal(redirected.status, 502);
-  } finally {
-    delete env.GOOGLE_CLIENT_ID;
-    delete env.GOOGLE_CLIENT_SECRET;
-    mockFetch = () => {
-      throw new Error("Unexpected network fetch in auth tests.");
-    };
-  }
-});
-
-test("Google OAuth fails closed when credentials are missing and return paths block open redirects", async () => {
-  const google = await callAuth("google");
-  assert.equal(google.status, 503);
+test("unused third-party OAuth endpoints return 404 and return paths block open redirects", async () => {
+  assert.equal((await callAuth("google?return_to=%2Fworkspace")).status, 404);
+  assert.equal((await callAuth("google/callback?code=fake&state=fake")).status, 404);
 
   assert.equal(sessionMod.safeRelativeReturnPath("/workspace"), "/workspace");
   assert.equal(sessionMod.safeRelativeReturnPath("/?view=strategy"), "/?view=strategy");
   assert.equal(sessionMod.safeRelativeReturnPath("//evil.example"), "/");
   assert.equal(sessionMod.safeRelativeReturnPath("https://evil.example/x"), "/");
   assert.equal(sessionMod.safeRelativeReturnPath("/signin"), "/");
-  assert.equal(sessionMod.safeRelativeReturnPath("/api/auth/google"), "/");
+  assert.equal(sessionMod.safeRelativeReturnPath("/api/auth/session"), "/");
+});
+
+test("expired sessions are rejected, unauthorized private auth routes return 401, and active sessions stay isolated per account", async () => {
+  const regA = await callAuth("register", {
+    email: "isolated_a@example.com",
+    password: "StrongPassword123",
+    displayName: "Isolated A",
+    adult: true,
+    privacy: true,
+    terms: true,
+  });
+  const regB = await callAuth("register", {
+    email: "isolated_b@example.com",
+    password: "StrongPassword456",
+    displayName: "Isolated B",
+    adult: true,
+    privacy: true,
+    terms: true,
+  });
+  assert.equal(regA.status, 201);
+  assert.equal(regB.status, 201);
+  const cookieA = extractSessionCookie(regA.headers);
+  const cookieB = extractSessionCookie(regB.headers);
+
+  // Unauthenticated access to private session listing fails closed with 401
+  assert.equal((await callAuth("sessions")).status, 401);
+
+  // Each user sees only their own active session(s)
+  const sessA = await callAuth("sessions", undefined, { cookie: cookieA });
+  const sessB = await callAuth("sessions", undefined, { cookie: cookieB });
+  assert.equal(sessA.status, 200);
+  assert.equal(sessB.status, 200);
+  assert.equal(sessA.data.sessions.length, 1);
+  assert.equal(sessB.data.sessions.length, 1);
+  assert.notEqual(sessA.data.sessions[0].id, sessB.data.sessions[0].id);
+
+  // User A cannot revoke User B's session ID
+  const crossRevoke = await callAuth(
+    "sessions/revoke",
+    { sessionId: sessB.data.sessions[0].id },
+    { cookie: cookieA },
+  );
+  assert.equal(crossRevoke.status, 404);
+
+  // Expired session row in D1 is rejected by getAuthenticatedUser
+  sql
+    .prepare("UPDATE auth_sessions SET expires_at = ? WHERE user_id = (SELECT id FROM auth_users WHERE email = ?)")
+    .run(Date.now() - 10_000, "isolated_a@example.com");
+  const expiredSession = await callAuth("session", undefined, { cookie: cookieA });
+  assert.equal(expiredSession.status, 200);
+  assert.equal(expiredSession.data.authenticated, false);
+  // User B remains unaffected
+  const validB = await callAuth("session", undefined, { cookie: cookieB });
+  assert.equal(validB.data.authenticated, true);
+  assert.equal(validB.data.user.email, "isolated_b@example.com");
 });
 
 test("OpenAI / ChatGPT authentication artifacts and routes are completely removed from app, backend, and frontend", () => {

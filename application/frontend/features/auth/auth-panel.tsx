@@ -9,7 +9,6 @@ export type AuthSessionResponse = {
   alias: string | null;
   consentVersion: string;
   isOwner: boolean;
-  googleEnabled: boolean;
   user: {
     displayName: string;
     email: string;
@@ -48,7 +47,6 @@ export type AuthSessionResponse = {
 type Props = {
   initialMode?: "signin" | "register";
   returnTo?: string;
-  googleEnabled?: boolean;
   onAuthenticated?: (session: AuthSessionResponse) => void;
 };
 
@@ -61,7 +59,6 @@ function sanitizeReturnTo(value?: string): string {
 export default function AuthPanel({
   initialMode = "signin",
   returnTo = "/",
-  googleEnabled: googleEnabledProp,
   onAuthenticated,
 }: Props) {
   const [mode, setMode] = useState<"signin" | "register" | "forgot" | "reset">(
@@ -78,7 +75,6 @@ export default function AuthPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [infoMessage, setInfoMessage] = useState("");
-  const [googleEnabled, setGoogleEnabled] = useState(!!googleEnabledProp);
   const submitLock = useRef(false);
 
   useEffect(() => {
@@ -99,22 +95,18 @@ export default function AuthPanel({
   }, []);
 
   useEffect(() => {
-    if (googleEnabledProp !== undefined) return;
+    if (!onAuthenticated) return;
     let alive = true;
     api<AuthSessionResponse>("/api/auth/session")
       .then((s) => {
         if (!alive) return;
-        setGoogleEnabled(!!s.googleEnabled);
-        if (s.authenticated && onAuthenticated) onAuthenticated(s);
+        if (s.authenticated) onAuthenticated(s);
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [googleEnabledProp, onAuthenticated]);
-
-  const effectiveGoogleEnabled =
-    googleEnabledProp !== undefined ? googleEnabledProp : googleEnabled;
+  }, [onAuthenticated]);
 
   const safeTarget = sanitizeReturnTo(returnTo);
 
@@ -201,19 +193,6 @@ export default function AuthPanel({
           Create account
         </button>
       </div>
-
-      {effectiveGoogleEnabled && (mode === "signin" || mode === "register") && (
-        <div className="x2-auth-oauth">
-          <a
-            className="x1-secondary x1-motion-button"
-            href={`/api/auth/google?return_to=${encodeURIComponent(safeTarget)}`}
-          >
-            Continue with Google
-            <ArrowRight size={15} />
-          </a>
-          <p className="x1-caption">Or continue with email and password</p>
-        </div>
-      )}
 
       <form className="x1-form" onSubmit={handleSubmit}>
         {mode === "register" && (

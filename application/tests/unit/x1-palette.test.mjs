@@ -96,7 +96,7 @@ test('CSS declarations contain neutral colours; blue is restricted to real h1/h2
       if (!canonicalDefinition) blueRules++;
     }
   }
-  for (const file of ['frontend/features/legacy/workspace.tsx', 'frontend/features/v3/workspace.tsx', 'frontend/features/global/dashboard.tsx', 'frontend/components/workspace/strategy.tsx', 'frontend/components/workspace/shared.tsx']) {
+  for (const file of ['frontend/features/legacy/workspace.tsx', 'frontend/features/global/dashboard.tsx', 'frontend/components/workspace/strategy.tsx', 'frontend/components/workspace/shared.tsx']) {
     const source = readFileSync(file, 'utf8');
     for (const match of source.matchAll(/(?:fill|stroke|stopColor)="([^"]+)"/g)) {
       const value = resolveVars(match[1]);

@@ -1,4 +1,3 @@
-import { env } from "cloudflare:workers";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { database } from "../../database/queries/repository";
@@ -15,7 +14,7 @@ export type AuthenticatedUser = {
   displayName: string;
   email: string;
   fullName: string | null;
-  authProvider: "email" | "google";
+  authProvider: "email";
 };
 
 export const SESSION_COOKIE_NAME = "__ss_session";
@@ -30,13 +29,7 @@ type AuthUserRow = {
   display_name: string;
   password_hash: string | null;
   password_salt: string | null;
-  auth_provider: string;
-  google_sub: string | null;
 };
-
-function runtimeEnv(): Record<string, string | undefined> {
-  return env as unknown as Record<string, string | undefined>;
-}
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -66,11 +59,6 @@ function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
   return diff === 0;
 }
 
-export function timingSafeEqualStrings(a: string, b: string): boolean {
-  const enc = new TextEncoder();
-  return timingSafeEqualBytes(enc.encode(a), enc.encode(b));
-}
-
 export function randomToken(byteLength = 32): string {
   const bytes = new Uint8Array(byteLength);
   crypto.getRandomValues(bytes);
@@ -83,14 +71,6 @@ export async function sha256Hex(value: string): Promise<string> {
     new TextEncoder().encode(value),
   );
   return bytesToHex(new Uint8Array(digest));
-}
-
-export async function sha256Base64Url(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-  return bytesToBase64Url(new Uint8Array(digest));
 }
 
 async function derivePasswordBytes(
@@ -422,7 +402,7 @@ export async function authenticateEmailUser(input: {
   const db = database();
   const row = await db
     .prepare(
-      "SELECT id, email, display_name, password_hash, password_salt, auth_provider, google_sub FROM auth_users WHERE email = ?",
+      "SELECT id, email, display_name, password_hash, password_salt FROM auth_users WHERE email = ?",
     )
     .bind(email)
     .first<AuthUserRow>();
@@ -447,7 +427,7 @@ export async function authenticateEmailUser(input: {
     displayName: row.display_name,
     email: row.email,
     fullName: row.display_name,
-    authProvider: row.auth_provider === "google" ? "google" : "email",
+    authProvider: "email",
   };
 }
 
@@ -465,14 +445,13 @@ export async function getAuthenticatedUser(
   const nowMs = Date.now();
   const row = await database()
     .prepare(
-      "SELECT u.id, u.email, u.display_name, u.auth_provider FROM auth_sessions s JOIN auth_users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
+      "SELECT u.id, u.email, u.display_name FROM auth_sessions s JOIN auth_users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
     )
     .bind(tokenHash, nowMs)
     .first<{
       id: string;
       email: string;
       display_name: string;
-      auth_provider: string;
     }>();
 
   if (!row) return null;
@@ -482,7 +461,7 @@ export async function getAuthenticatedUser(
     displayName: row.display_name,
     email: row.email,
     fullName: row.display_name,
-    authProvider: row.auth_provider === "google" ? "google" : "email",
+    authProvider: "email",
   };
 }
 
@@ -515,101 +494,6 @@ export function safeRelativeReturnPath(value: string | null | undefined): string
     return "/";
   }
   return `${url.pathname}${url.search}${url.hash}`;
-}
-
-export function getGoogleOAuthConfig(): {
-  clientId: string;
-  clientSecret: string;
-} | null {
-  const e = runtimeEnv();
-  const clientId = e.GOOGLE_CLIENT_ID?.trim();
-  const clientSecret = e.GOOGLE_CLIENT_SECRET?.trim();
-  if (!clientId || !clientSecret) return null;
-  return { clientId, clientSecret };
-}
-
-export function isGoogleOAuthConfigured(): boolean {
-  return getGoogleOAuthConfig() !== null;
-}
-
-export async function findOrCreateGoogleUser(profile: {
-  sub: string;
-  email: string;
-  name?: string;
-}): Promise<AuthenticatedUser> {
-  const db = database();
-  const email = normalizeEmail(profile.email);
-  const bySub = await db
-    .prepare(
-      "SELECT id, email, display_name, auth_provider FROM auth_users WHERE google_sub = ?",
-    )
-    .bind(profile.sub)
-    .first<{
-      id: string;
-      email: string;
-      display_name: string;
-      auth_provider: string;
-    }>();
-
-  if (bySub) {
-    return {
-      userId: bySub.id,
-      displayName: bySub.display_name,
-      email: bySub.email,
-      fullName: bySub.display_name,
-      authProvider: "google",
-    };
-  }
-
-  const byEmail = await db
-    .prepare("SELECT id, auth_provider FROM auth_users WHERE email = ?")
-    .bind(email)
-    .first<{ id: string; auth_provider: string }>();
-  if (byEmail) {
-    throw new HttpError(
-      409,
-      "An email/password account already exists for this address. Sign in with your password.",
-    );
-  }
-
-  const id = "usr_" + crypto.randomUUID();
-  const displayName = validateDisplayName(profile.name, email);
-  const now = new Date().toISOString();
-  const recentAvatars = await db
-    .prepare(
-      "SELECT avatar_id FROM auth_users WHERE avatar_id IS NOT NULL ORDER BY created_at DESC LIMIT 8",
-    )
-    .all<{ avatar_id: string }>()
-    .then((r) => (r.results ?? []).map((x) => x.avatar_id))
-    .catch(() => [] as string[]);
-  const initialAvatarId = pickRandomAvatarId(recentAvatars);
-  try {
-    await db
-      .prepare(
-        "INSERT INTO auth_users (id, email, display_name, password_hash, password_salt, auth_provider, google_sub, avatar_id, created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, 'google', ?, ?, ?, ?)",
-      )
-      .bind(id, email, displayName, profile.sub, initialAvatarId, now, now)
-      .run();
-  } catch (colErr) {
-    if (/no column named avatar_id/i.test(String(colErr))) {
-      await db
-        .prepare(
-          "INSERT INTO auth_users (id, email, display_name, password_hash, password_salt, auth_provider, google_sub, created_at, updated_at) VALUES (?, ?, ?, NULL, NULL, 'google', ?, ?, ?)",
-        )
-        .bind(id, email, displayName, profile.sub, now, now)
-        .run();
-    } else {
-      throw colErr;
-    }
-  }
-
-  return {
-    userId: id,
-    displayName,
-    email,
-    fullName: displayName,
-    authProvider: "google",
-  };
 }
 
 export type ActiveSessionItem = {
