@@ -916,6 +916,16 @@ test("Close-only Indian API evaluates close-based SMA/RSI cleanly and marks OHLC
   assert.equal(universe.datasets[0].observations[0].high, undefined, "Never invent High on close-only feed");
   assert.equal(universe.datasets[0].observations[0].low, undefined, "Never invent Low on close-only feed");
 
+  const stored = h.sql.prepare("SELECT last_event, last_close FROM x8_shared_history_snapshot WHERE instrument_id=?").get("NSE:SBIN");
+  h.sql.prepare("UPDATE x8_shared_history_snapshot SET received_at=received_at-60000 WHERE instrument_id=?").run("NSE:SBIN");
+  h.sql.prepare("UPDATE x8_shared_history_task SET next_attempt=0 WHERE instrument_id=?").run("NSE:SBIN");
+  dates.splice(-4);
+  await shared.refreshSharedHistory();
+  assert.equal(h.getFetchCalls().length, 2);
+  const publications = h.sql.prepare("SELECT last_event,last_close FROM x8_shared_history_snapshot WHERE instrument_id=?").all("NSE:SBIN");
+  assert.deepEqual(publications, [stored]);
+  assert.equal(h.sql.prepare("SELECT latest_event FROM x8_shared_history_task WHERE instrument_id=?").get("NSE:SBIN").latest_event, stored.last_event);
+
   const closeScan = engine.evaluateScan(engine.compileFormula("close > sma(close, 5)"), universe.datasets, universe.asOf);
   assert.equal(closeScan.matches, 1);
 
@@ -1150,7 +1160,17 @@ test("Shared quote, sector-quotes, release & dashboard cards honor display+redis
   const niftyDisplayCard = displayOverview.cards.find((c) => c.canonicalId === "NSE:NIFTY");
   assert.ok(niftyDisplayCard && niftyDisplayCard.value > 0, "NSE:NIFTY card should populate from shared display snapshot");
   assert.equal(niftyDisplayCard.assetClass, "INDEX");
-  assert.ok(niftyDisplayCard.previousClose && niftyDisplayCard.previousClose > 0, "NSE:NIFTY card should retain previous close from sparkline series");
+  // The seeded penultimate date is an NSE holiday. Chart history is present but
+  // cannot establish the previous trading session for a daily change.
+  assert.ok(niftyDisplayCard.sparkline?.length >= 10);
+  assert.equal(niftyDisplayCard.previousClose, null);
+  assert.equal(niftyDisplayCard.absoluteChange, null);
+  assert.equal(niftyDisplayCard.percentChange, null);
+  h.sql.prepare("UPDATE x8_shared_history_snapshot SET prior_event=?, prior_close=? WHERE instrument_id=? AND config_version=?")
+    .run("2026-11-23", 24300, "NSE:NIFTY", upgradedVersion);
+  const adjacent = (await nineCard.getMarketOverviewPayload("alice")).cards.find(c => c.canonicalId === "NSE:NIFTY");
+  assert.equal(adjacent.previousClose, 24300);
+  assert.equal(adjacent.absoluteChange, adjacent.value - 24300);
 
   const tooManyIds = Array.from({ length: 161 }, (_, i) => `NSE:SYM${i}`).join(",");
   const tooManyRes = await quoteRoute.GET(new Request(`https://site.invalid/api/market/quote?scope=shared&ids=${tooManyIds}`));

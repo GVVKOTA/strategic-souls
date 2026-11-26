@@ -40,6 +40,7 @@ export type DataPoint = {
   reason: string;
   derivation: string | null;
   change: number | null;
+  previousSessionClose?: number | null;
   changeUnit: "%" | "bp";
   canAnalyze: boolean;
 };
