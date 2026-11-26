@@ -156,3 +156,17 @@ test('runtime exception details cannot leak through source health or numeric rea
   assert.ok(data.quotes.every(q=>q.reason==='Provider connection unavailable. Please try again later.'));
   assert.doesNotMatch(JSON.stringify(data),/Invalid redirect|sensitive runtime|implemented\)/);
 });
+
+test("read-only official references use retained documents without network or cache writes", async () => {
+  const calls = [];
+  const cache = {
+    read: async url => ({ text: url.includes("treasury") ? treasury() : ecb(), retrievedAt: new Date(NOW - 86400000).toISOString() }),
+    write: async () => { calls.push("write"); },
+  };
+  const fetcher = async () => { calls.push("fetch"); throw new Error("Fixture has no network"); };
+  const data = await marketSnapshot(fetcher, NOW, cache, true);
+  assert.ok(data.quotes.some(q => q.value !== null));
+  const empty = await marketSnapshot(fetcher, NOW, { ...cache, read: async () => null }, true);
+  assert.ok(empty.quotes.every(q => q.value === null));
+  assert.deepEqual(calls, []);
+});

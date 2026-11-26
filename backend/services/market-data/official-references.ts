@@ -26,6 +26,6 @@ const cache: OfficialReferenceCache = {
   },
 };
 
-export function loadOfficialReferences() {
-  return marketSnapshot(fetch, Date.now(), cache);
+export function loadOfficialReferences(cacheOnly = false) {
+  return marketSnapshot(fetch, Date.now(), cache, cacheOnly);
 }

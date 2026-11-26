@@ -15,8 +15,9 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request): Promise<Response> {
   const startedAt = Date.now();
   try {
-    const user = await getAuthenticatedUser(request).catch(() => null);
-    const payload = await getMarketOverviewPayload(user?.userId ?? null);
+    const cacheOnly = new URL(request.url).searchParams.get("source") === "public-cache";
+    const user = cacheOnly ? null : await getAuthenticatedUser(request).catch(() => null);
+    const payload = await getMarketOverviewPayload(user?.userId ?? null, undefined, cacheOnly);
     return Response.json(payload, {
       headers: {
         "Cache-Control": "private, no-store",

@@ -486,6 +486,7 @@ export function buildMarketOverviewCards(
 export async function getMarketOverviewPayload(
   subject: string | null,
   overrideSnapshot?: MarketSnapshot,
+  cacheOnly = false,
 ) {
   const layoutPromise = getUserMarketLayout(subject);
   const now = new Date().toISOString();
@@ -621,7 +622,7 @@ export async function getMarketOverviewPayload(
     layoutPromise,
     (async () => {
       try {
-        return overrideSnapshot ?? await loadOfficialReferences();
+        return overrideSnapshot ?? await loadOfficialReferences(cacheOnly);
       } catch {
         console.warn({ event: "market_overview_source_unavailable", source: "official_references" });
         return { asOf: now, quotes: [], fxHistory: [], yields: [], providers: [], disclosure: "", nextRefreshAfter: now };
