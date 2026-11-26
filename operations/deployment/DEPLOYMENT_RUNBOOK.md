@@ -17,10 +17,10 @@ This runbook documents the **exact verified production infrastructure** for **St
 | **Cloudflare D1 Physical UUID** | `1cda2b05-6b99-4d04-896f-b3542ad2ce7f` (applied `database/migrations/0000`–`0020`) |
 | **Cloudflare VPC Binding** | `MARKET_DATA_ADAPTER` (`01a2095b-f466-7c90-a813-4fad03735504`) |
 | **Cloudflare Workers Builds Trigger** | `0727e904-48ad-4e75-9b26-1d2123ec5063` (GitHub `GVVKOTA/strategic-souls`, branch `main`) |
-| **Workers Builds Root Directory** | **Required account-side update before merge:** change Build Configuration Root Directory from `/` (old) -> `application` (new) |
-| **Known-Good Rollback Anchors** | Version #4 `87d2108e-eb02-49c9-a361-3b6eb6fceb3c` (pre-X3, `af16aae5fb3f32ce7472b4071c85eb5119f1cf20`); Version #45 `c14d457e-c3b7-4389-a106-91d936759d5c` (pre-consolidation `5ac5b5b`); recovery branch/ref `recovery/pre-refactor-6a569bd` (`6a569bdb289f0ac64f2fafceb83ebaa7f8b842f6`) |
+| **Workers Builds Configuration** | Updated to `root_directory: "/application"`, `build_command: "pnpm run build"`, `deploy_command: "node ../operations/scripts/check-production-release.mjs stage"` |
+| **Known-Good Rollback Anchors** | Version #4 `87d2108e-eb02-49c9-a361-3b6eb6fceb3c` (pre-X3, `af16aae5fb3f32ce7472b4071c85eb5119f1cf20`); Version #45 `c14d457e-c3b7-4389-a106-91d936759d5c` (pre-consolidation `5ac5b5b`); pre-consolidation baseline `6a569bdb289f0ac64f2fafceb83ebaa7f8b842f6` (PR #16) |
 
-> **CRITICAL:** Never create a new Worker, never create a new D1 database, never replace UUID `1cda2b05-6b99-4d04-896f-b3542ad2ce7f` with `00000000-0000-4000-8000-000000000000`, and never edit or re-run applied migrations `0000`–`0020` destructively on production D1. **Do NOT merge `refactor/five-folder-repository` into `main` until Cloudflare Workers Builds Root Directory is updated from `/` to `application`.**
+> **CRITICAL:** Never create a new Worker, never create a new D1 database, never replace UUID `1cda2b05-6b99-4d04-896f-b3542ad2ce7f` with `00000000-0000-4000-8000-000000000000`, and never edit or re-run applied migrations `0000`–`0020` destructively on production D1.
 
 ---
 

@@ -26,7 +26,7 @@ strategic-souls/
 | Metric | Baseline (`6a569bdb289f0ac64f2fafceb83ebaa7f8b842f6`) | Post-Consolidation |
 | --- | ---: | ---: |
 | Tracked files | `637` | `447` |
-| Tracked subdirectories | `139` | `116` |
+| Tracked subdirectories | `139` | `117` |
 | Tracked top-level directories | `11` (`.github`, `app`, `backend`, `database`, `drizzle`, `frontend`, `operations`, `public`, `scripts`, `supabase`, `tests`) | **`5`** (`.github`, `application`, `database`, `documentation`, `operations`) |
 | Tracked root-level files | `20` | **`1`** (`README.md`) |
 | JS lockfiles | `1` (`pnpm-lock.yaml`) | `1` (`application/pnpm-lock.yaml`) |
@@ -131,18 +131,17 @@ Every applied SQL migration (`0000`–`0020`), Drizzle `meta/_journal.json` + sn
 
 ---
 
-## 8. Configuration Changes & Required External Action Before Merge
+## 8. Cloudflare Workers Builds & Branch Consolidation Updates
 
-1. **Cloudflare Workers Builds Root Directory (EXTERNAL ACTION REQUIRED):**  
-   - **Old Setting:** `/` (repository root)  
-   - **New Required Setting:** `application` (in Cloudflare Dashboard -> Workers Builds trigger `0727e904-48ad-4e75-9b26-1d2123ec5063` before merging to `main`).  
-   - **Build / Artifact Root:** `cd application && pnpm install --frozen-lockfile && pnpm run build`, producing `application/dist/server/wrangler.json`.
-2. **No production deployment, `main` merge, or D1 write executed.** Local branch remains unmerged at `refactor/five-folder-repository`.
+1. **Cloudflare Workers Builds Configuration (`trigger_uuid: 0727e904-48ad-4e75-9b26-1d2123ec5063`, `script_tag: b0ad3e732c704e84a7aad4eff2aef4da`):**  
+   - **Root Directory:** Updated `/` -> `/application` (on both trigger and preview/production worker build settings).  
+   - **Build / Deploy Commands:** `build_command: "pnpm run build"`, `deploy_command: "node ../operations/scripts/check-production-release.mjs stage"`, `previews_base_config.build_command: "pnpm run build"`.
+2. **Branch Consolidation:** Consolidated directly onto `main` and removed legacy remote/local feature branches per explicit owner direction (`6a569bdb289f0ac64f2fafceb83ebaa7f8b842f6` remains reachable in Git history as the parent commit before consolidation).
 
 ---
 
 ## 9. Safe Rollback Procedure
 
-- **Pre-Refactor Git Recovery Point:** `recovery/pre-refactor-6a569bd` (`6a569bdb289f0ac64f2fafceb83ebaa7f8b842f6`, PR #16).  
-- **To discard refactor locally:** Switch back to `main` or `recovery/pre-refactor-6a569bd`; remove local worktree `strategic-souls-refactor` if no longer needed.  
-- **If merged later and rollback is needed:** Revert the merge commit via `git revert -m 1 <merge-sha>` on a PR (never force-push `main`), restore Workers Builds Root Directory back to `/`, and leave production D1 `ss` (`1cda2b05-6b99-4d04-896f-b3542ad2ce7f`) intact.
+- **Pre-Consolidation Baseline Commit in `main` History:** `6a569bdb289f0ac64f2fafceb83ebaa7f8b842f6` (PR #16).  
+- **To revert on `main`:** Run `git revert <consolidation-commit-range>` (never force-push `main`), restore Workers Builds `root_directory` to `/` and `deploy_command` to `"node operations/scripts/check-production-release.mjs stage"`, and leave production D1 `ss` (`1cda2b05-6b99-4d04-896f-b3542ad2ce7f`) intact.
+- **Worker Traffic Rollback:** Promote known-good Cloudflare Worker version (e.g. Version #45 `c14d457e-c3b7-4389-a106-91d936759d5c` or pre-X3 Version #4 `87d2108e-eb02-49c9-a361-3b6eb6fceb3c`).
