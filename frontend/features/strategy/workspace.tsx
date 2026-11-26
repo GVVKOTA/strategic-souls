@@ -1204,8 +1204,12 @@ export default function Strategy({
   }, [scans, graveyardFilter, graveyardQuery]);
 
   const quota = workspace?.scanQuota;
-  const classicRemaining = quota?.classic.remaining ?? 20;
-  const classicLimit = quota?.classic.limit ?? 20;
+  const classicAllowance = quota
+    ? `${quota.classic.remaining} of ${quota.classic.limit} scans left today`
+    : "Scan allowance unavailable";
+  const advancedAllowance = quota
+    ? `${quota.advanced.remaining} of ${quota.advanced.limit} Advanced scans available this hour`
+    : "Scan allowance unavailable";
   const isDrawMode = scanTier === "ADVANCED" && advancedEntry === "DRAW";
 
   const scopeAndTimeframeControls = (
@@ -1502,9 +1506,7 @@ export default function Strategy({
                     Soul Scan
                   </h2>
                   <p className="ss-v31-quota-inline" aria-live="polite">
-                    {scanTier === "CLASSIC"
-                      ? `${classicRemaining} of ${classicLimit} scans left today`
-                      : `Advanced: ${quota?.advanced.remaining ?? 1}/${quota?.advanced.limit ?? 1} available this hour`}
+                    {scanTier === "CLASSIC" ? classicAllowance : advancedAllowance}
                   </p>
                 </div>
               </div>
@@ -2961,9 +2963,7 @@ export default function Strategy({
           <div className="x54-quota-popover" style={{ marginBottom: 14 }}>
             <strong>Daily scan allowance</strong>
             <div style={{ marginTop: 4 }}>
-              Classic: {classicRemaining}/{classicLimit} scans remaining today
-              (resets 00:00 IST) · Advanced: {quota?.advanced.remaining ?? 1}/
-              {quota?.advanced.limit ?? 1} available per rolling 60 minutes.
+              {quota ? <>{classicAllowance} (resets 00:00 IST) · {advancedAllowance}.</> : classicAllowance}
             </div>
             <div className="x1-caption" style={{ marginTop: 4 }}>
               Failed, invalid, or unentitled scans release their reservation and
