@@ -131,9 +131,9 @@ pnpm run test:quant
 Local templates live at [`application/.env.example`](application/.env.example) and [`application/.dev.vars.example`](application/.dev.vars.example). Configure real secrets strictly inside Cloudflare Worker Encrypted Secrets or gitignored `application/.secrets/` / `application/.dev.vars`:
 
 - **Worker Bindings & Vars:** `DB`, `MARKET_DATA_ADAPTER`, `CF_VERSION_METADATA`, `ENABLE_PRIVATE_BROKER_DATA`, `INDIA_API_HOST`
-- **Server-Only Secrets:** `X2_OWNER_SUBJECT`, `MARKET_ADAPTER_AUTH_TOKEN`, `BHARATSTOCK_API_KEY`, `INDIA_API_KEY`, `X2_EODHD_API_TOKEN`, `X2_TRUEDATA_BEARER_TOKEN`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SS_NEWS_API_KEY`
+- **Server-Only Secrets:** `X2_OWNER_SUBJECT`, `MARKET_ADAPTER_AUTH_TOKEN`, `BHARATSTOCK_API_KEY`, `INDIA_API_KEY`, `X2_EODHD_API_TOKEN`, `X2_TRUEDATA_BEARER_TOKEN`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, `SS_NEWS_API_KEY`
 - **Local Loopback Adapter (`.secrets/angelone.env` only):** `ANGELONE_API_KEY`, `ANGELONE_CLIENT_ID`, `ANGELONE_MPIN`, `ANGELONE_TOTP_SECRET`
-- **Optional Local V3 Stack:** `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `V3_LOCAL_DEV`, `V3_GOOGLE_ENABLED`, `V3_QUANT_ENABLED`
+- **Optional Local V3 Stack:** `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `V3_LOCAL_DEV`, `V3_QUANT_ENABLED`
 
 ---
 

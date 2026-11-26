@@ -109,10 +109,9 @@ Production secrets are stored **only** in Cloudflare Worker Secrets (`Workers & 
 | `INDIA_API_KEY` | Encrypted Indian API credential | Preserved by the release gate |
 | `X2_EODHD_API_TOKEN` | Licensed EODHD market-data API token | Optional (keyless fallback active) |
 | `X2_TRUEDATA_BEARER_TOKEN` | Licensed TrueData historical bearer token | Optional (keyless fallback active) |
-| `GOOGLE_CLIENT_ID` | Optional Google OAuth 2.0 client ID | Optional (email/password active) |
-| `GOOGLE_CLIENT_SECRET` | Optional Google OAuth 2.0 client secret | Optional (email/password active) |
 
 - Never commit secret values, never store them in D1 tables, and never paste them in chat or PRs.
+- Authentication uses first-party Cloudflare D1 email/password accounts only; Google OAuth routes and secrets are retired.
 - `INDIA_API_HOST=stock.indianapi.in` is a server variable tracked in `vite.config.ts`.
 - Cloudflare Worker observability `redact_query_string` should remain enabled (`true`) so URL query parameters are not logged in plaintext.
 

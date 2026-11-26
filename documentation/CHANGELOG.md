@@ -4,6 +4,11 @@ Consolidates the milestone decisions and structural transitions previously scatt
 
 ---
 
+## 2026-11-26 — Hardening, CI Fix, Dead Code Pruning & Live UX Release (`main`)
+- **CI & Lint (`verify.yml`, `verify-v3.yml`):** Installed `pnpm/action-setup@v4` (`11.25.0`) before `actions/setup-node@v4` cache setup, added `scan-v3-source.mjs` to `verify.yml`, and resolved all 12 ESLint warnings across backend services and UI components (0 errors, 0 warnings).
+- **Safe Pruning & Auth Surface:** Confirmed production D1 holds zero Google OAuth accounts and removed unused Google OAuth routes, panel flows, env definitions, and CSS while keeping first-party D1 email/password authentication and migrations `0000`–`0020` intact. Removed orphaned `frontend/features/v3/{workspace,portfolio}.tsx`, deduplicated 4 identical font files, and pruned 20 unused packages (`-134` lockfile entries) under strict `pnpm-workspace.yaml` policy.
+- **Bundle & Live UI Fixes:** Made `maplibre-gl` dynamically client-only and bounded regional markers to viewport extents; fixed `upcoming` Economic Calendar filtering to exclude released events; decoded HTML entities in NASA EONET titles; enabled default respectful Earth auto-rotation (`prefers-reduced-motion` compliant); aligned Formula Lab initial ready state and Advanced Soul Scan default formula tree sync/bounds; added `/[slug]` route metadata/navigation links, mobile dock `safe-area-inset-bottom` clearance, and `/legal/compliance` footer link.
+
 ## 2026-11-26 — Five-Folder Repository Consolidation (`refactor/five-folder-repository`)
 - **Decision:** Reorganized 637 tracked files (11 root directories, 20 root files) into strictly five tracked top-level directories (`.github/`, `application/`, `database/`, `documentation/`, `operations/`) + a single root `README.md`, with zero functional changes to routes, APIs, UI tokens, security boundaries, or D1 schema identity.
 - **Architectural boundary:** Placed the complete Next/Vinext/Cloudflare Worker JavaScript project root inside `application/` (preserving `app/`, `public/`, `frontend/`, `backend/`, `database/`, `tests/`, configs, lockfile, and `AGENTS.md`) while consolidating SQL migration history (`0000`–`0020` byte-for-byte + `supabase/`) under top-level `database/`.
