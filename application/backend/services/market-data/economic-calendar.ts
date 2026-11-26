@@ -525,7 +525,10 @@ export function getEconomicCalendarEvents(options: {
       return evMs >= nowMs - 86_400_000 && evMs <= weekEndMs;
     }
     if (range === "upcoming") {
-      return evMs >= nowMs - 86_400_000;
+      return (
+        ev.status !== "RELEASED" &&
+        (ev.announcedDateOnly ? ev.scheduledDate >= istToday : evMs >= nowMs)
+      );
     }
     return true;
   });

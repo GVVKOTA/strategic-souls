@@ -15,6 +15,7 @@ type PollsResponse = {
 
 type Props = {
   authenticated: boolean;
+  compactHeader?: boolean;
   onRequireAuth?: () => void;
   notify: Notice;
 };
@@ -44,6 +45,7 @@ function formatWindowTime(iso: string, underlying: "NIFTY50" | "GOLD"): string {
  */
 export default function DailyMarketPulse({
   authenticated,
+  compactHeader = false,
   onRequireAuth,
   notify,
 }: Props) {
@@ -102,11 +104,20 @@ export default function DailyMarketPulse({
   }
 
   return (
-    <section aria-labelledby="x53-vox-heading">
-      <div className="x52-section-center">
-        <h2 id="x53-vox-heading">MARKET VOX</h2>
-        <p>NIFTY &amp; Gold community vote</p>
-      </div>
+    <section
+      aria-label={compactHeader ? "Market Vox" : undefined}
+      aria-labelledby={compactHeader ? undefined : "x53-vox-heading"}
+    >
+      {!compactHeader ? (
+        <div className="x52-section-center">
+          <h2 id="x53-vox-heading">MARKET VOX</h2>
+          <p>NIFTY &amp; Gold community vote</p>
+        </div>
+      ) : (
+        <p className="x51-section-sub" style={{ textAlign: "center", marginBottom: 14 }}>
+          NIFTY &amp; Gold community vote
+        </p>
+      )}
 
       {loading && polls.length === 0 ? (
         <p className="x1-caption" style={{ textAlign: "center" }}>

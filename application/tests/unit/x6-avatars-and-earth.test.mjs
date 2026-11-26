@@ -66,6 +66,7 @@ async function load(path) {
 const avatars = (await load('backend/services/profile/avatars.ts')).namespace;
 const conflicts = (await load('backend/services/earth/conflicts.ts')).namespace;
 const locations = (await load('backend/services/earth/locations.ts')).namespace;
+const newsAndDisasters = (await load('backend/services/intelligence/news-and-disasters.ts')).namespace;
 
 test('50-avatar catalog has exactly 50 unique presets across 5x10 collections with distinct safe SVGs', () => {
   assert.equal(avatars.AVATAR_CATALOG.length, 50);
@@ -215,4 +216,22 @@ test('EARTH_REGIONS search resolves curated countries cleanly', () => {
   assert.ok(locations.EARTH_REGIONS.length >= 20);
   const hits = locations.searchEarthRegions('india');
   assert.ok(hits.some((r) => r.id === 'IN'));
+});
+
+test('parseEonetEvents decodes HTML entities in NASA EONET titles', () => {
+  const out = newsAndDisasters.parseEonetEvents(
+    {
+      events: [
+        {
+          id: 'EONET_1',
+          title: 'St. John&#39;s Flood &amp; Storm &#x2013; Alert',
+          categories: [{ title: 'Floods' }],
+          geometry: [{ date: '2026-11-26T00:00:00Z', coordinates: [-52.7, 47.5] }],
+        },
+      ],
+    },
+    '2026-11-26T12:00:00.000Z',
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].title, "St. John's Flood & Storm \u2013 Alert");
 });

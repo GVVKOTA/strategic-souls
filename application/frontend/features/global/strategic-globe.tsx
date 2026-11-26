@@ -94,7 +94,10 @@ type Props = {
   notify: Notice;
 };
 
-function DeferredGlobe(props: React.ComponentProps<typeof GlobeCanvas>) {
+function DeferredGlobe({
+  onMount,
+  ...props
+}: React.ComponentProps<typeof GlobeCanvas> & { onMount?: () => void }) {
   const host = useRef<HTMLDivElement>(null),
     [ready, setReady] = useState(false);
 
@@ -105,6 +108,7 @@ function DeferredGlobe(props: React.ComponentProps<typeof GlobeCanvas>) {
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
           setReady(true);
+          onMount?.();
           observer.disconnect();
         }
       },
@@ -112,7 +116,7 @@ function DeferredGlobe(props: React.ComponentProps<typeof GlobeCanvas>) {
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [onMount]);
 
   return (
     <div className="x1-deferred-globe" ref={host}>
@@ -151,7 +155,8 @@ export default function StrategicGlobe({
   const [selectedExchange, setSelectedExchange] = useState<Exchange | null>(null);
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity>(null);
   const [zoom, setZoom] = useState(1.0);
-  const [autoRotate, setAutoRotate] = useState(false);
+  const [globeMounted, setGlobeMounted] = useState(false);
+  const [autoRotate, setAutoRotate] = useState(true);
   const [motionOverride, setMotionOverride] = useState(false);
   const [resetToken, setResetToken] = useState(0);
   const [rendererFallback, setRendererFallback] = useState(false);
@@ -185,9 +190,17 @@ export default function StrategicGlobe({
   const [conflicts, setConflicts] = useState<ConflictEventItem[]>([]);
 
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      queueMicrotask(() => setAutoRotate(false));
-    }
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const syncMotion = () => {
+      const minimal =
+        media.matches ||
+        document.documentElement.dataset.motion === "minimal" ||
+        !!document.querySelector('.x1-app[data-motion="minimal"]');
+      if (minimal) setAutoRotate(false);
+    };
+    queueMicrotask(syncMotion);
+    media.addEventListener("change", syncMotion);
+    return () => media.removeEventListener("change", syncMotion);
   }, []);
 
   useEffect(() => {
@@ -303,7 +316,12 @@ export default function StrategicGlobe({
   };
 
   const handleReset = () => {
-    setAutoRotate(false);
+    const minimal =
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+      document.documentElement.dataset.motion === "minimal" ||
+      !!document.querySelector('.x1-app[data-motion="minimal"]');
+    setMotionOverride(false);
+    setAutoRotate(!minimal);
     setZoom(GLOBE_ZOOM_MIN);
     setSelectedExchange(null);
     setSelectedEntity(null);
@@ -453,6 +471,7 @@ export default function StrategicGlobe({
         data-projection={mapReady ? "regional" : "earth"}
       >
         {!mapReady && <DeferredGlobe
+          onMount={() => setGlobeMounted(true)}
           venues={[...EXCHANGES]}
           selected={selectedExchange}
           autoRotate={autoRotate}
@@ -554,7 +573,7 @@ export default function StrategicGlobe({
             className="x53-globe-icon-btn"
             aria-label={autoRotate ? "Pause globe rotation" : "Start globe rotation"}
             aria-pressed={autoRotate}
-            disabled={rendererFallback || !!regional}
+            disabled={!globeMounted || rendererFallback || !!regional}
             onClick={() => {
               setMotionOverride(true);
               setAutoRotate((v) => !v);
@@ -566,7 +585,7 @@ export default function StrategicGlobe({
             type="button"
             className="x53-globe-icon-btn"
             aria-label="Zoom out"
-            disabled={rendererFallback || (!regional && zoom <= GLOBE_ZOOM_MIN + 0.01)}
+            disabled={!globeMounted || rendererFallback || (!regional && zoom <= GLOBE_ZOOM_MIN + 0.01)}
             onClick={zoomStepOut}
           >
             <Minus size={15} />
@@ -582,7 +601,7 @@ export default function StrategicGlobe({
             type="button"
             className="x53-globe-icon-btn"
             aria-label="Zoom in"
-            disabled={rendererFallback || (mapReady ? (regionView?.zoom ?? 0) >= 7 : zoom >= GLOBE_ZOOM_MAX - 0.01)}
+            disabled={!globeMounted || rendererFallback || (mapReady ? (regionView?.zoom ?? 0) >= 7 : zoom >= GLOBE_ZOOM_MAX - 0.01)}
             onClick={zoomStepIn}
           >
             <Plus size={15} />
@@ -591,7 +610,7 @@ export default function StrategicGlobe({
             type="button"
             className="x53-globe-icon-btn"
             aria-label="Reset globe to full Earth view"
-            disabled={rendererFallback}
+            disabled={!globeMounted || rendererFallback}
             onClick={handleReset}
           >
             <RotateCcw size={15} />

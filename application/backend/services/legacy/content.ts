@@ -107,7 +107,7 @@ export const documents: Record<string, LegalDoc> = {
   privacy: {
     title: "Privacy and account controls",
     intro:
-      "Version 2026-11-14-v4. Restricted Site storage; no ads or default collective training. Optional discovery, messaging and group sharing use the controls below. Optional third-party charts are disclosed before loading.",
+      "Version 2026-11-14-v4. Restricted Site storage; no ads or default collective training. Discovery, messaging and group sharing are controlled inside Account Settings. Third-party charts are disclosed before loading.",
     sections: [
       {
         title: "Data stored",
@@ -249,6 +249,6 @@ releaseGates[4].evidence =
   "No active product pricing, checkout, advertising or paid quota charging. Proposed credit economics await actual cost modelling, processor/KYC, tax/consumer review and explicit owner approval.";
 
 documents.privacy.sections.push({
-  title: "X2 research network and erasure",
+  title: "Research network and erasure",
   body: "Optional Body profiles, discovery preferences, conversation requests, messages, read state, blocks, reports, bookmarks, notifications, group discussions and private chart layouts are stored in the Cloudflare D1 database. Messages are server-authorized and are not claimed end-to-end encrypted. Account erasure removes paired conversations, including recipient copies, and owned shared groups only after separate acknowledgement of that impact. Export first. Provider runtime secrets are managed separately in owner-only Cloudflare Workers settings, never in profile fields or messages. Public publishing and paid services remain inactive.",
 });

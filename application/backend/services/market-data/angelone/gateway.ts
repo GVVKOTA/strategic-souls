@@ -301,7 +301,7 @@ async function callPrivateAdapter<T>(
       isAbort
         ? "Private broker adapter timed out."
         : "Private broker adapter is unreachable (owner laptop may be asleep or adapter not started).",
-      "Start the private local broker adapter (`npm run broker:adapter`) or check your Named Cloudflare Tunnel.",
+      "Start the private local broker adapter (npm run broker:adapter) or check your Named Cloudflare Tunnel.",
     );
   } finally {
     clearTimeout(timer);

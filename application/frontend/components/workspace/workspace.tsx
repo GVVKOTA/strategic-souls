@@ -119,7 +119,6 @@ export default function X1Workspace() {
       null,
     ),
     [about, setAbout] = useState(false),
-    [introPreview, setIntroPreview] = useState(false),
     [initialFormula, setInitialFormula] = useState(""),
     [initialInstrument, setInitialInstrument] = useState(""),
     [initialUniversePreset, setInitialUniversePreset] = useState<
@@ -765,15 +764,6 @@ export default function X1Workspace() {
     },
   ] as const;
 
-  function playIntro() {
-    if (motionPref === "minimal" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      notify("Your motion preference bypasses the eclipse.");
-      return;
-    }
-    setAbout(false);
-    setIntroPreview(true);
-  }
-
   const isSignedIn = authenticated === true;
   const memberWorkspace = isSignedIn && accepted === true;
 
@@ -788,12 +778,9 @@ export default function X1Workspace() {
         <link rel="preload" as="image" type="image/webp" href="/eclipse-horizon.webp" media="(width >= 768px)" fetchPriority="high" />
       </>}
       <EclipseIntro
-        key={introPreview ? "preview" : "normal"}
         ready={
-          motionPref === "minimal" || !!sessionError || (!introPreview && (view !== "Global" || globalView !== "DASHBOARD" || !!authModal))
+          motionPref === "minimal" || !!sessionError || view !== "Global" || globalView !== "DASHBOARD" || !!authModal
         }
-        preview={introPreview}
-        onDismiss={() => setIntroPreview(false)}
       />
       <a href="#x1-main" className="x1-skip">
         Skip to content
@@ -1205,7 +1192,6 @@ export default function X1Workspace() {
             >
               {view === "Global" ? (
                 <Global
-                  onReplayIntro={playIntro}
                   data={data}
                   workspace={workspace}
                   authenticated={isSignedIn && accepted === true}
@@ -1346,6 +1332,7 @@ export default function X1Workspace() {
               <div>
                 <a href="/trust">Privacy</a>
                 <a href="/terms">Terms</a>
+                <a href="/legal/compliance">Compliance</a>
                 <a href="/help">Help</a>
                 <button onClick={() => setAbout(true)}>About Strategic Souls</button>
               </div>
@@ -1748,12 +1735,6 @@ export default function X1Workspace() {
             </div>
           </div>
           <div className="x1-actions">
-            <button
-              className="x1-secondary x1-motion-button"
-              onClick={playIntro}
-            >
-              Preview silver eclipse
-            </button>
             {isSignedIn && (
               <a
                 className="x1-secondary x1-motion-button"

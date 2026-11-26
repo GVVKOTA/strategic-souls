@@ -105,7 +105,6 @@ const NiftyMarketTable = lazy(() => import("./nifty-market-table"));
 const PrivateMarketPanel = lazy(() => import("./private-market-panel"));
 
 type Props = {
-  onReplayIntro?: () => void;
   data: MarketSnapshot | null;
   workspace: WorkspaceState | null;
   authenticated?: boolean;
@@ -254,7 +253,6 @@ export function AssetDialog({
 }
 
 export default function Global({
-  onReplayIntro,
   data,
   workspace,
   authenticated = true,
@@ -649,7 +647,6 @@ export default function Global({
         <div className="x53-dashboard-stack" data-global-layout="x53-4-blocks">
           {/* BLOCK A: Centered "Strategic Dashboard" + 8 Market Tiles */}
           <MarketOverviewGrid
-            onReplayIntro={onReplayIntro}
             authenticated={authenticated}
             market={data}
             onOpenAsset={openAsset}
@@ -824,13 +821,6 @@ export default function Global({
                     <span className="x1-caption">
                       Track private manual holdings and cost-basis allocation.
                     </span>
-                    <button
-                      type="button"
-                      className="x1-text-button"
-                      onClick={() => onRequireAuth?.()}
-                    >
-                      Sign in to save <ArrowRight size={13} />
-                    </button>
                   </div>
                 )}
               </article>
@@ -883,13 +873,6 @@ export default function Global({
                     <span className="x1-caption">
                       Build private watchlists across FX, indices, and equities.
                     </span>
-                    <button
-                      type="button"
-                      className="x1-text-button"
-                      onClick={() => onRequireAuth?.()}
-                    >
-                      Sign in to save <ArrowRight size={13} />
-                    </button>
                   </div>
                 )}
               </article>
@@ -969,6 +952,7 @@ export default function Global({
             <EconomicCalendar
               key={selectedEvent ?? "calendar"}
               initialEventId={selectedEvent}
+              compactHeader
               authenticated={authenticated}
               onRequireAuth={onRequireAuth}
               onOpenEventChart={openEventChart}
@@ -977,6 +961,7 @@ export default function Global({
           )}
           {intelligenceSubView === "MARKET_VOX" && (
             <DailyMarketPulse
+              compactHeader
               authenticated={authenticated}
               onRequireAuth={onRequireAuth}
               notify={notify}

@@ -1163,7 +1163,7 @@ export default function ResearchNetworkShell({
               }
             >
               Run a scan in Strategy and tap <strong>Publish Soul</strong> to share
-              transparent research in the Souls.
+              transparent research in the Soul Feed.
             </Empty>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

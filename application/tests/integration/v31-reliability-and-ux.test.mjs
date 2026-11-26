@@ -716,3 +716,26 @@ test("unavailable quota storage never reports a fresh allowance", async () => {
   const broken = { prepare() { throw new Error("quota store offline"); } };
   await assert.rejects(getScanQuotaSummary(broken, "fixture"), /quota store offline/);
 });
+
+test("Step 4 UI, navigation, Formula Lab, and mobile dock regressions remain fixed", () => {
+  const stratSrc = readFileSync("frontend/features/strategy/workspace.tsx", "utf8");
+  assert.match(stratSrc, /DEFAULT_ADVANCED_FORMULA\s*=\s*compileTree\(DEFAULT_ADVANCED_TREE\)\.formula/);
+  assert.match(stratSrc, /sortedEvaluated\.length === 1 \? "instrument" : "instruments"/);
+
+  const formulaSrc = readFileSync("frontend/features/strategy/formula-lab.tsx", "utf8");
+  assert.match(formulaSrc, /Ready to compute/);
+
+  const gridSrc = readFileSync("frontend/features/global/market-grid.tsx", "utf8");
+  assert.doesNotMatch(gridSrc, /Replay eclipse/);
+
+  const wsSrc = readFileSync("frontend/components/workspace/workspace.tsx", "utf8");
+  assert.doesNotMatch(wsSrc, /Preview silver eclipse/);
+  assert.match(wsSrc, /\/legal\/compliance/);
+
+  const slugSrc = readFileSync("app/[slug]/page.tsx", "utf8");
+  assert.match(slugSrc, /generateMetadata/);
+  assert.match(slugSrc, /\/legal\/compliance/);
+
+  const x2Css = readFileSync("frontend/styles/x2.css", "utf8");
+  assert.match(x2Css, /padding:\s*0 16px calc\(94px \+ env\(safe-area-inset-bottom\)\)/);
+});

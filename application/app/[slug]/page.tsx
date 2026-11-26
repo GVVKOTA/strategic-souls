@@ -15,6 +15,22 @@ const pages: Record<string, string> = {
 
 export const dynamic = "force-dynamic";
 
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  if (slug === "signin") {
+    return { title: "Sign In · Strategic Souls" };
+  }
+  const key = pages[slug];
+  const doc = key ? documents[key] : undefined;
+  return {
+    title: doc ? `${doc.title} · Strategic Souls` : "Strategic Souls",
+  };
+}
+
 export default async function ProductPage({
   params,
   searchParams,
@@ -56,7 +72,7 @@ export default async function ProductPage({
       <Link className="legal-brand" href="/">
         ◌ STRATEGIC SOULS <span>BY GVV</span>
       </Link>
-      <div className="eyebrow">STRATEGIC SOULS · X2 RESEARCH</div>
+      <div className="eyebrow">STRATEGIC SOULS · RESEARCH</div>
       <h1>{d.title}</h1>
       <p className="legal-intro">{d.intro}</p>
       {d.sections.map((s) => (
@@ -65,12 +81,23 @@ export default async function ProductPage({
           <p>{s.body}</p>
         </section>
       ))}
-      <nav className="legal-links">
-        {Object.keys(pages).map((p) => (
-          <Link key={p} href={"/" + p}>
-            {p.replaceAll("-", " ")}
-          </Link>
-        ))}
+      <nav className="legal-links" aria-label="Information pages">
+        {Object.keys(pages).map((p) => {
+          const label = p
+            .split("-")
+            .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+            .join(" ");
+          return (
+            <Link
+              key={p}
+              href={"/" + p}
+              aria-current={p === slug ? "page" : undefined}
+            >
+              {label}
+            </Link>
+          );
+        })}
+        <Link href="/legal/compliance">Compliance</Link>
       </nav>
       <Link className="primary" href="/workspace">
         Open private workspace ↗

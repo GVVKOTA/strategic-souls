@@ -165,7 +165,7 @@ const DEFAULT_ADVANCED_TREE: RuleTree = {
   ],
 };
 
-const DEFAULT_ADVANCED_FORMULA = "all(close > sma(close, 20), rsi(close, 14) < 70)";
+const DEFAULT_ADVANCED_FORMULA = compileTree(DEFAULT_ADVANCED_TREE).formula;
 
 function sourceBadgeLabel(rawPreset?: string, rawSource?: string): string {
   if (rawPreset === "MY_WATCHLIST" || rawSource === "Watchlist") return "Watchlist";
@@ -1649,6 +1649,8 @@ export default function Strategy({
                             name={param.id}
                             type="number"
                             step="any"
+                            min={/period|lookback|window|bars/i.test(param.label) ? 1 : 0}
+                            max={/period|lookback|window|bars/i.test(param.label) ? 400 : 1000000}
                             value={param.value}
                             onChange={(e) => {
                               const nextVal = e.target.value;
@@ -2484,7 +2486,8 @@ export default function Strategy({
                           onClick={() => setUniverseTableOpen(!showSnapshotTable)}
                         >
                           <span>
-                            Evaluated Market Snapshot ({sortedEvaluated.length} instruments)
+                            Evaluated Market Snapshot ({sortedEvaluated.length}{" "}
+                            {sortedEvaluated.length === 1 ? "instrument" : "instruments"})
                           </span>
                           {showSnapshotTable ? (
                             <ChevronUp size={16} aria-hidden="true" />

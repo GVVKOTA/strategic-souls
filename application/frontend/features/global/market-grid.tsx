@@ -4,7 +4,6 @@ import {
   ArrowDown,
   ArrowUp,
   GripVertical,
-  Orbit,
   RefreshCw,
   RotateCcw,
   SlidersHorizontal,
@@ -27,7 +26,6 @@ type OverviewResponse = {
 };
 
 type Props = {
-  onReplayIntro?: () => void;
   authenticated: boolean;
   market: MarketSnapshot | null;
   onOpenAsset: (id: string) => void;
@@ -254,7 +252,6 @@ function MiniSpark({
  * in a balanced 2-col mobile / 4-col desktop grid with truthful timestamps and semantic sparklines.
  */
 export default function MarketOverviewGrid({
-  onReplayIntro,
   authenticated,
   market,
   onOpenAsset,
@@ -450,9 +447,6 @@ export default function MarketOverviewGrid({
           <h1 id="x53-dashboard-title" className="x53-dashboard-title ss-v31-page-title">
             Strategic Dashboard
           </h1>
-          {onReplayIntro && <button className="ss-replay-eclipse" type="button" onClick={onReplayIntro}>
-            <Orbit size={16} aria-hidden="true" /> Replay eclipse
-          </button>}
         </div>
         <div className="x53-dashboard-bar">
           <div className="x53-dashboard-meta" aria-live="polite">
@@ -526,7 +520,6 @@ export default function MarketOverviewGrid({
 
       <div
         className={"x51-market-grid ss-v3-market-grid-8" + (showAllMarkets ? "" : " x11-markets-collapsed")}
-        role="list"
         id="x11-market-cards"
         aria-label="Market overview tiles"
       >
@@ -537,7 +530,6 @@ export default function MarketOverviewGrid({
               <div
                 key={id}
                 className="x51-mcard ss-v3-mcard ss-v31-mcard"
-                role="listitem"
                 aria-busy={loading && !error}
               >
                 <span className="x51-mcard-name">{registryInstrument(id)?.label ?? id}</span>
@@ -566,7 +558,6 @@ export default function MarketOverviewGrid({
             <button
               key={card.canonicalId}
               type="button"
-              role="listitem"
               className="x51-mcard ss-v3-mcard ss-v31-mcard"
               onClick={() => onOpenAsset(card.canonicalId)}
               title={cardTitle}

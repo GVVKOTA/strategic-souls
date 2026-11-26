@@ -2515,13 +2515,6 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
   letter-spacing: -.055em;
   text-wrap: balance;
 }
-.x1-app .ss-replay-eclipse {
-  display: inline-flex; align-items: center; gap: 8px; min-height: 40px;
-  padding: 6px 14px; background: var(--x1-bg);
-  border: 1px solid var(--x1-divider-strong); border-radius: 999px;
-  font-size: .875rem; color: var(--x1-text-secondary);
-}
-.x1-app .ss-replay-eclipse:focus-visible { outline: 2px solid var(--x1-title-blue); outline-offset: 3px; }
 .ss-v3-market-grid-8 > .ss-v31-mcard {
   position: relative; isolation: isolate; overflow: hidden;
   min-height: 148px;
@@ -2537,7 +2530,6 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
   .ss-eclipse-horizon { padding: 18px; min-height: 170px; gap: 9px; }
   .ss-eclipse-horizon img { object-position: 65% center; }
   .x1-app .ss-eclipse-horizon .x53-dashboard-title { max-width: 65%; font-size: clamp(2.1rem, 8.8vw, 3.4rem); }
-  .x1-app .ss-replay-eclipse { min-height: 44px; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .x1-app:not([data-motion="minimal"]) .ss-eclipse-horizon picture { animation: ss-eclipse-settle 760ms cubic-bezier(.2,.65,.25,1) both; }

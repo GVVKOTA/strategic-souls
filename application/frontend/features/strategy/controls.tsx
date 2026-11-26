@@ -125,6 +125,8 @@ export function RuleEditor({
             <input
               type="number"
               step="any"
+              min={-1000000}
+              max={1000000}
               aria-label={`Rule ${path} threshold`}
               value={Number.isFinite(tree.rule.value) ? tree.rule.value : ""}
               onChange={(e) =>

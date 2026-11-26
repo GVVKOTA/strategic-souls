@@ -523,9 +523,11 @@ export default function FormulaLab({ notify }: { notify: Notice }) {
           ) : (
             <div className="x1-callout">
               <strong>
-                {corrData?.correlation.status === "UNDEFINED_CONSTANT_SERIES"
-                  ? "Correlation undefined (zero variance)"
-                  : "Insufficient aligned coverage"}
+                {!corrData
+                  ? "Ready to compute"
+                  : corrData.correlation.status === "UNDEFINED_CONSTANT_SERIES"
+                    ? "Correlation undefined (zero variance)"
+                    : "Insufficient aligned coverage"}
               </strong>
               <p className="x1-caption" style={{ margin: "4px 0 0" }}>
                 {corrData?.correlation.warnings[0] ??

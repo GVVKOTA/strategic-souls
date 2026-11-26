@@ -535,6 +535,28 @@ export function parseUsgsGeoJson(raw: unknown, ingestedAtUTC: string): NaturalHa
   return out.sort((a, b) => b.occurredAtUTC.localeCompare(a.occurredAtUTC));
 }
 
+function decodeHtmlEntities(input: string): string {
+  const named: Record<string, string> = {
+    amp: "&",
+    apos: "'",
+    quot: '"',
+    lt: "<",
+    gt: ">",
+    nbsp: " ",
+  };
+  return input.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (full, entity: string) => {
+    if (entity.startsWith("#x") || entity.startsWith("#X")) {
+      const code = Number.parseInt(entity.slice(2), 16);
+      return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : full;
+    }
+    if (entity.startsWith("#")) {
+      const code = Number.parseInt(entity.slice(1), 10);
+      return Number.isFinite(code) && code > 0 ? String.fromCodePoint(code) : full;
+    }
+    return named[entity.toLowerCase()] ?? full;
+  });
+}
+
 export function parseEonetEvents(raw: unknown, ingestedAtUTC: string): NaturalHazardEvent[] {
   if (!raw || typeof raw !== "object") return [];
   const events = (raw as { events?: unknown[] }).events;
@@ -575,10 +597,11 @@ export function parseEonetEvents(raw: unknown, ingestedAtUTC: string): NaturalHa
     if (seen.has(id)) continue;
     seen.add(id);
 
-    const title =
+    const rawTitle =
       typeof ev.title === "string" && ev.title.trim()
-        ? ev.title.trim().slice(0, 140)
+        ? decodeHtmlEntities(ev.title.trim()).slice(0, 140)
         : "Active natural event";
+    const title = rawTitle;
     const category =
       typeof ev.categories?.[0]?.title === "string"
         ? ev.categories[0].title

@@ -180,11 +180,10 @@ export default function MarketIntelligenceNews({
             </span>
           </div>
 
-          <div className="x52-news-grid" role="list" aria-label="Official press release portals">
+          <div className="x52-news-grid" aria-label="Official press release portals">
             {filteredPortals.map((portal) => (
               <a
                 key={portal.id}
-                role="listitem"
                 href={portal.url}
                 target="_blank"
                 rel="noreferrer"

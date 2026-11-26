@@ -40,6 +40,7 @@ export type EconomicEventChartContext = {
 
 type Props = {
   authenticated: boolean;
+  compactHeader?: boolean;
   initialEventId?: string;
   onRequireAuth?: () => void;
   onOpenEventChart?: (ctx: EconomicEventChartContext) => void;
@@ -141,6 +142,7 @@ function defaultInstrumentForEvent(ev: EconomicEvent): string {
  */
 export default function EconomicCalendar({
   authenticated,
+  compactHeader = false,
   onRequireAuth,
   onOpenEventChart,
   initialEventId,
@@ -244,10 +246,14 @@ export default function EconomicCalendar({
     TIMEZONES.find((t) => t.id === timeZone)?.label ?? "IST";
 
   return (
-    <section className="x53-cal-section" aria-labelledby="x53-calendar-heading">
+    <section
+      className="x53-cal-section"
+      aria-label={compactHeader ? "Economic Calendar" : undefined}
+      aria-labelledby={compactHeader ? undefined : "x53-calendar-heading"}
+    >
       <div className="x53-cal-header">
         <div>
-          <h2 id="x53-calendar-heading">Economic Calendar</h2>
+          {!compactHeader && <h2 id="x53-calendar-heading">Economic Calendar</h2>}
           <p className="x51-section-sub">
             Official agency schedules (RBI, MoSPI, FOMC, BLS, BEA, EIA, ECB) ·
             Verified coverage through Mar 2027
@@ -281,7 +287,7 @@ export default function EconomicCalendar({
               ["today", "Today"],
               ["week", "This Week"],
               ["upcoming", "Upcoming"],
-              ["all", "All"],
+              ["all", "All dates"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -302,7 +308,7 @@ export default function EconomicCalendar({
         <div className="x53-cal-chips" role="group" aria-label="Region filter">
           {(
             [
-              ["ALL", "All"],
+              ["ALL", "All regions"],
               ["IN", "India"],
               ["US", "US"],
               ["EU", "Euro Area"],

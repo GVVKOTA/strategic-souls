@@ -323,7 +323,7 @@
     min-width: 36px;
   }
   .x1-app .x1-main {
-    padding: 0 16px 94px;
+    padding: 0 16px calc(94px + env(safe-area-inset-bottom));
   }
   .x1-app .x1-page-title {
     margin: 18px 0 16px;

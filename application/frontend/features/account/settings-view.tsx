@@ -1879,16 +1879,19 @@ export default function SettingsView({
                     >
                       {(
                         [
-                          ["system", "System"],
-                          ["minimal", "Reduced"],
-                          ["full", "Full"],
+                          ["system", "System (default)"],
+                          ["minimal", "Minimal"],
                         ] as const
                       ).map(([val, label]) => (
                         <button
                           key={val}
                           type="button"
                           disabled={busy}
-                          aria-pressed={profile.preferences.motion === val}
+                          aria-pressed={
+                            val === "minimal"
+                              ? profile.preferences.motion === "minimal"
+                              : profile.preferences.motion !== "minimal"
+                          }
                           onClick={() =>
                             void savePreferences(
                               { motion: val },

@@ -319,6 +319,17 @@ test("Economic Calendar handles IANA DST shifts accurately, never fabricates act
   assert.ok(ics.includes("END:VCALENDAR"));
 });
 
+test("Economic Calendar upcoming filter excludes released events", () => {
+  const cal = getEconomicCalendarEvents({
+    range: "upcoming",
+    nowMs: Date.parse("2026-11-28T12:00:00.000Z"),
+  });
+  assert.ok(cal.events.length > 0);
+  for (const ev of cal.events) {
+    assert.notEqual(ev.status, "RELEASED", `Released event leaked into upcoming: ${ev.eventId}`);
+  }
+});
+
 test("Obsidian Banner catalog provides 8 unique curated presets", () => {
   assert.equal(BANNER_PRESETS.length, 8);
   assert.equal(new Set(BANNER_PRESETS.map((b) => b.id)).size, 8);
