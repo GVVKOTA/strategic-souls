@@ -1,0 +1,40 @@
+name: Setup Strategic Souls Application
+description: Install pnpm from application/package.json, setup Node.js, cache pnpm store in runner temp, and install frozen dependencies.
+inputs:
+  node-version:
+    description: Node.js version to setup
+    required: false
+    default: '24'
+runs:
+  using: composite
+  steps:
+    - name: Read pnpm version and configure shared store path
+      id: pkg
+      shell: bash
+      run: |
+        PNPM_VERSION=$(node -e 'const fs=require("fs"); const pkg=JSON.parse(fs.readFileSync("application/package.json","utf8")); const m=/^pnpm@(.+)$/.exec(pkg.packageManager||""); if(!m){throw new Error("Missing pnpm packageManager in application/package.json");} console.log(m[1]);')
+        echo "pnpm_version=${PNPM_VERSION}" >> "$GITHUB_OUTPUT"
+        echo "SITES_PNPM_SHARED_STORE=${{ runner.temp }}/pnpm-store" >> "$GITHUB_ENV"
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: ${{ steps.pkg.outputs.pnpm_version }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Cache pnpm store
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/pnpm-store
+        key: ${{ runner.os }}-pnpm-${{ steps.pkg.outputs.pnpm_version }}-${{ hashFiles('application/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-${{ steps.pkg.outputs.pnpm_version }}-
+
+    - name: Install application dependencies
+      shell: bash
+      working-directory: application
+      run: pnpm install --frozen-lockfile
