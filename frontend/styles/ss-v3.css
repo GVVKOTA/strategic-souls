@@ -2531,12 +2531,13 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
   position: absolute; content: ""; inset: 0 12% auto 12%; height: 1px; pointer-events: none;
   background: linear-gradient(90deg, transparent, var(--x1-divider-strong), transparent);
 }
-@media (min-width: 768px) { .x1-app button.x11-market-expand { display: none; } }
+.x1-main > .x3-skeleton { min-block-size: calc(100svh - 56px); }
+@media (min-width: 768px) { .x1-app button.x11-market-expand { display: none !important; } }
 @media (max-width: 767px) {
   .ss-eclipse-horizon { padding: 18px; min-height: 170px; gap: 9px; }
   .ss-eclipse-horizon img { object-position: 65% center; }
   .x1-app .ss-eclipse-horizon .x53-dashboard-title { max-width: 65%; font-size: clamp(2.1rem, 8.8vw, 3.4rem); }
-  .x1-app .ss-replay-eclipse { min-height: 40px; }
+  .x1-app .ss-replay-eclipse { min-height: 44px; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .x1-app:not([data-motion="minimal"]) .ss-eclipse-horizon picture { animation: ss-eclipse-settle 760ms cubic-bezier(.2,.65,.25,1) both; }

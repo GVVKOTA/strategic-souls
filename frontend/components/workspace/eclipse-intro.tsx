@@ -126,7 +126,7 @@ export default function EclipseIntro({
       if (!alive || dismissed.current || elapsed() >= 1) return;
       const canvas = document.createElement("canvas");
       canvas.setAttribute("aria-hidden", "true");
-      host.append(canvas);
+      host.appendChild(canvas);
       stop = startEclipse(canvas, elapsed, () => dismiss());
     }).catch(() => { if (alive) dismiss(); });
     return () => { alive = false; stop?.(); host.replaceChildren(); };
@@ -156,7 +156,6 @@ export default function EclipseIntro({
         tabIndex={phase === "exit" ? -1 : 0}
       >
         Skip introduction
-
       </button>
       <div className="x1-eclipse-scene">
         <div ref={scene} className="x1-eclipse-orbit" aria-hidden="true" />

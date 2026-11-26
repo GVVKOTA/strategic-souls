@@ -25,7 +25,7 @@ void main() {
   vec2 uv = (2.0 * gl_FragCoord.xy - resolution) / resolution.y;
   float orbit = smoothstep(0.0, .84, phase);
   vec3 eye = vec3(.15 * (1.0 - orbit) + pointer.x * .10, pointer.y * .06, 3.95 - .36 * orbit);
-  vec3 ray = normalize(vec3(uv * .98 - eye.xy * .22, -1.72));
+  vec3 ray = normalize(vec3(uv * .84 - eye.xy * .22, -1.72));
   vec3 center = vec3(mix(-.42, .012, orbit), .01, 0.0);
   vec3 toMoon = center - eye;
   float along = dot(toMoon, ray);
@@ -55,7 +55,7 @@ void main() {
     + rim * silver * max(0.0, dot(normal, normalize(vec3(.75, .5, -.28))));
   color = mix(color, nearSide, surface);
   float aperture = smoothstep(-.03, .22, phase);
-  float vignette = 1.0 - smoothstep(.83, 1.34, length(uv));
+  float vignette = 1.0 - smoothstep(.70, 1.0, length(uv));
   outputColor = vec4(color, aperture * vignette);
 }`;
 

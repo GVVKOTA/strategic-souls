@@ -783,6 +783,10 @@ export default function X1Workspace() {
       data-motion={motionPref === "minimal" ? "minimal" : "system"}
       data-density={densityPref}
     >
+      {view === "Global" && globalView === "DASHBOARD" && <>
+        <link rel="preload" as="image" type="image/webp" href="/eclipse-horizon-mobile.webp" media="(width < 768px)" fetchPriority="high" />
+        <link rel="preload" as="image" type="image/webp" href="/eclipse-horizon.webp" media="(width >= 768px)" fetchPriority="high" />
+      </>}
       <EclipseIntro
         key={introPreview ? "preview" : "normal"}
         ready={

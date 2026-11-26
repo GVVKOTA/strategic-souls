@@ -444,11 +444,11 @@ export default function MarketOverviewGrid({
       <div className="x53-dashboard-head">
         <div className="ss-eclipse-horizon">
           <picture aria-hidden="true">
-            <source media="(max-width: 767px)" srcSet="/eclipse-horizon-mobile.webp" />
+            <source media="(width < 768px)" srcSet="/eclipse-horizon-mobile.webp" />
             <img src="/eclipse-horizon.webp" width="1280" height="400" alt="" fetchPriority="high" />
           </picture>
           <h1 id="x53-dashboard-title" className="x53-dashboard-title ss-v31-page-title">
-          Strategic Dashboard
+            Strategic Dashboard
           </h1>
           {onReplayIntro && <button className="ss-replay-eclipse" type="button" onClick={onReplayIntro}>
             <Orbit size={16} aria-hidden="true" /> Replay eclipse
