@@ -29,12 +29,6 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html:
-              "try{if(sessionStorage.getItem('ss-x1-intro-seen')!==null||window.matchMedia('(prefers-reduced-motion: reduce)').matches)document.documentElement.dataset.x1IntroSeen='true'}catch{}",
-          }}
-        />
         <link
           rel="preload"
           href="/fonts/inter-400.woff2"

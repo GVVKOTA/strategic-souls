@@ -765,6 +765,15 @@ export default function X1Workspace() {
     },
   ] as const;
 
+  function playIntro() {
+    if (motionPref === "minimal" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      notify("Your motion preference bypasses the eclipse.");
+      return;
+    }
+    setAbout(false);
+    setIntroPreview(true);
+  }
+
   const isSignedIn = authenticated === true;
   const memberWorkspace = isSignedIn && accepted === true;
 
@@ -777,7 +786,7 @@ export default function X1Workspace() {
       <EclipseIntro
         key={introPreview ? "preview" : "normal"}
         ready={
-          introPreview ? false : authenticated !== null || !!sessionError
+          motionPref === "minimal" || !!sessionError || (!introPreview && (view !== "Global" || globalView !== "DASHBOARD" || !!authModal))
         }
         preview={introPreview}
         onDismiss={() => setIntroPreview(false)}
@@ -1115,30 +1124,6 @@ export default function X1Workspace() {
               </button>
             </div>
           )}
-          {authenticated === false && !sessionError && (
-            <div className="x1-callout x2-guest-banner">
-              <span>
-                Exploring official ECB daily FX, US Treasury yields, the
-                24-exchange globe, and Formula Lab. Sign in or create an account
-                to save watchlists, portfolios, Soul Scans, and Community
-                research.
-              </span>
-              <div className="x1-actions">
-                <button
-                  className="x1-secondary"
-                  onClick={() => setAuthModal("signin")}
-                >
-                  Sign in
-                </button>
-                <button
-                  className="x1-primary"
-                  onClick={() => setAuthModal("register")}
-                >
-                  Create account
-                </button>
-              </div>
-            </div>
-          )}
           {isSignedIn && accepted === false && (
             <section className="x1-consent">
               <h2>Your private research workspace</h2>
@@ -1214,6 +1199,7 @@ export default function X1Workspace() {
             >
               {view === "Global" ? (
                 <Global
+                  onReplayIntro={playIntro}
                   data={data}
                   workspace={workspace}
                   authenticated={isSignedIn && accepted === true}
@@ -1324,6 +1310,27 @@ export default function X1Workspace() {
               )}
             </div>
           </Suspense>
+          {authenticated === false && !sessionError && (
+            <div className="x1-callout x2-guest-banner">
+              <span>
+                Sign in to save watchlists, portfolios, scans, and shared research.
+              </span>
+              <div className="x1-actions">
+                <button
+                  className="x1-secondary"
+                  onClick={() => setAuthModal("signin")}
+                >
+                  Sign in
+                </button>
+                <button
+                  className="x1-primary"
+                  onClick={() => setAuthModal("register")}
+                >
+                  Create account
+                </button>
+              </div>
+            </div>
+          )}
           {!(view === "Community" && mobileChatActive) && (
             <footer className="x1-footer">
               <span>STRATEGIC SOULS / GLOBAL VERTEX VECTORS</span>
@@ -1738,18 +1745,7 @@ export default function X1Workspace() {
           <div className="x1-actions">
             <button
               className="x1-secondary x1-motion-button"
-              onClick={() => {
-                if (
-                  window.matchMedia("(prefers-reduced-motion: reduce)").matches
-                ) {
-                  notify(
-                    "Your reduced-motion preference bypasses the welcome animation.",
-                  );
-                  return;
-                }
-                setAbout(false);
-                setIntroPreview(true);
-              }}
+              onClick={playIntro}
             >
               Preview silver eclipse
             </button>

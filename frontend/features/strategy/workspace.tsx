@@ -1996,13 +1996,20 @@ export default function Strategy({
                 Scan Results
               </h2>
               {busy && runningContext ? (
+                <div className="ss-scan-running">
                 <p className="ss-v3-results-context" role="status" aria-live="polite">
                   Evaluating {runningContext.name} · {runningContext.sourceLabel} ·{" "}
                   {runningContext.timeframeLabel}
                   {activeJob?.coverage
-                    ? ` · ${activeJob.coverage.selected - activeJob.coverage.deferred}/${activeJob.coverage.selected} checked (${activeJob.progress ?? 0}%)`
+                    ? ` · ${activeJob.coverage.selected - activeJob.coverage.deferred}/${activeJob.coverage.selected} checked`
                     : "…"}
                 </p>
+                {activeJob?.coverage && activeJob.coverage.selected > 0 && (
+                  <progress className="ss-scan-progress" aria-label="Checked instruments"
+                    max={activeJob.coverage.selected}
+                    value={activeJob.coverage.selected - activeJob.coverage.deferred} />
+                )}
+                </div>
               ) : activeScan ? (
                 <p className="ss-v3-results-context">
                   {activeScan.name} ·{" "}
