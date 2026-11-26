@@ -1,0 +1,27 @@
+# Local operational backups, exports, credentials, and logs
+/private-recovery/
+/private-backup/
+/backups/
+/exports/
+/artifacts/
+/.sites-runtime/
+/.secrets/
+.env*
+.dev.vars*
+*.local.secret
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.bundle
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.log
+.DS_Store

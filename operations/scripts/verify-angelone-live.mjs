@@ -10,19 +10,25 @@
  *   6. Optional live deployed Cloudflare Worker health check (if --deployed-url provided)
  */
 
-import "./ts-node-hooks.mjs";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
+import { appRoot } from "./repo-paths.mjs";
+
+await import(pathToFileURL(resolve(appRoot, "tooling/ts-node-hooks.mjs")).href);
 
 const { loadEnvFile, startMarketAdapterServer } = await import(
-  "../../backend/services/market-data/angelone/adapter-server.ts"
+  pathToFileURL(
+    resolve(appRoot, "backend/services/market-data/angelone/adapter-server.ts"),
+  ).href
 );
 const { redactText } = await import(
-  "../../backend/services/market-data/angelone/redact.ts"
+  pathToFileURL(
+    resolve(appRoot, "backend/services/market-data/angelone/redact.ts"),
+  ).href
 );
 
-const root = fileURLToPath(new URL("../../", import.meta.url));
+const root = appRoot;
 process.chdir(root);
 
 const secretsPath = resolve(root, ".secrets/angelone.env");

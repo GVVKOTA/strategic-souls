@@ -1,9 +1,0 @@
-# Scan and Graveyard specification
-
-The detailed implementation contract is [X2_PROBABILITY_AND_GRAVEYARD_SPEC.md](X2_PROBABILITY_AND_GRAVEYARD_SPEC.md). New runs require authored name/description, bounded typed canonical rules, explicit universe/timeframe/instrument scope and outcome definition. Simple ALL/ANY/NOT and Advanced share one AST/evaluator. Preflight blocks no source/all UNKNOWN; partial inputs require an explicit policy. Existing X1 runs keep their original immutable payload/digest.
-
-History contains every execution; Graveyard contains explicit reviews/retirement and is a selected sample. Reviews never rewrite a run or create automatic losses. A new draft/version is distinct from an immutable execution. Formula/source snapshots, known-at policy and digests make allowed outputs reviewable. Research storage and display permissions are independent; response redaction may make a full stored digest unverifiable from the returned subset, and the UI states that limit.
-
-Registered outcomes distinguish positive adjusted return from target-before-stop, costs, horizon, neutral, unresolved, right-censored and intrabar-ambiguous cases. Original signal cutoff and actual publication knowledge matter. Deduplicate/cluster and purge overlapping label windows before chronological validation. Owner opt-out is checked before any comparison count; group sharing never grants training consent. Production cross-user learning stays disabled.
-
-Replay/backtest requires certified PIT adjusted history and storage entitlement. Current retrospective daily endpoints fail that prerequisite; the running interface shows DATA UNAVAILABLE. Pure synthetic regression fixtures exercise the simulation and do not establish real predictive accuracy. There is no automatic trading, wallet action or promise of returns.

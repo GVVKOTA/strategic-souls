@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {resolve,join} from 'node:path';
 import assert from 'node:assert/strict';
+import {databaseMigrationsDir} from './repo-paths.mjs';
 
 const directory=resolve(process.argv[2]??'');
 if(!process.argv[2])throw new Error('Provide the private backup directory, outside source.');
@@ -31,7 +32,7 @@ writeFileSync(snapshotFile,JSON.stringify(snapshot,null,2));
 const dbFile=join(directory,'isolated-restore.sqlite');
 if(existsSync(dbFile))throw new Error('Restore destination already exists; retain it and choose a new private backup directory.');
 const db=new DatabaseSync(dbFile);
-for(const migration of ['0000_bent_reptil.sql','0001_early_hawkeye.sql','0002_aberrant_nighthawk.sql'])db.exec(readFileSync('drizzle/'+migration,'utf8'));
+for(const migration of ['0000_bent_reptil.sql','0001_early_hawkeye.sql','0002_aberrant_nighthawk.sql'])db.exec(readFileSync(join(databaseMigrationsDir,migration),'utf8'));
 db.exec('BEGIN');
 try{
  for(const [name,rows] of Object.entries(tables)){
@@ -43,7 +44,7 @@ try{
  db.exec('COMMIT');
 }catch(error){db.exec('ROLLBACK');throw error;}
 const rowsBefore=db.prepare('SELECT * FROM souls ORDER BY id').all();
-db.exec(readFileSync('drizzle/0003_peaceful_smasher.sql','utf8'));
+db.exec(readFileSync(join(databaseMigrationsDir,'0003_peaceful_smasher.sql'),'utf8'));
 assert.deepEqual(db.prepare('SELECT * FROM souls ORDER BY id').all(),rowsBefore);
 for(const [name,rows] of Object.entries(tables))assert.equal(db.prepare('SELECT count(*) n FROM '+name).get().n,rows.length);
 assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');

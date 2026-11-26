@@ -1,10 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { appRoot, repoRoot } from "./repo-paths.mjs";
 
 const worker = "strategic-souls";
 const origin = `https://${worker}.vishnukota20071005.workers.dev`;
-const configFile = "dist/server/wrangler.json";
+const configFile = resolve(appRoot, "dist/server/wrangler.json");
+const wranglerBin = resolve(appRoot, "node_modules/wrangler/bin/wrangler.js");
 const databaseId = "1cda2b05-6b99-4d04-896f-b3542ad2ce7f";
 const adapterId = "01a2095b-f466-7c90-a813-4fad03735504";
 const indiaApiHost = "stock.indianapi.in";
@@ -15,16 +17,16 @@ function verify(condition, reason) {
   if (!condition) throw new Error(reason);
 }
 
-function run(command, args, timeout = 60_000) {
+function run(command, args, timeout = 60_000, cwd = repoRoot) {
   try {
-    return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout, maxBuffer: 4_000_000 }).trim();
+    return execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout, maxBuffer: 4_000_000 }).trim();
   } catch {
-    throw new Error(`${command === process.execPath ? "Wrangler" : command} ${args[0] === "node_modules/wrangler/bin/wrangler.js" ? args.slice(1, 3).join(" ") : args[0]} failed. Check the authorized release run.`);
+    throw new Error(`${command === process.execPath ? "Wrangler" : command} ${args[0] === wranglerBin ? args.slice(1, 3).join(" ") : args[0]} failed. Check the authorized release run.`);
   }
 }
 
 function wrangler(args, timeout) {
-  return run(process.execPath, ["node_modules/wrangler/bin/wrangler.js", ...args, "--config", configFile], timeout);
+  return run(process.execPath, [wranglerBin, ...args, "--config", configFile], timeout, appRoot);
 }
 
 function checkArtifact(expectedSha) {

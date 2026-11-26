@@ -5,14 +5,24 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: application
     steps:
       - uses: actions/checkout@v4
+      - name: Verify five-folder root layout and tracked hygiene
+        working-directory: .
+        run: node operations/scripts/check-repo-layout.mjs
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: 'pnpm'
+          cache-dependency-path: application/pnpm-lock.yaml
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
-      - run: npm run verify
-      - run: npm run build
-      - run: node operations/scripts/check-production-release.mjs artifact
-      - run: node operations/scripts/scan-secrets.mjs
+      - run: pnpm run verify
+      - run: pnpm run build
+      - working-directory: .
+        run: |
+          node operations/scripts/check-production-release.mjs artifact
+          node operations/scripts/scan-secrets.mjs

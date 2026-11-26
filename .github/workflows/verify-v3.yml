@@ -6,11 +6,19 @@ permissions:
 jobs:
   source-and-quant:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: application
     steps:
       - uses: actions/checkout@v4
+      - name: Verify five-folder root layout
+        working-directory: .
+        run: node operations/scripts/check-repo-layout.mjs
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+          cache: 'pnpm'
+          cache-dependency-path: application/pnpm-lock.yaml
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
@@ -23,23 +31,28 @@ jobs:
       - run: npm run build
   real-local-stack:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: application
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
+          cache: 'pnpm'
+          cache-dependency-path: application/pnpm-lock.yaml
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - name: Start isolated Supabase without printing credentials
         run: |
-          corepack pnpm exec supabase start > "$RUNNER_TEMP/supabase-start.log" 2>&1
-          corepack pnpm exec supabase migration up --local
-          corepack pnpm exec supabase status --output json 2>/dev/null | node operations/scripts/write-local-env.mjs
+          corepack pnpm exec supabase --workdir ../database start > "$RUNNER_TEMP/supabase-start.log" 2>&1
+          corepack pnpm exec supabase --workdir ../database migration up --local
+          corepack pnpm exec supabase --workdir ../database status --output json 2>/dev/null | node ../operations/scripts/write-local-env.mjs
       - name: Start local app and run real OTP/persistence journey
         run: |
           npm run dev:hmr > "$RUNNER_TEMP/v3-dev.log" 2>&1 &
           node --input-type=module -e 'for(let i=0;i<90;i++){try{if((await fetch("http://127.0.0.1:5173/api/v3/health")).ok)process.exit(0)}catch{}await new Promise(r=>setTimeout(r,500))}process.exit(1)'
-          node operations/scripts/test-supabase-local.mjs
+          node ../operations/scripts/test-supabase-local.mjs
       - if: always()
-        run: corepack pnpm exec supabase stop
+        run: corepack pnpm exec supabase --workdir ../database stop
 # Manual verification only. No Site deployment, source push or public-access step.

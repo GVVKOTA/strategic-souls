@@ -3,6 +3,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {join} from 'node:path';
+import {databaseMigrationsDir} from './repo-paths.mjs';
 const dir=process.argv[2];assert.ok(dir,'Supply a unique private recovery directory');
 const raw=JSON.parse(readFileSync(join(dir,'live-table-projections.json'),'utf8'));
 const owner=JSON.parse(readFileSync(join(dir,'full-owner-export.json'),'utf8'));
@@ -21,7 +22,7 @@ for(const [name,p] of Object.entries(raw.tables)){
 }
 assert.equal(tables.accounts[0].subject,owner.account.subject);
 const db=new DatabaseSync(join(dir,'isolated-restore.sqlite'));
-for(const f of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())db.exec(readFileSync(join('drizzle',f),'utf8'));
+for(const f of readdirSync(databaseMigrationsDir).filter(f=>f.endsWith('.sql')).sort())db.exec(readFileSync(join(databaseMigrationsDir,f),'utf8'));
 db.exec('BEGIN');
 for(const [name,rows] of Object.entries(tables)){
  assert.match(name,/^[a-z0-9_]+$/);const cols=raw.tables[name].columns;cols.forEach(x=>assert.match(x,/^[a-z0-9_]+$/));

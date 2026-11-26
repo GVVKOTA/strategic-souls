@@ -4,9 +4,10 @@ import {resolve,join,relative} from 'node:path';
 import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import assert from 'node:assert/strict';
+import {databaseMigrationsDir,repoRoot} from './repo-paths.mjs';
 const [destination,previous]=process.argv.slice(2).map(p=>resolve(p));
 assert.ok(destination&&previous,'Pass fresh private destination and prior logical snapshot.');
-assert.ok(relative(process.cwd(),destination).startsWith('..'),'Backup must be outside the source checkout.');
+assert.ok(relative(repoRoot,destination).startsWith('..'),'Backup must be outside the source checkout.');
 const hash=v=>createHash('sha256').update(v).digest('hex');
 const raw=JSON.parse(readFileSync(join(destination,'live-table-projections.json'),'utf8'));
 const older=JSON.parse(readFileSync(previous,'utf8'));
@@ -29,7 +30,7 @@ for(const [name,t] of Object.entries(raw.tables)){
 const dbPath=join(destination,'isolated-restore.sqlite');
 assert.equal(existsSync(dbPath),false,'Refusing to overwrite restore evidence.');
 const db=new DatabaseSync(dbPath);
-for(const migration of readdirSync('drizzle').filter(f=>f.endsWith('.sql')).sort())db.exec(readFileSync(join('drizzle',migration),'utf8'));
+for(const migration of readdirSync(databaseMigrationsDir).filter(f=>f.endsWith('.sql')).sort())db.exec(readFileSync(join(databaseMigrationsDir,migration),'utf8'));
 db.exec('BEGIN');
 try{
  for(const [name,rows] of Object.entries(tables)){

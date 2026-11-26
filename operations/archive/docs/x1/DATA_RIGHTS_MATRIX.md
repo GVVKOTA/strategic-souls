@@ -1,3 +1,0 @@
-# Strategic Souls X1 data rights matrix
-
-The detailed source, permission, frequency, display/non-display/storage, cost and missing-coverage matrix is [X1_DATA_RIGHTS_MATRIX.md](X1_DATA_RIGHTS_MATRIX.md). The release's latest browser read on 17 November 2026 shows ECB source date **2026-11-17**, EURUSD **1.0989** and derived USDINR **93.4753**, with US Treasury source date **2026-11-16**, 10Y par yield **5.12%**. These date-only published observations are not executable or live trading quotes. Older time-stamped source probes remain in the detailed audit as historical evidence, not current prices.

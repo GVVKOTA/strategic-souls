@@ -1,6 +1,6 @@
 param([switch]$Install)
 $ErrorActionPreference='Stop'
-# Current official references are in operations/docs/v3/RUNBOOK.md. This script never reboots.
+# Current official references are in documentation/specs/V3_LOCAL_STACK_SPEC.md. This script never reboots.
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $principal=[Security.Principal.WindowsPrincipal]::new($identity)
 $isAdmin=$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)

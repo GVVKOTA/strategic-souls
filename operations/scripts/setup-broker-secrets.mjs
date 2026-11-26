@@ -17,9 +17,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { appRoot } from "./repo-paths.mjs";
 
-const root = fileURLToPath(new URL("../../", import.meta.url));
+const root = appRoot;
 const secretsDir = resolve(root, ".secrets");
 const secretsFile = resolve(secretsDir, "angelone.env");
 const devVarsFile = resolve(root, ".dev.vars");

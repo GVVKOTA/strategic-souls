@@ -1,0 +1,275 @@
+{
+  "product": "Strategic Souls",
+  "brand": "Global Vertex Vectors",
+  "export_kind": "Sanitized full-source checkpoint; source management only",
+  "recorded_at": "2026-11-17T19:20:36.889971+00:00",
+  "original_site": {
+    "project_id": "appgprj_6ae0ae7364a481919dfb1af2f4fe17f0",
+    "url": "https://strategic-souls-gvv.vishnukota20071005.chatgpt.site/",
+    "source_branch": "main",
+    "source_commit": "5b02f5b63cd469f80ba05bc62f4217bd5ddcd697",
+    "saved_version": 12,
+    "saved_version_id": "appgprj_6ae0ae7364a481919dfb1af2f4fe17f0~appgver_d45dcd238b28819180373716b26e60cb",
+    "deployment_id": "appgdep_6afc9c7d83ec8191860e4605b4ce6b20",
+    "status": "active",
+    "audience": "owner-only custom/restricted",
+    "access_policy_revision": 1,
+    "source_verified_by": "Native Sites metadata/version history matched clean local checkout HEAD",
+    "modified_or_deployed_by_export": false
+  },
+  "source_inventory": {
+    "original_tracked_files": 383,
+    "original_commits_privately_preserved": 41,
+    "primary_areas": [
+      "global",
+      "strategy",
+      "community",
+      "public",
+      "db"
+    ],
+    "framework_and_shared_exceptions": [
+      "app",
+      "worker",
+      "lib",
+      "components",
+      "drizzle",
+      "scripts",
+      "tests",
+      "docs",
+      "quant",
+      "supabase",
+      "hooks",
+      "vendor",
+      "examples",
+      ".openai",
+      ".github"
+    ],
+    "layout_moves": {
+      "components/x1/global.tsx": "global/dashboard.tsx",
+      "components/x1/globe-canvas.tsx": "global/globe-canvas.tsx",
+      "components/x2/asset-terminal.tsx": "global/asset-terminal.tsx",
+      "components/x2/data-control.tsx": "global/data-control.tsx",
+      "components/x2/data.css": "global/data.css",
+      "components/x2/research-workspace.tsx": "strategy/workspace.tsx",
+      "components/x2/research-controls.tsx": "strategy/controls.tsx",
+      "components/x2/formula-lab.tsx": "strategy/formula-lab.tsx",
+      "components/x2/research.css": "strategy/research.css",
+      "components/x1/community.tsx": "community/dashboard.tsx",
+      "components/x2/social-workspace.tsx": "community/social-workspace.tsx",
+      "components/x2/social.css": "community/social.css"
+    },
+    "relative_import_updates": [
+      "app/layout.tsx",
+      "community/dashboard.tsx",
+      "global/dashboard.tsx",
+      "global/globe-canvas.tsx",
+      "components/x1/strategy.tsx",
+      "components/x1/workspace.tsx",
+      "global/asset-terminal.tsx",
+      "global/data-control.tsx",
+      "strategy/formula-lab.tsx",
+      "strategy/controls.tsx",
+      "strategy/workspace.tsx",
+      "community/social-workspace.tsx",
+      "tests/x1-palette.test.mjs"
+    ],
+    "omitted_generated_evidence": [
+      "docs/evidence/build.log",
+      "docs/evidence/dependency-audit-baseline.json",
+      "docs/evidence/dependency-audit-final.json",
+      "docs/evidence/secret-scan.json",
+      "docs/evidence/verification-summary.json",
+      "docs/evidence/verify.log",
+      "docs/v3/evidence/build-result.json",
+      "docs/v3/evidence/build.log",
+      "docs/v3/evidence/built-http-smoke.json",
+      "docs/v3/evidence/dependency-audit-result.json",
+      "docs/v3/evidence/dependency-audit.json",
+      "docs/v3/evidence/powershell-parser.json",
+      "docs/v3/evidence/quant-benchmark.json",
+      "docs/v3/evidence/quant-tests.log",
+      "docs/v3/evidence/replay-regression-after.log",
+      "docs/v3/evidence/replay-regression-before.log",
+      "docs/v3/evidence/site-preservation.json",
+      "docs/v3/evidence/source-scan.json",
+      "docs/v3/evidence/verify-result.json",
+      "docs/v3/evidence/verify.log"
+    ],
+    "privacy_redactions": [
+      {
+        "path": "X1_CODE_AUDIT.md",
+        "reason": "Real production record digest"
+      }
+    ],
+    "history_policy": "Clean import to omit personal author email metadata and historical generated/private evidence. Full original history retained in a verified private local Git bundle outside this repository. No remote history was rewritten.",
+    "test_fixture_sanitization": "Replaced one fictional credential fixture with a low-entropy synthetic value; all existing assertions retained. Original-history scanner matches were synthetic test fixtures, not verified real keys.",
+    "new_developer_tool": "scripts/local-preview.mjs: actual compiled Worker and seven local D1 migrations; explicit loopback-only fictional development identity, no seeded accounts/messages/observations; never imported by production.",
+    "exported_files": 366,
+    "original_files_byte_unchanged": 343,
+    "modified_original_paths": [
+      ".env.example",
+      ".gitignore",
+      "README.md",
+      "X1_CODE_AUDIT.md",
+      "app/layout.tsx",
+      "community/dashboard.tsx",
+      "global/dashboard.tsx",
+      "global/globe-canvas.tsx",
+      "components/x1/strategy.tsx",
+      "components/x1/workspace.tsx",
+      "global/asset-terminal.tsx",
+      "global/data-control.tsx",
+      "strategy/formula-lab.tsx",
+      "strategy/controls.tsx",
+      "strategy/workspace.tsx",
+      "community/social-workspace.tsx",
+      "package.json",
+      "scripts/check-x2-release.mjs",
+      "tests/x1-palette.test.mjs",
+      "tests/x2-data.test.mjs"
+    ]
+  },
+  "preserved_bindings": {
+    "hosting_manifest": ".openai/hosting.json",
+    "d1_binding": "DB",
+    "r2": null,
+    "production_identity": "Native authenticated Sites headers and existing server access checks",
+    "migrations": "drizzle/ (seven existing chronological migrations)",
+    "optional_source_only": [
+      "Supabase/Auth/Postgres V3 schema and source",
+      "Python quant service source/tests"
+    ]
+  },
+  "excluded_runtime_material": [
+    "Production D1 rows and logical exports",
+    "Real portfolios, messages, user/account records and record fingerprints",
+    "Sessions, auth tokens and native owner subject",
+    "Provider credentials/account documents and licence grants",
+    "Uploaded private assets and external vendor datasets",
+    "node_modules, builds, caches, logs and local databases",
+    "Original Git metadata/history with personal author emails"
+  ],
+  "checks": {
+    "runtime": "Node v22.16.0 on Windows",
+    "package_manager": "pnpm 11.25.0",
+    "locked_install": {
+      "command": "pnpm install --frozen-lockfile",
+      "exit_code": 0,
+      "lockfile_changed": false,
+      "note": "Offline attempt lacked cached metadata; normal authenticated-free registry install succeeded."
+    },
+    "release_checks": {
+      "recordedAt": "2026-11-17T19:17:04.584Z",
+      "node": "v22.16.0",
+      "checks": [
+        {
+          "name": "typecheck",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 19475
+        },
+        {
+          "name": "lint",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 15883
+        },
+        {
+          "name": "tests",
+          "exitCode": 0,
+          "signal": null,
+          "durationMs": 4746
+        }
+      ]
+    },
+    "test_counts": {
+      "tests": 244,
+      "pass": 244,
+      "fail": 0,
+      "skip": 0
+    },
+    "production_build": {
+      "command": "node scripts/run-framework.mjs build",
+      "exit_code": 0
+    },
+    "local_runner_syntax_and_lint": {
+      "commands": [
+        "node --check scripts/local-preview.mjs",
+        "node node_modules/eslint/bin/eslint.js scripts/local-preview.mjs"
+      ],
+      "exit_code": 0
+    },
+    "security": "Final staged/history scanner and private-marker audit results are recorded in the external export verification report; scanners are not a guarantee of absence.",
+    "local_http_smoke": {
+      "checked_at": "2026-11-17T19:20:54.497119+00:00",
+      "result": "PASS",
+      "checks": [
+        {
+          "name": "compiled landing HTML",
+          "status": 200,
+          "pass": true
+        },
+        {
+          "name": "fictional local session requires onboarding",
+          "status": 200,
+          "pass": true
+        },
+        {
+          "name": "private workspace denied before consent",
+          "status": 403,
+          "pass": true
+        },
+        {
+          "name": "cross-origin write rejected",
+          "status": 403,
+          "pass": true
+        },
+        {
+          "name": "unexpected host rejected",
+          "status": 403,
+          "pass": true
+        }
+      ],
+      "limits": "No account seeded or terms accepted; no production connection or record read/write."
+    },
+    "source_privacy_audit": {
+      "status": "PASS",
+      "file_count": 366,
+      "private_markers_compared": 11,
+      "protected_backend_files": 90,
+      "protected_backend_changed": [],
+      "omitted_generated_files": 20,
+      "failures": []
+    },
+    "generated_build_scan": {
+      "result": "Two generated prerenderSecret matches in ignored dist/server/vinext-server.json and dist/server/ssr/vinext-server.json; not source/provider credentials and neither file is staged, archived or uploaded. Local generated build material is excluded from export.",
+      "findings": 2
+    },
+    "staged_gitleaks": {
+      "version": "8.30.1",
+      "findings": 0,
+      "command": "gitleaks git . --staged --redact --report-format json"
+    }
+  },
+  "verification_limits": [
+    "Windows Vite development/HMR currently fails upstream recentlyCreatedOwnerStacks; use compiled-Worker local preview.",
+    "Local preview uses a fictional local identity, not ChatGPT production sign-in; complete local onboarding yourself.",
+    "No production writes or multi-user hosted onboarding were performed by this export.",
+    "Commercial provider secrets, entitlements and end-to-end feeds not configured/tested.",
+    "Real PIT historical replay, independent probability calibration and predictive accuracy are unavailable.",
+    "Optional V3 Supabase/Docker/quant integration was not activated or rerun.",
+    "No browser/device accessibility or field performance certification was performed by this source export.",
+    "GitHub is a source snapshot; automatic deployment linkage is not configured or verified."
+  ],
+  "asset_and_lock_hashes": {
+    "public/gvv-approved.jpg": "7512003e8e05bf88c75ecb1b62b418000d61b9d4eedd560531017bc002288fab",
+    "pnpm-lock.yaml": "c68e60994803eaedde7830a417abfa09e2a41e6a71e66f58eb17c85dcb128fc8",
+    ".openai/hosting.json": "a626c7d964c3ae7b93386630dd05637fc9cf59b16e4ade1b4c6e3e294fcf6e10"
+  },
+  "future_release": "Reconcile reviewed GitHub code into the same current Sites source using supported Sites tooling; verify current access and data recovery, build/check/package and deploy only under separate release authorization.",
+  "repository_consolidation_2026_11_26": {
+    "branch": "refactor/five-folder-repository",
+    "base_commit": "6a569bdb289f0ac64f2fafceb83ebaa7f8b842f6",
+    "note": "Historical checkpoint fields above record the exact 2026-11-17 source provenance verbatim. Subsequent structural consolidation moved this manifest to documentation/SOURCE_PROVENANCE.json, placed the JavaScript/Vinext/Workers project root under application/, placed D1 and Supabase migrations under database/migrations/ and database/supabase/, consolidated docs into documentation/, and placed deployment/operational tooling under operations/."
+  }
+}

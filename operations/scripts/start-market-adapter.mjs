@@ -3,22 +3,25 @@
  * Binds strictly to 127.0.0.1:8791. Never prints credentials or tokens.
  */
 
-import "./ts-node-hooks.mjs";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
+import { appRoot } from "./repo-paths.mjs";
+
+await import(pathToFileURL(resolve(appRoot, "tooling/ts-node-hooks.mjs")).href);
 
 const { startMarketAdapterServer } = await import(
-  "../../backend/services/market-data/angelone/adapter-server.ts"
+  pathToFileURL(
+    resolve(appRoot, "backend/services/market-data/angelone/adapter-server.ts"),
+  ).href
 );
 
-const root = fileURLToPath(new URL("../../", import.meta.url));
-process.chdir(root);
+process.chdir(appRoot);
 
-const secretsPath = resolve(root, ".secrets/angelone.env");
+const secretsPath = resolve(appRoot, ".secrets/angelone.env");
 if (!existsSync(secretsPath) && !process.env.ANGELONE_API_KEY) {
   console.error(
-    "Missing local broker credentials (.secrets/angelone.env). Run `npm run broker:setup` first.",
+    "Missing local broker credentials (application/.secrets/angelone.env). Run `pnpm run broker:setup` inside application/ first.",
   );
   process.exit(1);
 }

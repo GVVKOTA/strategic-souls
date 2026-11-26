@@ -1,0 +1,24 @@
+# Local database state, backups, and SQLite/Supabase temporary files
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+*.sql.bak
+*.backup*
+*.dump
+*.bundle
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.log
+/.wrangler/
+/.sites-runtime/
+/supabase/.temp/
+/supabase/.branches/
+.env*
+.DS_Store

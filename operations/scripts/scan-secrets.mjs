@@ -7,8 +7,9 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, relative, resolve } from "node:path";
+import { appRoot, repoRoot } from "./repo-paths.mjs";
 
-const root = process.cwd();
+const root = repoRoot;
 const SCAN_EXTS = new Set([
   ".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs", ".cjs",
   ".json", ".py", ".sql", ".md", ".toml", ".yml", ".yaml",
@@ -35,8 +36,15 @@ const RULES = [
 // Dynamically load any local gitignored secret values so we verify ZERO leakage of actual local creds into repo or dist!
 function loadLocalSecretValuesForLeakCheck() {
   const secretValues = [];
-  for (const rel of [".secrets/angelone.env", ".dev.vars", ".env", ".env.local"]) {
-    const abs = resolve(root, rel);
+  for (const rel of [
+    resolve(appRoot, ".secrets/angelone.env"),
+    resolve(appRoot, ".dev.vars"),
+    resolve(appRoot, ".env"),
+    resolve(appRoot, ".env.local"),
+    resolve(root, ".secrets/angelone.env"),
+    resolve(root, ".dev.vars"),
+  ]) {
+    const abs = rel;
     if (!existsSync(abs)) continue;
     for (const line of readFileSync(abs, "utf8").split(/\r?\n/)) {
       const m = /^\s*(ANGELONE_[A-Z0-9_]+|MARKET_ADAPTER_AUTH_TOKEN|X2_EODHD_API_TOKEN|X2_TRUEDATA_BEARER_TOKEN)\s*=\s*(.+)\s*$/.exec(line);
@@ -64,6 +72,7 @@ function walkDir(dir, out = []) {
 const gitFiles = [
   ...new Set(
     execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+      cwd: root,
       encoding: "utf8",
     })
       .split("\0")
@@ -72,8 +81,8 @@ const gitFiles = [
   ),
 ];
 
-const distFiles = existsSync(resolve(root, "dist"))
-  ? walkDir(resolve(root, "dist"))
+const distFiles = existsSync(resolve(appRoot, "dist"))
+  ? walkDir(resolve(appRoot, "dist"))
   : [];
 
 const allTargets = [...new Set([...gitFiles, ...distFiles])];
@@ -83,7 +92,12 @@ let scanned = 0;
 
 for (const absPath of allTargets) {
   const rel = relative(root, absPath).replaceAll("\\", "/");
-  if (rel.startsWith("node_modules/") || rel.startsWith(".git/")) continue;
+  if (
+    rel.startsWith("node_modules/") ||
+    rel.startsWith("application/node_modules/") ||
+    rel.startsWith("application/backend/quant/.venv/") ||
+    rel.startsWith(".git/")
+  ) continue;
   const ext = extname(absPath).toLowerCase();
   if (!SCAN_EXTS.has(ext) && !rel.endsWith(".env.example") && !rel.endsWith(".dev.vars.example")) {
     continue;
@@ -119,6 +133,7 @@ for (const absPath of allTargets) {
 let stagedFindings = 0;
 try {
   const diff = execFileSync("git", ["diff", "--cached", "--unified=0"], {
+    cwd: root,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
   });
@@ -147,16 +162,18 @@ try {
 }
 
 // Check that no git-tracked files are in .secrets/ or .env / .dev.vars
-const trackedFiles = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
+const trackedFiles = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" })
   .split("\0")
   .filter(Boolean);
 for (const tf of trackedFiles) {
+  const lower = tf.toLowerCase();
+  const base = tf.split("/").pop() ?? tf;
+  if (base === ".env.example" || base === ".dev.vars.example") continue;
   if (
-    tf.startsWith(".secrets/") ||
-    tf === ".env" ||
-    tf === ".env.local" ||
-    tf === ".dev.vars" ||
-    tf.endsWith(".local.secret")
+    /(?:^|\/)\.secrets\//.test(lower) ||
+    /(?:^|\/)\.env(?:\..+)?$/.test(lower) ||
+    /(?:^|\/)\.dev\.vars(?:\..+)?$/.test(lower) ||
+    lower.endsWith(".local.secret")
   ) {
     findings.push({
       file: tf,
