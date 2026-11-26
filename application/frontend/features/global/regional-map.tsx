@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { Map as MapLibreMap, Marker, setWorkerUrl } from "maplibre-gl";
-import mapWorker from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
-import "maplibre-gl/dist/maplibre-gl.css";
+import { useEffect, useRef, useState } from "react";
+import type { Map as MapLibreMap, Marker as MapLibreMarker } from "maplibre-gl";
 import { MAP_EXIT_ZOOM, mapFocus, type RegionalFocus } from "./globe-projection";
 
 export type RegionalEvent = { id: string; lat: number; lon: number; label: string; tone: string; onSelect: () => void };
 type Place = { geometry: { coordinates: [number, number] }; properties: { name: string; population: number; capital: boolean } };
+type MarkerCtor = typeof MapLibreMarker;
 
 export default function RegionalMap({ initial, destination, markers, selected, command, showGeography, onReady, onExit, onChange, onUnavailable }: {
   initial: RegionalFocus; destination: (RegionalFocus & { nonce: number }) | null;
@@ -17,25 +16,46 @@ export default function RegionalMap({ initial, destination, markers, selected, c
 }) {
   const box = useRef<HTMLDivElement>(null);
   const instance = useRef<MapLibreMap | null>(null);
+  const markerCtorRef = useRef<MarkerCtor | null>(null);
   const applyGeography = useRef<(() => void) | null>(null);
+  const applyMarkers = useRef<(() => void) | null>(null);
   const initialRef = useRef(initial);
-  const events = useRef({ onReady, onExit, onChange, onUnavailable, showGeography });
-  useEffect(() => { events.current = { onReady, onExit, onChange, onUnavailable, showGeography }; },
-    [onReady, onExit, onChange, onUnavailable, showGeography]);
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const events = useRef({ onReady, onExit, onChange, onUnavailable, showGeography, markers, selected });
+  useEffect(() => {
+    events.current = { onReady, onExit, onChange, onUnavailable, showGeography, markers, selected };
+  }, [onReady, onExit, onChange, onUnavailable, showGeography, markers, selected]);
 
   useEffect(() => {
-    if (!box.current) return;
+    if (typeof window === "undefined" || !box.current) return;
+    const container = box.current;
     const start = initialRef.current;
     const normalized = mapFocus(start);
-    let map: MapLibreMap;
+    let map: MapLibreMap | null = null;
+    let disposed = false;
+    let deadline: number | null = null;
+    let resize: ResizeObserver | null = null;
     const controller = new AbortController();
+    const labels: MapLibreMarker[] = [];
+    const activeMarkers: MapLibreMarker[] = [];
+    const clearLabels = () => labels.splice(0).forEach((marker) => marker.remove());
+    const clearMarkers = () => activeMarkers.splice(0).forEach((marker) => marker.remove());
     const reduced = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
       document.documentElement.getAttribute("data-motion") === "minimal" ||
       !!document.querySelector('.x1-app[data-motion="minimal"]');
-    try {
-      setWorkerUrl(mapWorker);
-      map = new MapLibreMap({
-        container: box.current, center: [normalized.lon, normalized.lat], zoom: start.zoom, minZoom: 2,
+
+    void Promise.all([
+      import("maplibre-gl"),
+      import("maplibre-gl/dist/maplibre-gl-worker.mjs?url"),
+      import("maplibre-gl/dist/maplibre-gl.css"),
+    ]).then(([maplibre, workerMod]) => {
+      if (disposed || !container.isConnected) return;
+      const MapConstructor = maplibre.Map;
+      const MarkerConstructor = maplibre.Marker;
+      markerCtorRef.current = MarkerConstructor;
+      maplibre.setWorkerUrl(workerMod.default);
+      map = new MapConstructor({
+        container, center: [normalized.lon, normalized.lat], zoom: start.zoom, minZoom: 2,
         maxZoom: 7, maxPitch: 0, dragRotate: false, pitchWithRotate: false,
         attributionControl: false, renderWorldCopies: true, fadeDuration: reduced() ? 0 : 120,
         style: {
@@ -55,108 +75,121 @@ export default function RegionalMap({ initial, destination, markers, selected, c
           ],
         },
       });
-    } catch {
-      events.current.onUnavailable();
-      return;
-    }
-    instance.current = map;
-    map.touchZoomRotate.disableRotation();
-    map.getCanvas().setAttribute("aria-label", "Regional map. Use arrow keys to pan, and plus or minus to zoom.");
-    const labels: Marker[] = [];
-    let places: Place[] = [];
-    let usable = false;
-    let exited = false;
-    const clearLabels = () => labels.splice(0).forEach((marker) => marker.remove());
-    const drawLabels = () => {
-      clearLabels();
-      if (!events.current.showGeography || !places.length) return;
-      const zoom = map.getZoom(), bounds = map.getBounds();
-      const occupied = new Set<string>();
-      for (const entry of places) {
-        const coordinates = entry.geometry.coordinates;
-        if ((!entry.properties.capital && zoom < 4.3 && entry.properties.population < 600_000) ||
-          !bounds.contains(coordinates)) continue;
-        const p = map.project(coordinates), cell = Math.floor(p.x / 90) + ":" + Math.floor(p.y / 25);
-        if (occupied.has(cell)) continue;
-        occupied.add(cell);
-        const label = document.createElement("span");
-        label.className = "x1-map-place";
-        label.textContent = entry.properties.name;
-        labels.push(new Marker({ element: label, anchor: "center" }).setLngLat(coordinates).addTo(map));
-        if (labels.length >= 36) break;
-      }
-    };
-    const onSettled = () => {
-      if (!usable || exited) return;
-      const center = map.getCenter(), zoom = map.getZoom();
-      const next = { ...mapFocus({ lat: center.lat, lon: center.lng }), zoom };
-      if (zoom <= MAP_EXIT_ZOOM) {
-        exited = true;
-        events.current.onExit(next);
-      } else {
-        events.current.onChange(next);
+      const currentMap = map;
+      instance.current = currentMap;
+      currentMap.touchZoomRotate.disableRotation();
+      currentMap.getCanvas().setAttribute("aria-label", "Regional map. Use arrow keys to pan, and plus or minus to zoom.");
+      let places: Place[] = [];
+      let usable = false;
+      let exited = false;
+      const drawLabels = () => {
+        clearLabels();
+        if (!events.current.showGeography || !places.length) return;
+        const zoom = currentMap.getZoom(), bounds = currentMap.getBounds();
+        const occupied = new Set<string>();
+        for (const entry of places) {
+          const coordinates = entry.geometry.coordinates;
+          if ((!entry.properties.capital && zoom < 4.3 && entry.properties.population < 600_000) ||
+            !bounds.contains(coordinates)) continue;
+          const p = currentMap.project(coordinates), cell = Math.floor(p.x / 90) + ":" + Math.floor(p.y / 25);
+          if (occupied.has(cell)) continue;
+          occupied.add(cell);
+          const label = document.createElement("span");
+          label.className = "x1-map-place";
+          label.textContent = entry.properties.name;
+          labels.push(new MarkerConstructor({ element: label, anchor: "center" }).setLngLat(coordinates).addTo(currentMap));
+          if (labels.length >= 36) break;
+        }
+      };
+      const drawVisibleMarkers = () => {
+        clearMarkers();
+        const bounds = currentMap.getBounds();
+        const visibleList = events.current.markers.filter((entry) => {
+          const point = mapFocus(entry);
+          return bounds.contains([point.lon, point.lat]);
+        });
+        visibleList.forEach((entry, index) => {
+          const element = document.createElement("button");
+          element.type = "button";
+          element.className = "x1-map-marker is-" + entry.tone;
+          element.setAttribute("aria-label", entry.label);
+          element.setAttribute("aria-pressed", String(events.current.selected === entry.id));
+          element.title = entry.label;
+          element.onclick = entry.onSelect;
+          const point = mapFocus(entry);
+          const samePosition = visibleList.slice(0, index).filter(({ lat, lon }) => lat === entry.lat && lon === entry.lon).length;
+          activeMarkers.push(new MarkerConstructor({ element, offset: [samePosition * 14, 0] }).setLngLat([point.lon, point.lat]).addTo(currentMap));
+        });
+      };
+      applyMarkers.current = drawVisibleMarkers;
+      const onSettled = () => {
+        if (!usable || exited) return;
+        const center = currentMap.getCenter(), zoom = currentMap.getZoom();
+        const next = { ...mapFocus({ lat: center.lat, lon: center.lng }), zoom };
+        if (zoom <= MAP_EXIT_ZOOM) {
+          exited = true;
+          events.current.onExit(next);
+        } else {
+          events.current.onChange(next);
+          drawLabels();
+          drawVisibleMarkers();
+        }
+      };
+      const onLost = () => { if (!exited) { exited = true; events.current.onUnavailable(); } };
+      deadline = window.setTimeout(onLost, 9000);
+      const syncGeography = () => {
+        if (!currentMap.isStyleLoaded()) return;
+        for (const layer of ["borders", "disputes"])
+          currentMap.setLayoutProperty(layer, "visibility", events.current.showGeography ? "visible" : "none");
         drawLabels();
-      }
-    };
-    const onLost = () => { if (!exited) { exited = true; events.current.onUnavailable(); } };
-    const deadline = window.setTimeout(onLost, 9000);
-    const syncGeography = () => {
-      if (!map.isStyleLoaded()) return;
-      for (const layer of ["borders", "disputes"])
-        map.setLayoutProperty(layer, "visibility", events.current.showGeography ? "visible" : "none");
-      drawLabels();
-    };
-    map.on("load", () => {
-      if (exited) return;
-      window.clearTimeout(deadline);
-      usable = true;
-      syncGeography();
-      events.current.onReady();
+      };
+      currentMap.on("load", () => {
+        if (exited || disposed) return;
+        if (deadline !== null) window.clearTimeout(deadline);
+        usable = true;
+        setMapLoaded(true);
+        syncGeography();
+        drawVisibleMarkers();
+        events.current.onReady();
+      });
+      currentMap.on("error", onLost);
+      currentMap.on("moveend", onSettled);
+      currentMap.on("webglcontextlost", onLost);
+      applyGeography.current = syncGeography;
+      void fetch("/data/regional-places.json", { signal: controller.signal }).then((response) => {
+        if (!response.ok) throw new Error();
+        return response.json() as Promise<{ features: Place[] }>;
+      }).then((catalog) => {
+        if (!controller.signal.aborted && !disposed) {
+          places = catalog.features.sort((a, b) =>
+            +b.properties.capital - +a.properties.capital || b.properties.population - a.properties.population);
+          if (usable) drawLabels();
+        }
+      }).catch(() => { /* Retain the base map and selectable event markers without place labels. */ });
+      resize = new ResizeObserver(() => currentMap.resize());
+      resize.observe(container);
+    }).catch(() => {
+      if (!disposed) events.current.onUnavailable();
     });
-    map.on("error", onLost);
-    map.on("moveend", onSettled);
-    map.on("webglcontextlost", onLost);
-    applyGeography.current = syncGeography;
-    void fetch("/data/regional-places.json", { signal: controller.signal }).then((response) => {
-      if (!response.ok) throw new Error();
-      return response.json() as Promise<{ features: Place[] }>;
-    }).then((catalog) => {
-      if (!controller.signal.aborted) {
-        places = catalog.features.sort((a, b) =>
-          +b.properties.capital - +a.properties.capital || b.properties.population - a.properties.population);
-        if (usable) drawLabels();
-      }
-    }).catch(() => { /* Retain the base map and selectable event markers without place labels. */ });
-    const resize = new ResizeObserver(() => map.resize());
-    resize.observe(box.current);
+
     return () => {
+      disposed = true;
       controller.abort();
-      window.clearTimeout(deadline);
-      resize.disconnect();
+      if (deadline !== null) window.clearTimeout(deadline);
+      resize?.disconnect();
       clearLabels();
+      clearMarkers();
       instance.current = null;
+      markerCtorRef.current = null;
       applyGeography.current = null;
-      map.remove();
+      applyMarkers.current = null;
+      map?.remove();
     };
   }, []);
 
   useEffect(() => {
-    const map = instance.current;
-    if (!map) return;
-    const entries = markers.map((entry, index) => {
-      const element = document.createElement("button");
-      element.type = "button";
-      element.className = "x1-map-marker is-" + entry.tone;
-      element.setAttribute("aria-label", entry.label);
-      element.setAttribute("aria-pressed", String(selected === entry.id));
-      element.title = entry.label;
-      element.onclick = entry.onSelect;
-      const point = mapFocus(entry);
-      const samePosition = markers.slice(0, index).filter(({ lat, lon }) => lat === entry.lat && lon === entry.lon).length;
-      return new Marker({ element, offset: [samePosition * 14, 0] }).setLngLat([point.lon, point.lat]).addTo(map);
-    });
-    return () => entries.forEach((marker) => marker.remove());
-  }, [markers, selected]);
+    if (mapLoaded) applyMarkers.current?.();
+  }, [mapLoaded, markers, selected]);
 
   useEffect(() => {
     if (!destination || !instance.current) return;
