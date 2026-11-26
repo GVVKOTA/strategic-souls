@@ -941,7 +941,11 @@ export async function listWebSouls(
   }
 
   return {
-    posts: items.map(({ _following: _, ...post }) => post),
+    posts: items.map((item) => {
+      const post = { ...item };
+      delete (post as { _following?: boolean })._following;
+      return post;
+    }),
   };
 }
 

@@ -34,6 +34,7 @@ export default function AvatarBadge({
       }
       style={{ width: size, height: size }}
     >
+      {/* eslint-disable-next-line @next/next/no-img-element -- Static SVG avatar asset served directly by Cloudflare Workers. */}
       <img
         src={preset.assetPath}
         width={size}

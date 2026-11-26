@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   GLOBE_CAMERA_FAR,
   GLOBE_CAMERA_NEAR,
-  GLOBE_ZOOM_MAX,
   GLOBE_ZOOM_MIN,
   clampGlobeZoom,
   clusterVenues,
@@ -1437,6 +1436,7 @@ export default function GlobeCanvas({
   if (failure || forceFallback)
     return (
       <div className="x1-earth-fallback" role="status">
+        {/* eslint-disable-next-line @next/next/no-img-element -- Static Cloudflare Workers asset; exact source bytes preserved without Next image optimizer. */}
         <img
           className="x1-earth-static"
           src="/data/earth-static.jpg"

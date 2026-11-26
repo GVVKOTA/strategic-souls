@@ -443,7 +443,7 @@ export default function MarketOverviewGrid({
     <section className="x53-dashboard-hero" aria-labelledby="x53-dashboard-title">
       <div className="x53-dashboard-head">
         <div className="ss-eclipse-horizon">
-          <picture aria-hidden="true">
+          <picture>
             <source media="(width < 768px)" srcSet="/eclipse-horizon-mobile.webp" />
             <img src="/eclipse-horizon.webp" width="1280" height="400" alt="" fetchPriority="high" />
           </picture>

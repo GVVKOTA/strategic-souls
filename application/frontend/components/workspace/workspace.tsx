@@ -805,6 +805,7 @@ export default function X1Workspace() {
           aria-label="Strategic Souls by Global Vertex Vectors"
         >
           {/* Founder-supplied approved GVV artwork; source bytes preserved. */}
+          {/* eslint-disable-next-line @next/next/no-img-element -- Static Cloudflare Workers brand asset; exact source bytes preserved. */}
           <img src="/gvv-approved.jpg" width="42" height="42" alt="" />
         </a>
         <nav aria-label="Main dashboards">
@@ -859,6 +860,7 @@ export default function X1Workspace() {
                   <MoreVertical size={18} />
                 </button>
                 <span className="x1-india-identity">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- Static Cloudflare Workers asset. */}
                   <img src="/data/india-flag.png" alt="Flag of India" width={24} height={16} />
                   <span>Made in India<br />For India ❤️</span>
                 </span>
@@ -1301,7 +1303,6 @@ export default function X1Workspace() {
                   savedOnlyRequested={communitySavedOnly}
                   tabNonce={communityTabNonce}
                   onOpenSettings={openSettings}
-                  onProfileSynced={handleProfileSynced}
                   onOpenAsset={setAsset}
                   onCopyToStrategy={(formula) => {
                     setInitialFormula(formula);

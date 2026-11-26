@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-html-link-for-pages -- Preserve native document navigation for the retained archive. */
 "use client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useEffect, useRef, type ReactNode } from "react";
 import {
   Globe2,
@@ -2290,6 +2291,7 @@ function Settings({
   refresh: () => Promise<void>;
   reference: boolean;
 }) {
+  const router = useRouter();
   const [alias, a] = useState(session?.alias || ""),
     [confirm, c] = useState(""),
     [support, s] = useState(""),
@@ -2334,7 +2336,8 @@ function Settings({
               headers: { "Content-Type": "application/json" },
               body: "{}",
             });
-            window.location.assign("/");
+            router.replace("/");
+            router.refresh();
           })
         }
       >

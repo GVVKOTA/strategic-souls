@@ -2,6 +2,7 @@
 "use client";
 
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   ArrowUpRight,
@@ -171,6 +172,7 @@ export default function SettingsView({
   onOpenNotification,
   onOpenPriceAlerts,
 }: Props) {
+  const router = useRouter();
   const [section, setSection] = useState<SettingsSection | null>(() =>
     initialSection === "data" && !isOwner ? "profile" : initialSection,
   );
@@ -618,7 +620,8 @@ export default function SettingsView({
         confirmSharedConversationDeletion: confirmConvos,
       });
       notify("Account and personal records erased.");
-      window.location.assign("/");
+      router.replace("/");
+      router.refresh();
     } catch (err) {
       notify(
         err instanceof Error ? err.message : "Account erasure failed.",

@@ -13,16 +13,19 @@ jobs:
       - name: Verify five-folder root layout and tracked hygiene
         working-directory: .
         run: node operations/scripts/check-repo-layout.mjs
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.25.0'
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: 'pnpm'
           cache-dependency-path: application/pnpm-lock.yaml
-      - run: corepack enable
-      - run: corepack pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run verify
       - run: pnpm run build
       - working-directory: .
         run: |
           node operations/scripts/check-production-release.mjs artifact
           node operations/scripts/scan-secrets.mjs
+          node operations/scripts/scan-v3-source.mjs

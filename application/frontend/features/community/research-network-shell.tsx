@@ -160,7 +160,6 @@ type Props = {
   savedOnlyRequested?: boolean;
   tabNonce?: number;
   onOpenSettings: (section: SettingsSection) => void;
-  onProfileSynced?: (profile: UserProfileSnapshot) => void;
   onOpenAsset: (symbol: string) => void;
   onCopyToStrategy: (formula: string) => void;
   onMobileChatActive?: (active: boolean) => void;
@@ -185,7 +184,6 @@ export default function ResearchNetworkShell({
   savedOnlyRequested = false,
   tabNonce = 0,
   onOpenSettings,
-  onProfileSynced,
   onOpenAsset,
   onCopyToStrategy,
   onMobileChatActive,

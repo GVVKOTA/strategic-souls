@@ -567,7 +567,15 @@ export function parsePrivateCsvDataset(
       permitted: true,
       frequency: "USER_IMPORTED_OHLCV",
       maxAgeMs: 3650 * 86_400_000,
-      observations: bucket.bars.map(({ date: _d, ...obs }) => obs),
+      observations: bucket.bars.map(({ eventAt, knownAt, open, high, low, close, volume }) => ({
+        eventAt,
+        knownAt,
+        close,
+        ...(open !== undefined ? { open } : {}),
+        ...(high !== undefined ? { high } : {}),
+        ...(low !== undefined ? { low } : {}),
+        ...(volume !== undefined ? { volume } : {}),
+      })),
     });
   }
 

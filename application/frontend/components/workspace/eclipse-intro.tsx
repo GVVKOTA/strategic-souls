@@ -164,6 +164,7 @@ export default function EclipseIntro({
           role="img"
           aria-label="Global Vertex Vectors, Strategic Souls"
         >
+          {/* eslint-disable-next-line @next/next/no-img-element -- Static Cloudflare Workers asset; exact source bytes preserved without Next image optimizer or extra imports. */}
           <img className="x2-eclipse-approved-logo" src="/gvv-approved.jpg" width="72" height="72" alt="" />
         </div>
         <h1 className="x1-eclipse-title">STRATEGIC SOULS</h1>
