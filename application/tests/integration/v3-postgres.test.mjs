@@ -86,7 +86,7 @@ const soulRequest = (extra = {}) => ({
   requestId: randomUUID(),
   ...extra,
 });
-let team, shared, personal, invite;
+let team, shared, invite;
 test("database requires explicit consent, verified identities, reserved and unique handles", async () => {
   await assert.rejects(() =>
     rpc("owner", "save_profile", { ...profile("owner"), adult: false }),
@@ -156,7 +156,7 @@ test("team roles, secure one-use handle-bound invitations, expiration and revoca
   );
 });
 test("private and shared RLS, NULL role fail-closed, no direct writes", async () => {
-  personal = await rpc("owner", "save_soul", soulRequest());
+  await rpc("owner", "save_soul", soulRequest());
   shared = await rpc(
     "editor",
     "save_soul",

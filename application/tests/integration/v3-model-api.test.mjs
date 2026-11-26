@@ -6,7 +6,7 @@ import vm from "node:vm";
 import ts from "typescript";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
-import { webcrypto, randomUUID } from "node:crypto";
+import { webcrypto } from "node:crypto";
 const settings = {};
 let transportCalls = [],
   verified = true,
@@ -105,8 +105,8 @@ async function load(path) {
   });
   return m;
 }
-const module = await load("app/api/v3/[...segments]/route.ts");
-await module.evaluate();
+const routeModule = await load("app/api/v3/[...segments]/route.ts");
+await routeModule.evaluate();
 const model = cache.get(resolve("backend/services/v3/model.ts")).namespace;
 async function call(path, input, headers = {}) {
   const request = new Request("https://local.example/api/v3/" + path, {
@@ -119,7 +119,7 @@ async function call(path, input, headers = {}) {
     body: input === undefined ? undefined : JSON.stringify(input),
   });
   const r =
-    await module.namespace[input === undefined ? "GET" : "POST"](request);
+    await routeModule.namespace[input === undefined ? "GET" : "POST"](request);
   return {
     status: r.status,
     data: r.headers.get("content-type")?.includes("json")
@@ -346,7 +346,7 @@ test("verified backend user required; invalid URLs, byte limits, and publish/run
     ).status,
     401,
   );
-  verified = true,
+  verified = true;
   redirectOtp = false;
   assert.equal(
     (await call("publish", {}, { cookie: "ss_access=TEST_ACCESS_NOT_REAL" }))

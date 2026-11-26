@@ -116,9 +116,9 @@ async function link(spec, refer) {
   if (!existsSync(target)) target += ".ts";
   return load(target);
 }
-const module = await load("app/api/[...path]/route.ts");
-await module.link(link);
-await module.evaluate();
+const routeModule = await load("app/api/[...path]/route.ts");
+await routeModule.link(link);
+await routeModule.evaluate();
 async function call(path, input, subject = "alpha", extra = {}) {
   currentUser = subject
     ? {
@@ -137,7 +137,7 @@ async function call(path, input, subject = "alpha", extra = {}) {
     },
     body: input === undefined ? undefined : JSON.stringify(input),
   });
-  const res = await module.namespace[input === undefined ? "GET" : "POST"](req);
+  const res = await routeModule.namespace[input === undefined ? "GET" : "POST"](req);
   return { status: res.status, data: await res.json(), headers: res.headers };
 }
 const consent = { adult: true, privacy: true, terms: true };

@@ -1,7 +1,7 @@
 
 import test from 'node:test';import assert from 'node:assert/strict';import ts from 'typescript';import {readFileSync} from 'node:fs';
 const compiled=ts.transpileModule(readFileSync('backend/services/legacy/research.ts','utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText;
-const {WATCHLIST,REGISTRY,parseFormula,evaluateAst,parseCSV,validateHolding,bsm}=await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'));
+const {WATCHLIST,REGISTRY,parseFormula,evaluateAst,parseCSV,bsm}=await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'));
 test('exact locked watchlist order and no populated market values',()=>{assert.deepEqual(WATCHLIST.map(r=>r[0]),'VIX INDIAVIX IN10Y US10Y US02Y DXY USDINR USDJPY BRENT CRUDEOIL1! NG1! NATURALGAS1! XAUUSD GOLD1! SILVER1! HG1! NQ1! NDX SPX NIKKEI225 KOSPI NIFTY1! NIFTY NIFTYJR CNXMIDCAP BTCUSDT ETHUSDT SOLUSDT'.split(' '));assert.ok(REGISTRY.every(r=>r.quote===null&&r.status==='NOT_CONFIGURED'));});
 test('DSL rejects code execution, unit confusion and resource abuse',()=>{for(const s of ['alert(1)','close;process.exit()','close + volume','sma(close, 9999)','('.repeat(26)+'1'+')'.repeat(26)])assert.throws(()=>parseFormula(s));assert.equal(parseFormula('close / sma(close, 20) - 1').unit,'scalar');});
 test('deterministic DSL uses no observations after cutoff; missing data fails closed',()=>{const ast=parseFormula('close > sma(close, 2)').ast;assert.equal(evaluateAst(ast,{close:[10,12,999999]},1),true);assert.throws(()=>evaluateAst(ast,{close:[10]},0));assert.throws(()=>evaluateAst(parseFormula('1 / 0').ast,{},0));assert.throws(()=>evaluateAst(parseFormula('zscore(close, 2)').ast,{close:[1,1]},1));});

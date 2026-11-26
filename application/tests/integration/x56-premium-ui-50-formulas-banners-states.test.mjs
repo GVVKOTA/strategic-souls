@@ -224,9 +224,7 @@ const sessionMod = (await load(resolve("backend/auth/session.ts"))).namespace;
 const netSvc = (
   await load(resolve("backend/services/community/research-network.ts"))
 ).namespace;
-const socialSvc = (
-  await load(resolve("backend/services/community/social.ts"))
-).namespace;
+await load(resolve("backend/services/community/social.ts"));
 const messengerTypes = (
   await load(resolve("frontend/features/community/messenger/types.ts"))
 ).namespace;
