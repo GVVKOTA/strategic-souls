@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import "../frontend/styles/globals.css";
-import "../frontend/styles/v3.css";
 import "../frontend/styles/x1.css";
 import "../frontend/components/workspace/globe-visual.css";
 import "../frontend/components/workspace/motion.css";

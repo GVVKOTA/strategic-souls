@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.resolve('@tailwindcss/postcss'));
 const postcss = require('postcss');
-const files = ['frontend/styles/globals.css', 'frontend/styles/v3.css', 'frontend/styles/x1.css', 'frontend/components/workspace/globe-visual.css', 'frontend/components/workspace/motion.css', 'frontend/styles/x2.css', 'frontend/features/global/data.css', 'frontend/features/strategy/research.css', 'frontend/features/community/social.css'].filter(existsSync);
+const files = ['frontend/styles/globals.css', 'frontend/styles/x1.css', 'frontend/components/workspace/globe-visual.css', 'frontend/components/workspace/motion.css', 'frontend/styles/x2.css', 'frontend/features/global/data.css', 'frontend/features/strategy/research.css', 'frontend/features/community/social.css'].filter(existsSync);
 const roots = files.map(file => ({ file, root: postcss.parse(readFileSync(file, 'utf8'), { from: file }) }));
 const expected = {
   '--x1-bg': '#070809', '--x1-surface-1': '#101215', '--x1-surface-2': '#191C20', '--x1-surface-3': '#23272D',
