@@ -8,11 +8,34 @@ export function protectMutation(request:Request,maxBytes=32768):void{
   const length=Number(request.headers.get("content-length")||0);
   if(length>maxBytes)throw new HttpError(413,"Request too large.");
 }
-/** O(b), bounded to 4096 bytes even for chunked transfer. */
+/** Count bytes as they arrive, including on requests without a declared length. */
+export async function readBoundedBody(request: Request, maxBytes: number): Promise<Uint8Array<ArrayBuffer>> {
+  const reader = request.body?.getReader();
+  if (!reader) throw new HttpError(400, "Request body required.");
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new HttpError(413, "Request too large.");
+      }
+      if (value.byteLength) parts.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
+  return bytes;
+}
+
 export async function body(request:Request,maxBytes=4096):Promise<Record<string,unknown>>{
-  const reader=request.body?.getReader();if(!reader)throw new HttpError(400,"JSON body required.");let total=0;const parts:Uint8Array[]=[];
-  while(true){const {value,done}=await reader.read();if(done)break;total+=value.length;if(total>maxBytes){await reader.cancel();throw new HttpError(413,"Request too large.");}parts.push(value);}
-  const bytes=new Uint8Array(total);let offset=0;for(const p of parts){bytes.set(p,offset);offset+=p.length;}
+  const bytes = await readBoundedBody(request, maxBytes);
   try{const value=JSON.parse(new TextDecoder().decode(bytes));if(!value||Array.isArray(value)||typeof value!=="object")throw new Error();return value;}catch{throw new HttpError(400,"Invalid JSON object.");}
 }
 export function assertOwner(owned:boolean):void{if(!owned)throw new HttpError(404,"Record not found.");}

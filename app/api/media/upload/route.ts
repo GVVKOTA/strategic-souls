@@ -7,7 +7,7 @@
  */
 import { env } from "cloudflare:workers";
 import { getAuthenticatedUser } from "../../../../backend/auth/session";
-import { HttpError } from "../../../../backend/middleware/security";
+import { HttpError, readBoundedBody } from "../../../../backend/middleware/security";
 import { rate } from "../../../../database/queries/repository";
 
 export const dynamic = "force-dynamic";
@@ -99,7 +99,9 @@ export async function POST(request: Request): Promise<Response> {
     let declaredMime = "";
 
     if (ct.includes("multipart/form-data")) {
-      const form = await request.formData();
+      const payload = await readBoundedBody(request, MAX_IMAGE_BYTES + 65_536);
+      const form = await new Response(payload, { headers: { "Content-Type": ct } }).formData()
+        .catch(() => { throw new HttpError(400, "Invalid multipart image form."); });
       const file = form.get("file");
       if (!(file instanceof File)) {
         throw new HttpError(400, "Attach an image file (PNG, JPEG, or WebP).");
