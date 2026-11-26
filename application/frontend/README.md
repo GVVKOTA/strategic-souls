@@ -7,10 +7,10 @@
 ## 1. What Belongs Here vs. What Does Not
 
 ### What Belongs Here
-- Workspace UIs under `frontend/features/` (`global/`, `strategy/`, `community/`, `account/`, `auth/`, plus retained `legacy/` and `v3/`).
+- Workspace UIs under `frontend/features/` (`global/`, `strategy/`, `community/`, `account/`, `auth/`, plus retained `legacy/`).
 - Shared shell, navigation, search, TradingView widget, and motion controls under `frontend/components/`.
 - Pure client helpers (`frontend/lib/`).
-- Canonical CSS tokens (`frontend/styles/globals.css`), workspace stylesheets (`frontend/styles/x51.css`, `x1.css`, `x2.css`, `v3.css`, `ss-v3.css`), and feature-scoped CSS (`scanner-x54.css`, `profile.css`, `messenger.css`, `account.css`).
+- Canonical CSS tokens (`frontend/styles/globals.css`), workspace stylesheets (`frontend/styles/x51.css`, `x1.css`, `x2.css`, `ss-v3.css`), and feature-scoped CSS (`scanner-x54.css`, `profile.css`, `messenger.css`, `account.css`).
 
 ### What Does Not Belong Here
 - Framework route entrypoints (`app/**/page.tsx`, `app/layout.tsx`, `app/api/**/route.ts`) — these remain in [`application/app/`](../app/) for Vinext / Next.js App Router file-system discovery.
@@ -30,12 +30,12 @@
 | `frontend/features/global/market-grid.tsx` | Centered `Strategic Dashboard` title + 9 customizable market cards (3×3 desktop/tablet, 2-col + full-width 9th card on `<=520px`). |
 | `frontend/features/global/strategic-globe.tsx` & `globe-canvas.tsx` | Enlarged `1.0×`–`5.0×` perspective WebGL 3D Earth (`Set<WebGLBuffer>` lifecycle, 15s texture timeout, reduced-quality cloud skip, `prefers-reduced-motion` & `data-motion="minimal"` support). |
 | `frontend/features/global/economic-calendar.tsx` & `daily-pulse.tsx` | Official statutory Economic Calendar (zero `HIGH/MEDIUM/LOW` impact badges; never synthesizes times) and `MARKET VOX` (`NIFTY & Gold community vote`). |
-| `frontend/features/strategy/workspace.tsx` & `controls.tsx` | **Strategy workspace:** Full-width `[Soul Scan \| Formula Lab]` tabs, blank-by-default Soul name input, Classic (50 presets) & Advanced (`Discover` / `Build` / `Draw`), compact results, and standalone `GRAVEYARD` heading (zero subtitle). Lazy-loads `formula-lab.tsx` and `draw-canvas.tsx`. |
+| `frontend/features/strategy/workspace.tsx`, `scan-helpers.ts` & `controls.tsx` | **Strategy workspace:** Full-width `[Soul Scan \| Formula Lab]` tabs, blank-by-default Soul name input, Classic (50 presets) & Advanced (`Discover` / `Build` / `Draw`), pure formatting/CSV/parameter helpers (`scan-helpers.ts`), compact results, and standalone `GRAVEYARD` heading (zero subtitle). Lazy-loads `formula-lab.tsx` and `draw-canvas.tsx`. |
 | `frontend/features/strategy/evidence-charts.tsx` | Honest SVG coverage bar & Wilson 95% confidence-interval charts (`Insufficient verified observations` when sample gates fail). |
 | `frontend/features/community/research-network-shell.tsx` | **Community (`Soul Network`) shell:** Full-width 3-column `Soul Feed \| Chats \| Rooms` tabs, compact `"My Profile"` strip, debounced public researcher search, and lazy-loaded `SocialWorkspace` (`Chats`) and `dashboard.tsx` (`Rooms`). |
 | `frontend/features/community/public-profile-sheet.tsx` | Canonical `PublicProfileSheet` modal with `Tab`/`Shift+Tab` focus trap, abort/sequence guards, `Souls \| Followers \| Following` drawers, `Share profile`, and `Copy to Drafts`. |
 | `frontend/features/community/messenger/` | Modular Telegram-like `Chats` (`chat-inbox.tsx`, `chat-header.tsx`, `conversation-view.tsx`, `message-bubble.tsx`, `chat-composer.tsx`, `types.ts`) with monotonic message merging and cross-thread abort/sequence guards. |
-| `frontend/features/account/` & `frontend/features/auth/` | `settings-view.tsx`, `account-quick-panel.tsx`, `avatar-studio.tsx`, `avatar-badge.tsx`, and standalone D1 email/password + optional Google OAuth `auth-panel.tsx`. |
+| `frontend/features/account/` & `frontend/features/auth/` | `settings-view.tsx`, `account-quick-panel.tsx`, `avatar-studio.tsx`, `avatar-badge.tsx`, and standalone D1 email/password `auth-panel.tsx`. |
 | `frontend/styles/globals.css` & `frontend/styles/x51.css` | Canonical 6-color text tokens (`globals.css`) and active `X5.1`–`X5.5` component styling (`x51.css`). |
 
 ---

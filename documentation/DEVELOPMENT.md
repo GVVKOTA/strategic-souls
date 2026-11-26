@@ -23,7 +23,7 @@ corepack enable
 pnpm install --frozen-lockfile
 ```
 
-Run the core verification suite (typecheck, ESLint across `app frontend backend database`, and all 43 Node test suites):
+Run the core verification suite (typecheck, ESLint across `app frontend backend database`, and all Node test suites):
 
 ```powershell
 pnpm run verify
@@ -31,12 +31,14 @@ pnpm run verify
 pnpm run verify:x2
 ```
 
-Run production Vite/Vinext Worker build, generated Wrangler artifact verification, and secret scan:
+Run production Vite/Vinext Worker build, generated Wrangler artifact verification, layout/monitor unit tests, and secret scan:
 
 ```powershell
 pnpm run build
 node ../operations/scripts/check-production-release.mjs artifact
+node ../operations/scripts/check-repo-layout.mjs
 node ../operations/scripts/scan-secrets.mjs
+node --test ../operations/scripts/check-repo-layout.test.mjs ../operations/monitoring/monitor.test.mjs
 ```
 
 Run Python quant tests:
@@ -72,7 +74,8 @@ pnpm run dev:hmr
 ## 4. Environment Files, Ignores & Local Git Safeguards
 
 - Copy templates only inside `application/` (`application/.env.example`, `application/.dev.vars.example`) to gitignored `.env` or `.dev.vars` when needed locally. **Never** create `.env`, `.dev.vars`, `.secrets/`, or runtime databases at the Git repository root.
-- Scoped `.gitignore` files live inside `application/`, `database/`, `database/supabase/`, and `operations/` — there is intentionally **no root `.gitignore`** in order to keep the repository root strictly limited to 5 directories + `README.md`.
+- Scoped `.gitignore` files live inside `application/`, `database/`, `database/supabase/`, and `operations/` — there is intentionally **no root `.gitignore`** in order to keep the repository root strictly limited to 6 directories (`archive/` included) + `README.md`.
+- CI runs on GitHub Actions using Node `24` (`.github/actions/setup-app`), deriving the `pnpm` version from `application/package.json` and caching the `pnpm` store under `$RUNNER_TEMP/pnpm-store` via `SITES_PNPM_SHARED_STORE`.
 - Recommended local developer safeguard against accidental root-level untracked clutter: add local patterns to your non-tracked `.git/info/exclude` (inside `.git/`, never committed), and rely on `.github/workflows/verify.yml` + `operations/scripts/scan-secrets.mjs` to fail CI if any forbidden root entry, secret, or build artifact is tracked.
 - Shell line endings (`*.sh text eol=lf`) are enforced via [`application/.gitattributes`](../application/.gitattributes).
 

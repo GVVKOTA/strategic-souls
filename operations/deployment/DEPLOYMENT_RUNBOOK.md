@@ -56,12 +56,13 @@ Before merging any branch into `main`:
 1. **Repository Layout, Secret & Hygiene Scan (from repo root):**
    ```powershell
    node operations/scripts/check-repo-layout.mjs
+   node --test operations/scripts/check-repo-layout.test.mjs operations/monitoring/monitor.test.mjs
    node operations/scripts/scan-secrets.mjs
    node operations/scripts/scan-v3-source.mjs
    git diff --check
    git status
    ```
-   Confirm strictly five tracked root directories (`.github/`, `application/`, `database/`, `documentation/`, `operations/`) + `README.md`, and zero `.env`, `.dev.vars`, API keys, tokens, cookies, or private DB dumps tracked or staged.
+   Confirm strictly six tracked root directories (`.github/`, `application/`, `archive/`, `database/`, `documentation/`, `operations/`) + `README.md`, non-runtime `archive/` isolation, and zero `.env`, `.dev.vars`, API keys, tokens, cookies, or private DB dumps tracked or staged.
 2. **Automated Verification (from `application/`):**
    ```powershell
    cd application
@@ -89,11 +90,11 @@ A `git push` or merge is **NOT** proof of deployment. After Workers Builds finis
 1. Confirm the Cloudflare Workers Build status is `success` and record the new **Version ID**, **Deployment ID**, **Build UUID**, and **UTC timestamp**.
 2. Verify read-only public routes return `HTTP 200` with CSP and HSTS headers at `https://strategic-souls.vishnukota20071005.workers.dev`:
    - Pages: `/`, `/workspace`, `/signin`, `/product`, `/how-it-works`, `/methodology`, `/pricing`, `/trust`, `/terms`, `/help`, `/legal/compliance`
-   - Public JSON & static assets: `/api/release`, `/api/markets/public`, `/api/auth/session`, `/data/earth-assets.json`, `/gvv-approved.jpg`
+   - Public JSON & static assets: `/api/health`, `/api/release`, `/api/markets/public`, `/api/auth/session`, `/data/earth-assets.json`, `/gvv-approved.jpg`
 3. Verify private endpoints fail closed with `HTTP 401` and `Cache-Control: private, no-store`:
    - `/api/x1/workspace`
    - `/api/x2/providers`
-4. Verify rendered HTML/assets reflect the newly released bundle and check browser console/mobile layout without creating spam accounts in live D1.
+4. Verify rendered HTML/assets reflect the newly released bundle and check browser console/mobile layout without creating spam accounts in live D1. See [`operations/monitoring/MONITORING_RUNBOOK.md`](../monitoring/MONITORING_RUNBOOK.md) for scheduled monitoring probes and GitHub Issues incident handling.
 
 ---
 

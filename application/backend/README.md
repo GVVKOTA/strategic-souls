@@ -7,7 +7,7 @@
 ## 1. What Belongs Here vs. What Does Not
 
 ### What Belongs Here
-- Standalone Cloudflare D1 authentication & optional PKCE Google OAuth (`backend/auth/`).
+- Standalone Cloudflare D1 authentication (`backend/auth/`) and Worker/D1 health readiness (`backend/services/health.ts`).
 - Cloudflare Worker fetch entrypoint, security headers, CSRF, rate limiting, and low-noise `/api/*` observability (`backend/middleware/`).
 - Deterministic math, Soul Scan AST/DSL, next-open backtest, Evidence & Probability, Formula Lab, and portfolio engines (`backend/engines/`).
 - Domain services for market data, intelligence, Earth conflict normalizers, research presets/quotas, community/messenger, and user profiles (`backend/services/`).
@@ -26,7 +26,8 @@
 | --- | --- |
 | `backend/middleware/index.ts` | Cloudflare Worker entrypoint referenced by `vite.config.ts` (`main: "./backend/middleware/index.ts"`). Enforces CSP/HSTS/cache headers, emits `X-Request-Id` and `Server-Timing: app;dur=<ms>` on `/api/*`, and logs anonymous `ss_api_signal` JSON strictly for `5xx`, `429`, or slow `/api/* > 1500ms` (pathname only; zero query strings or PII). |
 | `backend/middleware/security.ts` | CSRF (`protectMutation`), bounded JSON parsing, consent/ownership guards, and feature kill-lists. |
-| `backend/auth/session.ts` | Standalone Cloudflare D1 email/password auth (`PBKDF2-SHA256`, SHA-256 hashed `HttpOnly` session cookies, constant-time compare, session rotation) and optional PKCE Google OAuth. |
+| `backend/auth/session.ts` | Standalone Cloudflare D1 email/password auth (`PBKDF2-SHA256`, SHA-256 hashed `HttpOnly` session cookies, constant-time compare, session rotation). |
+| `backend/services/health.ts` | Sanitized Worker liveness & D1 readiness check (`SELECT 1`) consumed by `/api/health`. |
 | `backend/engines/scan.ts` | **Canonical Soul Scan Engine:** Deterministic DSL/AST parser, compiler, and 3-valued evaluator (`TRUE` / `FALSE` / `UNKNOWN`). Both Classic (50 presets) and Advanced (`Discover` / `Build` / `Draw`) execute through this single AST. |
 | `backend/engines/evidence-stats.ts` & `backtest.ts` | Coverage %, Match %, empirical probability, Wilson 95% confidence interval, Brier score, zero-division `N/A` guards, and next-open backtest evaluation. |
 | `backend/engines/math.ts` & `analytics.ts` | Formula Lab Black-Scholes-Merton (BSM) option pricing/Greeks, Implied Volatility, CAGR, XIRR, returns-based Pearson correlation, and portfolio allocation math. |
