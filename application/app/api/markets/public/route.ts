@@ -275,10 +275,17 @@ export async function GET(request: Request): Promise<Response> {
       },
       { headers: PUBLIC_HEADERS },
     );
-  } catch {
+  } catch (err) {
+    console.warn(
+      JSON.stringify({
+        event: "markets_public_unavailable",
+        route: "/api/markets/public",
+        errorClass: err instanceof Error ? err.name : "UnexpectedError",
+      }),
+    );
     return Response.json(
       { error: "Official market sources are temporarily unavailable." },
-      { status: 503, headers: { "Cache-Control": "no-store" } },
+      { status: 503, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } },
     );
   }
 }

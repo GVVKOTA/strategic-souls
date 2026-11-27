@@ -31,8 +31,17 @@ const cloudflareWorkerConfig = {
   main: "./backend/middleware/index.ts",
   compatibility_date: "2026-05-15",
   compatibility_flags: ["nodejs_compat"],
-  observability: { enabled: true },
-  triggers: { crons: ["* * * * *", "*/2 * * * *"] },
+  observability: {
+    enabled: true,
+    redact_query_string: true,
+    logs: {
+      enabled: true,
+      invocation_logs: true,
+      persist: true,
+      head_sampling_rate: 1,
+    },
+  },
+  triggers: { crons: ["* * * * *", "*/2 * * * *", "30 18 * * *"] },
   vars: {
     ENABLE_PRIVATE_BROKER_DATA: "true",
     ENABLE_PUBLIC_EXCHANGE_QUOTES: "false",

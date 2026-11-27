@@ -1,6 +1,8 @@
 /**
- * Calendar-based Indian exchange session & freshness classifier (Asia/Kolkata).
- * Never relies on naive weekday-only assumptions or marks weekend/holiday quotes as LIVE.
+ * Single authoritative calendar-based exchange session & freshness classifier.
+ * Covers NSE, BSE, MCX (Asia/Kolkata) and NYMEX Globex (America/New_York) with
+ * official 2026–2027 schedules, verified special sessions (including NSE/BSE Union Budget
+ * Sunday 1 Feb 2026), and fail-closed SCHEDULE_UNKNOWN outside verified calendar years.
  */
 
 export type ExchangeCode = "NSE" | "BSE" | "MCX";
@@ -10,6 +12,11 @@ export type ExchangeSessionState =
   | "CLOSED"
   | "HOLIDAY"
   | "SCHEDULE_UNKNOWN";
+
+export type ExchangeCalendarStatus =
+  | "VERIFIED_2026"
+  | "VERIFIED_2027"
+  | "UNVERIFIED_YEAR";
 
 export type ExchangeSessionInfo = {
   exchange: ExchangeCode;
@@ -25,16 +32,34 @@ export type ExchangeSessionInfo = {
   holidayName: string | null;
   specialSessionNote: string | null;
   verifiedThrough: string;
-  calendarStatus: "VERIFIED_2026" | "UNVERIFIED_YEAR";
+  calendarStatus: ExchangeCalendarStatus;
+  calendarVersion?: string;
+  calendarSource?: string;
 };
 
+export const EXCHANGE_CALENDAR_METADATA = Object.freeze({
+  version: "ss-x3-calendar-2026-2027.1",
+  verifiedThrough: "2027-12-31",
+  verifiedYears: ["2026", "2027"] as readonly string[],
+  source:
+    "Official NSE/BSE/MCX holiday & special session circulars (incl. NSE/CMTR/72349) and CME Globex holiday schedule",
+  updatedAt: "2026-11-28",
+});
 
 const IST_TZ = "Asia/Kolkata" as const;
 
+type SpecialSessionSpec = {
+  exchanges: readonly ExchangeCode[];
+  preOpenMinutes?: number;
+  openMinutes: number;
+  closeMinutes: number;
+  label: string;
+  note: string;
+  circular: string;
+};
+
 /**
  * 2026 Indian Equity (NSE/BSE) scheduled full trading holidays (YYYY-MM-DD in IST).
- * Source reference: official NSE/BSE 2026 holiday circulars.
- * Special Muhurat trading session (Diwali) is tracked separately so it is not misclassified as normal full day.
  */
 const NSE_BSE_HOLIDAYS_2026: Readonly<Record<string, string>> = {
   "2026-01-26": "Republic Day",
@@ -55,34 +80,98 @@ const NSE_BSE_HOLIDAYS_2026: Readonly<Record<string, string>> = {
 };
 
 /**
- * 2026 MCX full-day holidays (morning + evening both closed).
- * Note: On several Indian public holidays MCX closes morning (09:00-17:00) and opens evening (17:00-23:30/23:55).
+ * 2027 Indian Equity (NSE/BSE) weekday scheduled trading holidays (YYYY-MM-DD in IST).
+ * Weekend holidays (e.g. Mahashivratri Sat, Independence Day Sun, Ganesh Chaturthi Sat,
+ * Gandhi Jayanti Sat, Dussehra Sun, Guru Nanak Jayanti Sun, Christmas Sat) fall on weekends.
  */
-const MCX_FULL_HOLIDAYS_2026: Readonly<Record<string, string>> = {
-  "2026-01-26": "Republic Day",
-  "2026-04-03": "Good Friday",
-  "2026-10-02": "Mahatma Gandhi Jayanti",
-  "2026-12-25": "Christmas",
+const NSE_BSE_HOLIDAYS_2027: Readonly<Record<string, string>> = {
+  "2027-01-26": "Republic Day",
+  "2027-03-22": "Holi",
+  "2027-03-26": "Good Friday",
+  "2027-04-14": "Dr. Baba Saheb Ambedkar Jayanti",
+  "2027-04-15": "Shri Ram Navami",
+  "2027-04-19": "Shri Mahavir Jayanti",
+  "2027-05-17": "Bakri Id",
+  "2027-06-16": "Muharram",
+  "2027-10-28": "Diwali Laxmi Pujan (Muhurat session only)",
+  "2027-10-29": "Diwali Balipratipada",
 };
 
-const MCX_MORNING_CLOSED_EVENING_OPEN_2026: Readonly<Record<string, string>> = {
-  "2026-01-01": "New Year's Day (MCX evening closed; morning open 09:00-17:00)",
-  "2026-03-03": "Holi (MCX morning closed; evening 17:00-23:55 IST)",
-  "2026-03-26": "Ram Navami (MCX morning closed; evening 17:00-23:30 IST)",
-  "2026-03-31": "Mahavir Jayanti (MCX morning closed; evening 17:00-23:30 IST)",
-  "2026-04-14": "Ambedkar Jayanti (MCX morning closed; evening 17:00-23:30 IST)",
-  "2026-05-01": "Maharashtra Day (MCX morning closed; evening 17:00-23:30 IST)",
-  "2026-05-28": "Bakri Id (MCX morning closed; evening 17:00-23:30 IST)",
-  "2026-06-26": "Muharram (MCX morning closed; evening 17:00-23:30 IST)",
-  "2026-09-14": "Ganesh Chaturthi (MCX morning closed; evening 17:00-23:30 IST)",
-  "2026-10-20": "Dussehra (MCX morning closed; evening 17:00-23:30 IST)",
-  "2026-11-10": "Diwali Balipratipada (MCX morning closed; evening 17:00-23:55 IST)",
-  "2026-11-24": "Guru Nanak Jayanti (MCX morning closed; evening 17:00-23:55 IST)",
+const NSE_BSE_HOLIDAYS_BY_YEAR: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "2026": NSE_BSE_HOLIDAYS_2026,
+  "2027": NSE_BSE_HOLIDAYS_2027,
 };
 
-const SPECIAL_SESSIONS_2026: Readonly<Record<string, string>> = {
+/** 2026–2027 MCX full-day holidays (morning + evening both closed). */
+const MCX_FULL_HOLIDAYS_BY_YEAR: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "2026": {
+    "2026-01-26": "Republic Day",
+    "2026-04-03": "Good Friday",
+    "2026-10-02": "Mahatma Gandhi Jayanti",
+    "2026-12-25": "Christmas",
+  },
+  "2027": {
+    "2027-01-26": "Republic Day",
+    "2027-03-26": "Good Friday",
+  },
+};
+
+const MCX_PARTIAL_HOLIDAYS_BY_YEAR: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "2026": {
+    "2026-01-01": "New Year's Day (MCX evening closed; morning open 09:00-17:00)",
+    "2026-03-03": "Holi (MCX morning closed; evening 17:00-23:55 IST)",
+    "2026-03-26": "Ram Navami (MCX morning closed; evening 17:00-23:30 IST)",
+    "2026-03-31": "Mahavir Jayanti (MCX morning closed; evening 17:00-23:30 IST)",
+    "2026-04-14": "Ambedkar Jayanti (MCX morning closed; evening 17:00-23:30 IST)",
+    "2026-05-01": "Maharashtra Day (MCX morning closed; evening 17:00-23:30 IST)",
+    "2026-05-28": "Bakri Id (MCX morning closed; evening 17:00-23:30 IST)",
+    "2026-06-26": "Muharram (MCX morning closed; evening 17:00-23:30 IST)",
+    "2026-09-14": "Ganesh Chaturthi (MCX morning closed; evening 17:00-23:30 IST)",
+    "2026-10-20": "Dussehra (MCX morning closed; evening 17:00-23:30 IST)",
+    "2026-11-10": "Diwali Balipratipada (MCX morning closed; evening 17:00-23:55 IST)",
+    "2026-11-24": "Guru Nanak Jayanti (MCX morning closed; evening 17:00-23:55 IST)",
+  },
+  "2027": {
+    "2027-01-01": "New Year's Day (MCX evening closed; morning open 09:00-17:00)",
+    "2027-03-22": "Holi (MCX morning closed; evening 17:00-23:30 IST)",
+    "2027-04-14": "Ambedkar Jayanti (MCX morning closed; evening 17:00-23:30 IST)",
+    "2027-04-15": "Ram Navami (MCX morning closed; evening 17:00-23:30 IST)",
+    "2027-04-19": "Mahavir Jayanti (MCX morning closed; evening 17:00-23:30 IST)",
+    "2027-05-17": "Bakri Id (MCX morning closed; evening 17:00-23:30 IST)",
+    "2027-06-16": "Muharram (MCX morning closed; evening 17:00-23:30 IST)",
+    "2027-10-29": "Diwali Balipratipada (MCX morning closed; evening 17:00-23:30 IST)",
+  },
+};
+
+/**
+ * Verified special live trading sessions that override weekend closure (evaluated BEFORE Sat/Sun check).
+ */
+const SPECIAL_TRADING_SESSIONS: Readonly<Record<string, SpecialSessionSpec>> = {
+  "2026-02-01": {
+    exchanges: ["NSE", "BSE"],
+    preOpenMinutes: 9 * 60,
+    openMinutes: 9 * 60 + 15,
+    closeMinutes: 15 * 60 + 30,
+    label: "Special session open (Union Budget)",
+    note: "Union Budget 2026 Special Trading Session (Sunday 09:15–15:30 IST; circular NSE/CMTR/72349)",
+    circular: "NSE/CMTR/72349",
+  },
+};
+
+const SPECIAL_SESSION_NOTES: Readonly<Record<string, string>> = {
+  "2026-02-01": "Union Budget 2026 Special Trading Session (Sunday 09:15–15:30 IST; NSE/CMTR/72349)",
   "2026-11-08": "Diwali Laxmi Pujan (Sunday special Muhurat trading session only)",
 };
+
+export function isVerifiedCalendarYear(year: string): year is "2026" | "2027" {
+  return year === "2026" || year === "2027";
+}
+
+function calendarStatusForYear(year: string): ExchangeCalendarStatus {
+  if (year === "2026") return "VERIFIED_2026";
+  if (year === "2027") return "VERIFIED_2027";
+  return "UNVERIFIED_YEAR";
+}
 
 function istParts(nowMs: number) {
   const d = new Date(nowMs);
@@ -114,6 +203,7 @@ function istParts(nowMs: number) {
     monthNum: Number(month),
   };
 }
+
 export function formatIstTimestamp(utcIsoOrMs: string | number | null): string | null {
   if (utcIsoOrMs === null) return null;
   const ms = typeof utcIsoOrMs === "number" ? utcIsoOrMs : Date.parse(utcIsoOrMs);
@@ -136,32 +226,38 @@ function isUsWinterDstForMcx(dateIST: string): boolean {
   const [year, month, day] = dateIST.split("-").map(Number);
   if (month < 3 || month >= 12) return true;
   if (month > 3 && month < 11) return false;
-  const firstSunday = 1 + (7 - new Date(Date.UTC(year, month - 1, 1)).getUTCDay()) % 7;
+  const firstSunday = 1 + ((7 - new Date(Date.UTC(year, month - 1, 1)).getUTCDay()) % 7);
   return month === 11 ? day >= firstSunday : day < firstSunday + 7;
 }
 
 /**
  * Returns IST session open/close windows (minutes since 00:00 IST) for a given exchange and IST calendar date.
- * Returns null on full holidays and regular weekends so out-of-session bars are cleanly excluded.
+ * Evaluates verified special weekend sessions BEFORE regular weekend exclusion.
+ * Returns null on full holidays and non-special weekends.
  */
 export function getExchangeSessionWindowMinutes(
   exchange: ExchangeCode,
   dateIST: string,
 ): { openMinutes: number; closeMinutes: number } | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateIST)) return null;
+  const special = SPECIAL_TRADING_SESSIONS[dateIST];
+  if (special && special.exchanges.includes(exchange)) {
+    return { openMinutes: special.openMinutes, closeMinutes: special.closeMinutes };
+  }
   const day = new Date(`${dateIST}T00:00:00Z`).getUTCDay();
-  // NSE/CMTR/72349 confirms the ordinary cash window on Union Budget Sunday.
-  if (exchange === "NSE" && dateIST === "2026-02-01")
-    return { openMinutes: 9 * 60 + 15, closeMinutes: 15 * 60 + 30 };
   if (day === 0 || day === 6) return null;
+  const year = dateIST.slice(0, 4);
   if (exchange === "NSE" || exchange === "BSE") {
-    if (NSE_BSE_HOLIDAYS_2026[dateIST]) return null;
+    const yearHolidays = NSE_BSE_HOLIDAYS_BY_YEAR[year];
+    if (yearHolidays?.[dateIST]) return null;
     return { openMinutes: 9 * 60 + 15, closeMinutes: 15 * 60 + 30 };
   }
-  if (MCX_FULL_HOLIDAYS_2026[dateIST]) return null;
+  const mcxFull = MCX_FULL_HOLIDAYS_BY_YEAR[year];
+  if (mcxFull?.[dateIST]) return null;
   const closeMinutes = isUsWinterDstForMcx(dateIST) ? 23 * 60 + 55 : 23 * 60 + 30;
-  if (MCX_MORNING_CLOSED_EVENING_OPEN_2026[dateIST]) {
-    if (dateIST === "2026-01-01") {
+  const mcxPartial = MCX_PARTIAL_HOLIDAYS_BY_YEAR[year];
+  if (mcxPartial?.[dateIST]) {
+    if (dateIST.endsWith("-01-01")) {
       return { openMinutes: 9 * 60, closeMinutes: 17 * 60 };
     }
     return { openMinutes: 17 * 60, closeMinutes };
@@ -200,14 +296,21 @@ export function getIndianExchangeSession(
     : "09:00–23:30 IST (Mon–Fri)";
   const regularHoursIST =
     exchange === "MCX" ? mcxHours : "09:15–15:30 IST (Mon–Fri; Pre-open 09:00–09:15)";
+  const calStatus = calendarStatusForYear(p.year);
+  const meta = {
+    verifiedThrough: EXCHANGE_CALENDAR_METADATA.verifiedThrough,
+    calendarStatus: calStatus,
+    calendarVersion: EXCHANGE_CALENDAR_METADATA.version,
+    calendarSource: EXCHANGE_CALENDAR_METADATA.source,
+  };
 
-  if (p.year !== "2026") {
+  if (!isVerifiedCalendarYear(p.year)) {
     return {
       exchange,
       mic,
       state: "SCHEDULE_UNKNOWN",
       label: "Schedule unverified",
-      reason: `Verified holiday calendar covers 2026 only (observed ${p.year}); live status is never assumed.`,
+      reason: `Verified holiday calendar covers 2026–2027 only (observed ${p.year}); live status is never assumed.`,
       timezone: IST_TZ,
       localDateIST: p.dateIST,
       localTimeIST: p.timeIST,
@@ -215,12 +318,56 @@ export function getIndianExchangeSession(
       regularHoursIST,
       holidayName: null,
       specialSessionNote: null,
-      verifiedThrough: "2026-12-31",
-      calendarStatus: "UNVERIFIED_YEAR",
+      ...meta,
     };
   }
 
-  const specialNote = SPECIAL_SESSIONS_2026[p.dateIST] ?? null;
+  const specialNote = SPECIAL_SESSION_NOTES[p.dateIST] ?? null;
+
+  // Evaluate verified special trading sessions BEFORE weekend exclusion (e.g. NSE/BSE 1 Feb 2026 Union Budget Sunday).
+  const specialSession = SPECIAL_TRADING_SESSIONS[p.dateIST];
+  if (specialSession && specialSession.exchanges.includes(exchange)) {
+    if (
+      specialSession.preOpenMinutes !== undefined &&
+      p.minutes >= specialSession.preOpenMinutes &&
+      p.minutes < specialSession.openMinutes
+    ) {
+      return {
+        exchange,
+        mic,
+        state: "PRE_OPEN",
+        label: "Pre-open (special session)",
+        reason: `${specialSession.note}. Pre-open window active.`,
+        timezone: IST_TZ,
+        localDateIST: p.dateIST,
+        localTimeIST: p.timeIST,
+        serverTimestampUTC,
+        regularHoursIST,
+        holidayName: null,
+        specialSessionNote: specialSession.note,
+        ...meta,
+      };
+    }
+    const open =
+      p.minutes >= specialSession.openMinutes && p.minutes < specialSession.closeMinutes;
+    return {
+      exchange,
+      mic,
+      state: open ? "OPEN" : "CLOSED",
+      label: open ? specialSession.label : "Special session closed",
+      reason: open
+        ? `${specialSession.note}. Exchange halts are not independently monitored.`
+        : `${specialSession.note}. Outside special session hours; quotes reflect prior session prices.`,
+      timezone: IST_TZ,
+      localDateIST: p.dateIST,
+      localTimeIST: p.timeIST,
+      serverTimestampUTC,
+      regularHoursIST,
+      holidayName: null,
+      specialSessionNote: specialSession.note,
+      ...meta,
+    };
+  }
 
   if (p.weekday === "Sat" || p.weekday === "Sun") {
     return {
@@ -238,13 +385,12 @@ export function getIndianExchangeSession(
       regularHoursIST,
       holidayName: null,
       specialSessionNote: specialNote,
-      verifiedThrough: "2026-12-31",
-      calendarStatus: "VERIFIED_2026",
+      ...meta,
     };
   }
 
   if (exchange === "NSE" || exchange === "BSE") {
-    const holiday = NSE_BSE_HOLIDAYS_2026[p.dateIST];
+    const holiday = NSE_BSE_HOLIDAYS_BY_YEAR[p.year]?.[p.dateIST];
     if (holiday) {
       return {
         exchange,
@@ -259,8 +405,7 @@ export function getIndianExchangeSession(
         regularHoursIST,
         holidayName: holiday,
         specialSessionNote: specialNote,
-        verifiedThrough: "2026-12-31",
-        calendarStatus: "VERIFIED_2026",
+        ...meta,
       };
     }
 
@@ -278,8 +423,7 @@ export function getIndianExchangeSession(
         regularHoursIST,
         holidayName: null,
         specialSessionNote: specialNote,
-        verifiedThrough: "2026-12-31",
-        calendarStatus: "VERIFIED_2026",
+        ...meta,
       };
     }
 
@@ -299,13 +443,12 @@ export function getIndianExchangeSession(
       regularHoursIST,
       holidayName: null,
       specialSessionNote: specialNote,
-      verifiedThrough: "2026-12-31",
-      calendarStatus: "VERIFIED_2026",
+      ...meta,
     };
   }
 
   // MCX commodity futures calendar
-  const mcxFullHoliday = MCX_FULL_HOLIDAYS_2026[p.dateIST];
+  const mcxFullHoliday = MCX_FULL_HOLIDAYS_BY_YEAR[p.year]?.[p.dateIST];
   if (mcxFullHoliday) {
     return {
       exchange: "MCX",
@@ -320,14 +463,13 @@ export function getIndianExchangeSession(
       regularHoursIST,
       holidayName: mcxFullHoliday,
       specialSessionNote: specialNote,
-      verifiedThrough: "2026-12-31",
-      calendarStatus: "VERIFIED_2026",
+      ...meta,
     };
   }
 
-  const mcxPartial = MCX_MORNING_CLOSED_EVENING_OPEN_2026[p.dateIST];
+  const mcxPartial = MCX_PARTIAL_HOLIDAYS_BY_YEAR[p.year]?.[p.dateIST];
   if (mcxPartial) {
-    if (p.dateIST === "2026-01-01") {
+    if (p.dateIST.endsWith("-01-01")) {
       const open = p.minutes >= 9 * 60 && p.minutes < 17 * 60;
       return {
         exchange: "MCX",
@@ -342,8 +484,7 @@ export function getIndianExchangeSession(
         regularHoursIST,
         holidayName: open ? null : "New Year's Day (Evening)",
         specialSessionNote: mcxPartial,
-        verifiedThrough: "2026-12-31",
-        calendarStatus: "VERIFIED_2026",
+        ...meta,
       };
     }
     const eveningOpen = p.minutes >= 17 * 60 && p.minutes < mcxCloseMinutes;
@@ -360,8 +501,7 @@ export function getIndianExchangeSession(
       regularHoursIST,
       holidayName: eveningOpen ? null : mcxPartial,
       specialSessionNote: mcxPartial,
-      verifiedThrough: "2026-12-31",
-      calendarStatus: "VERIFIED_2026",
+      ...meta,
     };
   }
 
@@ -381,8 +521,7 @@ export function getIndianExchangeSession(
     regularHoursIST,
     holidayName: null,
     specialSessionNote: specialNote,
-    verifiedThrough: "2026-12-31",
-    calendarStatus: "VERIFIED_2026",
+    ...meta,
   };
 }
 
@@ -396,11 +535,18 @@ export function getAllIndianExchangeSessions(
   };
 }
 
-/** 2026 CME Globex NYMEX Energy full-day holidays (YYYY-MM-DD in America/New_York). */
-const NYMEX_FULL_HOLIDAYS_2026: Readonly<Record<string, string>> = {
-  "2026-01-01": "New Year's Day",
-  "2026-04-03": "Good Friday",
-  "2026-12-25": "Christmas Day",
+/** 2026–2027 CME Globex NYMEX Energy full-day holidays (YYYY-MM-DD in America/New_York). */
+const NYMEX_FULL_HOLIDAYS_BY_YEAR: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "2026": {
+    "2026-01-01": "New Year's Day",
+    "2026-04-03": "Good Friday",
+    "2026-12-25": "Christmas Day",
+  },
+  "2027": {
+    "2027-01-01": "New Year's Day",
+    "2027-03-26": "Good Friday",
+    "2027-12-24": "Christmas Day (Observed)",
+  },
 };
 
 export function getNymexGlobexSession(nowMs = Date.now()): {
@@ -408,6 +554,7 @@ export function getNymexGlobexSession(nowMs = Date.now()): {
   label: string;
   timezone: string;
   reason: string;
+  verifiedThrough: string;
 } {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York",
@@ -425,21 +572,23 @@ export function getNymexGlobexSession(nowMs = Date.now()): {
   const weekday = get("weekday");
   const minutes = Number(get("hour")) * 60 + Number(get("minute"));
 
-  if (year !== "2026") {
+  if (!isVerifiedCalendarYear(year)) {
     return {
       state: "SCHEDULE_UNKNOWN",
       label: "Schedule unverified",
       timezone: "America/New_York",
-      reason: "Verified NYMEX Globex holiday schedule covers 2026 only.",
+      reason: `Verified NYMEX Globex holiday schedule covers 2026–2027 only (observed ${year}).`,
+      verifiedThrough: EXCHANGE_CALENDAR_METADATA.verifiedThrough,
     };
   }
-  const holiday = NYMEX_FULL_HOLIDAYS_2026[dateEt];
+  const holiday = NYMEX_FULL_HOLIDAYS_BY_YEAR[year]?.[dateEt];
   if (holiday) {
     return {
       state: "HOLIDAY",
       label: `Closed (${holiday})`,
       timezone: "America/New_York",
       reason: `NYMEX Globex is closed for ${holiday}.`,
+      verifiedThrough: EXCHANGE_CALENDAR_METADATA.verifiedThrough,
     };
   }
   if (weekday === "Sat") {
@@ -448,6 +597,7 @@ export function getNymexGlobexSession(nowMs = Date.now()): {
       label: "Closed (weekend)",
       timezone: "America/New_York",
       reason: "NYMEX Globex WTI Crude is closed on Saturday.",
+      verifiedThrough: EXCHANGE_CALENDAR_METADATA.verifiedThrough,
     };
   }
   if (weekday === "Sun") {
@@ -459,6 +609,7 @@ export function getNymexGlobexSession(nowMs = Date.now()): {
       reason: open
         ? "NYMEX Globex electronic energy session open (Sun 18:00–Fri 17:00 ET)."
         : "NYMEX Globex opens Sunday at 18:00 ET.",
+      verifiedThrough: EXCHANGE_CALENDAR_METADATA.verifiedThrough,
     };
   }
   if (weekday === "Fri") {
@@ -470,6 +621,7 @@ export function getNymexGlobexSession(nowMs = Date.now()): {
       reason: open
         ? "NYMEX Globex electronic energy session open until 17:00 ET."
         : "NYMEX Globex closed for the weekend at 17:00 ET.",
+      verifiedThrough: EXCHANGE_CALENDAR_METADATA.verifiedThrough,
     };
   }
   // Mon–Thu: open except daily 17:00–18:00 ET maintenance window
@@ -481,5 +633,6 @@ export function getNymexGlobexSession(nowMs = Date.now()): {
     reason: maintenance
       ? "NYMEX Globex daily 60-minute maintenance break (17:00–18:00 ET)."
       : "NYMEX Globex electronic energy session open (Mon–Fri, 17:00–18:00 ET daily break).",
+    verifiedThrough: EXCHANGE_CALENDAR_METADATA.verifiedThrough,
   };
 }

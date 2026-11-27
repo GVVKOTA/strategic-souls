@@ -16,6 +16,8 @@ export type SecurityEmailDeliveryResult = {
   delivered: boolean;
   configured: boolean;
   provider: "resend" | "webhook" | "test" | "none";
+  statusCode?: number;
+  errorCode?: string;
 };
 
 type EmailTransportFn = (
@@ -40,12 +42,33 @@ function runtimeEnv(): Record<string, string | undefined> {
   }
 }
 
+function validHttpsUrl(raw: string | undefined): string | null {
+  const trimmed = raw?.trim();
+  if (!trimmed || !/^https:\/\//i.test(trimmed)) return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:") return null;
+    if (parsed.username || parsed.password) return null;
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === "localhost" ||
+      host.endsWith(".local") ||
+      /^127\.|^10\.|^192\.168\.|^169\.254\.|^172\.(1[6-9]|2\d|3[01])\.|^::1$/.test(host)
+    ) {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function isSecurityEmailConfigured(): boolean {
   if (testTransportOverride) return true;
   const e = runtimeEnv();
   return Boolean(
     (e.RESEND_API_KEY?.trim() && (e.SS_EMAIL_FROM?.trim() || "no-reply@strategicsouls.app")) ||
-      e.SS_EMAIL_WEBHOOK_URL?.trim(),
+      validHttpsUrl(e.SS_EMAIL_WEBHOOK_URL),
   );
 }
 
@@ -82,16 +105,27 @@ export async function sendSecurityEmail(
         }),
         signal: controller.signal,
       });
-      return { delivered: res.ok, configured: true, provider: "resend" };
-    } catch {
-      return { delivered: false, configured: true, provider: "resend" };
+      return {
+        delivered: res.ok,
+        configured: true,
+        provider: "resend",
+        statusCode: res.status,
+        errorCode: res.ok ? undefined : `RESEND_HTTP_${res.status}`,
+      };
+    } catch (err) {
+      return {
+        delivered: false,
+        configured: true,
+        provider: "resend",
+        errorCode: err instanceof Error && err.name === "AbortError" ? "RESEND_TIMEOUT" : "RESEND_NETWORK_ERROR",
+      };
     } finally {
       clearTimeout(timer);
     }
   }
 
-  const webhookUrl = e.SS_EMAIL_WEBHOOK_URL?.trim();
-  if (webhookUrl && /^https:\/\//i.test(webhookUrl)) {
+  const webhookUrl = validHttpsUrl(e.SS_EMAIL_WEBHOOK_URL);
+  if (webhookUrl) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     try {
@@ -112,13 +146,24 @@ export async function sendSecurityEmail(
         }),
         signal: controller.signal,
       });
-      return { delivered: res.ok, configured: true, provider: "webhook" };
-    } catch {
-      return { delivered: false, configured: true, provider: "webhook" };
+      return {
+        delivered: res.ok,
+        configured: true,
+        provider: "webhook",
+        statusCode: res.status,
+        errorCode: res.ok ? undefined : `WEBHOOK_HTTP_${res.status}`,
+      };
+    } catch (err) {
+      return {
+        delivered: false,
+        configured: true,
+        provider: "webhook",
+        errorCode: err instanceof Error && err.name === "AbortError" ? "WEBHOOK_TIMEOUT" : "WEBHOOK_NETWORK_ERROR",
+      };
     } finally {
       clearTimeout(timer);
     }
   }
 
-  return { delivered: false, configured: false, provider: "none" };
+  return { delivered: false, configured: false, provider: "none", errorCode: "EMAIL_NOT_CONFIGURED" };
 }

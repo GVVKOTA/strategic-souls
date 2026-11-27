@@ -174,9 +174,20 @@ test("2026 Indian exchange calendar separates weekends, holidays, MCX evening se
     "REAL_BUT_STALE",
   );
 
-  // Unverified year (2027) -> SCHEDULE_UNKNOWN, never LIVE
-  const nextYear = Date.parse("2027-02-02T11:00:00+05:30");
-  assert.equal(getIndianExchangeSession("NSE", nextYear).state, "SCHEDULE_UNKNOWN");
+  // Special Sunday session: NSE Union Budget 1 Feb 2026 11:30 IST -> OPEN
+  const budgetSunday = Date.parse("2026-02-01T11:30:00+05:30");
+  assert.equal(getIndianExchangeSession("NSE", budgetSunday).state, "OPEN");
+
+  // Verified 2027 regular weekday -> OPEN; 2027 holiday -> HOLIDAY
+  const open2027 = Date.parse("2027-02-02T11:00:00+05:30");
+  assert.equal(getIndianExchangeSession("NSE", open2027).state, "OPEN");
+  assert.equal(getIndianExchangeSession("NSE", open2027).calendarStatus, "VERIFIED_2027");
+  const republicDay2027 = Date.parse("2027-01-26T11:00:00+05:30");
+  assert.equal(getIndianExchangeSession("NSE", republicDay2027).state, "HOLIDAY");
+
+  // Unverified year (2028) -> SCHEDULE_UNKNOWN, never LIVE
+  const unverifiedYear = Date.parse("2028-02-02T11:00:00+05:30");
+  assert.equal(getIndianExchangeSession("NSE", unverifiedYear).state, "SCHEDULE_UNKNOWN");
   assert.equal(qualityDisplayLabel("MARKET_CLOSED_LAST"), "MARKET CLOSED · LAST");
 });
 

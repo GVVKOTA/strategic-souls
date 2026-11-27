@@ -185,6 +185,9 @@ export type HeatmapTile = {
   unit: string;
   tone: "UP_STRONG" | "UP" | "FLAT" | "DOWN" | "DOWN_STRONG" | "UNAVAILABLE";
   provider: string;
+  stale?: boolean;
+  latestDate?: string | null;
+  referenceDate?: string | null;
 };
 
 export type SectorHeatmapSummary = {
@@ -195,6 +198,7 @@ export type SectorHeatmapSummary = {
   totalCount: number;
   advancers: number | null;
   decliners: number | null;
+  unchanged?: number | null;
   averagePctChange: number | null;
   tiles: HeatmapTile[];
 };
@@ -208,39 +212,74 @@ export function classifyHeatmapTone(pctChange: number | null): HeatmapTile["tone
   return "FLAT";
 }
 
+function lookupQuoteCaseInsensitive<T>(
+  quoteMap: ReadonlyMap<string, T>,
+  id: string,
+): T | undefined {
+  return quoteMap.get(id) ?? quoteMap.get(id.toUpperCase()) ?? quoteMap.get(id.toLowerCase());
+}
+
 export function buildSectorHeatmaps(
   quoteMap: ReadonlyMap<
     string,
-    { value: number | null; pctChange: number | null; unit: string; provider: string; latestDate?: string; referenceDate?: string | null }
+    {
+      value: number | null;
+      pctChange: number | null;
+      unit: string;
+      provider: string;
+      latestDate?: string;
+      referenceDate?: string | null;
+      quality?: string;
+    }
   >,
   groups: readonly NseSectorIndex[] = NSE_SECTOR_INDICES,
 ): SectorHeatmapSummary[] {
   return groups.map((sector) => {
-    const comparisonWindow = sector.groupType === "industry" ? sector.constituents.map(({ id }) => quoteMap.get(id))
-      .filter((q) => q?.latestDate && q.referenceDate && q.pctChange !== null)
-      .map((q) => q!.latestDate + "|" + q!.referenceDate).sort().at(-1) : undefined;
+    const comparisonWindow = sector.groupType === "industry"
+      ? sector.constituents
+          .map(({ id }) => lookupQuoteCaseInsensitive(quoteMap, id))
+          .filter((q) => q?.latestDate && q.referenceDate && q.pctChange !== null && q.quality !== "STALE")
+          .map((q) => q!.latestDate + "|" + q!.referenceDate)
+          .sort()
+          .at(-1)
+      : undefined;
     const tiles: HeatmapTile[] = sector.constituents.map((c) => {
-      const q = quoteMap.get(c.id.toUpperCase());
-      const aligned = sector.groupType !== "industry" || (comparisonWindow &&
-        comparisonWindow === q?.latestDate + "|" + q?.referenceDate);
-      const pct = aligned && q && q.pctChange !== null && Number.isFinite(q.pctChange) ? q.pctChange : null;
+      const q = lookupQuoteCaseInsensitive(quoteMap, c.id);
+      const isQualityStale = q?.quality === "STALE";
+      const aligned =
+        !isQualityStale &&
+        (sector.groupType !== "industry" ||
+          Boolean(comparisonWindow && comparisonWindow === q?.latestDate + "|" + q?.referenceDate));
+      const pct =
+        aligned && q && q.pctChange !== null && Number.isFinite(q.pctChange)
+          ? q.pctChange
+          : null;
+      const stale = Boolean(q && q.value !== null && (isQualityStale || !aligned));
       return {
         id: c.id,
         symbol: c.symbol,
         name: c.name,
         pctChange: pct,
-        price: q?.value ?? null,
+        price: pct !== null ? (q?.value ?? null) : null,
         unit: q?.unit ?? "INR",
         tone: classifyHeatmapTone(pct),
-        provider: q?.provider ?? "Licensed NSE feed not connected",
+        provider: stale
+          ? `${q?.provider ?? "Feed"} (stale or unaligned session)`
+          : (q?.provider ?? "Licensed NSE feed not connected"),
+        stale,
+        latestDate: q?.latestDate ?? null,
+        referenceDate: q?.referenceDate ?? null,
       };
     });
 
     const connected = tiles.filter((t) => t.pctChange !== null);
+    // Align breadth counts strictly with classifyHeatmapTone bands so FLAT tiles are counted as unchanged.
     const advancers =
-      connected.length > 0 ? connected.filter((t) => (t.pctChange ?? 0) > 0).length : null;
+      connected.length > 0 ? connected.filter((t) => t.tone === "UP" || t.tone === "UP_STRONG").length : null;
     const decliners =
-      connected.length > 0 ? connected.filter((t) => (t.pctChange ?? 0) < 0).length : null;
+      connected.length > 0 ? connected.filter((t) => t.tone === "DOWN" || t.tone === "DOWN_STRONG").length : null;
+    const unchanged =
+      connected.length > 0 ? connected.filter((t) => t.tone === "FLAT").length : null;
     const averagePctChange =
       connected.length > 0
         ? Math.round(
@@ -256,6 +295,7 @@ export function buildSectorHeatmaps(
       totalCount: tiles.length,
       advancers,
       decliners,
+      unchanged,
       averagePctChange,
       tiles,
     };

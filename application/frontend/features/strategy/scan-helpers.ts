@@ -134,10 +134,20 @@ export function sortScanRows(rows: readonly ScanRowItem[], sortBy: ScanSortKey):
   });
 }
 
+const SAFE_SIGNED_DECIMAL_RE = /^-?\d+(?:\.\d+)?$/;
+
 export function safeCsvCell(raw: string | number | null | undefined): string {
   if (raw === null || raw === undefined) return "";
+  if (typeof raw === "number") {
+    return Number.isFinite(raw) ? String(raw) : "";
+  }
   const str = String(raw);
-  const neutralized = /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+  if (str.length === 0) return "";
+  // Preserve genuine finite numeric strings (including negative metrics like -2.5)
+  // while neutralizing spreadsheet formula-injection prefixes (=, +, -, @, tab, CR).
+  const isPureNumeric = SAFE_SIGNED_DECIMAL_RE.test(str);
+  const neutralized =
+    !isPureNumeric && /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
   if (/[",\n\r]/.test(neutralized)) {
     return `"${neutralized.replace(/"/g, '""')}"`;
   }

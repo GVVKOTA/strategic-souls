@@ -24,6 +24,7 @@
 
 import { account, database, rate } from "../../../database/queries/repository";
 import { HttpError } from "../../middleware/security";
+import { getExchangeSessionWindowMinutes } from "./exchange-calendar";
 
 export type PollUnderlying = "NIFTY50" | "GOLD";
 export type PollChoice =
@@ -88,11 +89,7 @@ function istDateParts(ms: number): {
 }
 
 export function isNseTradingDay(ymd: string): boolean {
-  const dt = new Date(`${ymd}T06:00:00.000Z`);
-  const day = dt.getUTCDay();
-  if (day === 0 || day === 6) return false;
-  if (NSE_HOLIDAYS_2026.has(ymd)) return false;
-  return true;
+  return getExchangeSessionWindowMinutes("NSE", ymd) !== null;
 }
 
 function isWeekdayYmd(ymd: string): boolean {

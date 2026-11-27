@@ -443,7 +443,7 @@ export function buildMarketOverviewCards(
     const resolvedUnit = (() => {
       const upper = (entry?.id ?? canonicalId).toUpperCase();
       if (entry?.assetClass === "INDEX") return "pts";
-      if (upper === "GLOBAL:CLF27") return "USD/bbl";
+      if (upper === "GLOBAL:CL" || /^GLOBAL:CL[FGHJKMNQUVXZ]\d{2}$/.test(upper)) return "USD/bbl";
       if (upper === "MCX:GOLD") return "INR / 10g";
       if (upper === "MCX:SILVER") return "INR / kg";
       return entry?.currency ?? "pts";
@@ -475,8 +475,8 @@ export function buildMarketOverviewCards(
       quality: "UNAVAILABLE",
       marketSession: session.state,
       sessionLabel: session.label,
-      reasonCode: entry?.id === "GLOBAL:CLF27"
-        ? "No authorized NYMEX quote feed is connected for this contract."
+      reasonCode: entry?.id === "GLOBAL:CL"
+        ? "No authorized NYMEX WTI crude active contract feed is connected."
         : "Quote feed is currently unavailable for this instrument.",
       redistributable: false,
     };

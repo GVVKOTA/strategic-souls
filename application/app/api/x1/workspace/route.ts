@@ -13,6 +13,10 @@ import {
   researchEvidence,
 } from "../../../../backend/services/research/workspace";
 export const dynamic = "force-dynamic";
+const PRIVATE_HEADERS = {
+  "Cache-Control": "private, no-store",
+  "X-Content-Type-Options": "nosniff",
+};
 async function handle(request: Request) {
   let traceId: string | undefined;
   try {
@@ -31,6 +35,7 @@ async function handle(request: Request) {
       if (params.has("researchEvidence"))
         return Response.json(
           await researchEvidence(user.userId, params.get("researchEvidence")),
+          { headers: PRIVATE_HEADERS },
         );
       const scanId = params.get("scanId"),
         scanBefore = params.get("scanBefore");
@@ -43,6 +48,7 @@ async function handle(request: Request) {
               scanBefore === null ? {} : { scanBefore },
             )
           : await workspaceScanSnapshot(user.userId, scanId),
+        { headers: PRIVATE_HEADERS },
       );
     }
     protectMutation(request, 16384);
@@ -50,9 +56,14 @@ async function handle(request: Request) {
     const isScan = ["preflight-scan", "run-scan", "run-draw-scan"].includes(String(input.action));
     traceId = isScan ? crypto.randomUUID() : undefined;
     const result = await mutateWorkspace(user.userId, input, traceId);
-    return Response.json({ ok: true, ...result }, traceId
-      ? { headers: { "X-Scan-Trace-Id": traceId, "Cache-Control": "private, no-store" } }
-      : undefined);
+    return Response.json(
+      { ok: true, ...result },
+      {
+        headers: traceId
+          ? { ...PRIVATE_HEADERS, "X-Scan-Trace-Id": traceId }
+          : PRIVATE_HEADERS,
+      },
+    );
   } catch (e) {
     return Response.json(
       {
@@ -63,7 +74,9 @@ async function handle(request: Request) {
       },
       {
         status: e instanceof HttpError ? e.status : 503,
-        headers: traceId ? { "X-Scan-Trace-Id": traceId, "Cache-Control": "private, no-store" } : undefined,
+        headers: traceId
+          ? { ...PRIVATE_HEADERS, "X-Scan-Trace-Id": traceId }
+          : PRIVATE_HEADERS,
       },
     );
   }

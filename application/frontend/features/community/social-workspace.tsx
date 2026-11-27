@@ -1695,7 +1695,9 @@ export function GroupNetworkPanel({
               <input
                 name="sourceAsOf"
                 type="date"
-                max={new Date().toISOString().slice(0, 10)}
+                max={new Intl.DateTimeFormat("en-CA", {
+                  timeZone: "Asia/Kolkata",
+                }).format(new Date())}
               />
             </label>
           </details>

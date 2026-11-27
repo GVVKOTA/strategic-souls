@@ -250,12 +250,23 @@ export function requireDataOwner(subject: string) {
   if (!isDataOwner(subject)) throw new HttpError(404, "Settings not found.");
 }
 export async function providerConfigs(): Promise<ProviderConfig[]> {
-  const rows = await database()
-    .prepare("SELECT payload FROM x2_providers ORDER BY provider")
-    .all<{ payload: string }>();
-  return rows.results
-    .map((r) => JSON.parse(r.payload))
-    .sort((a, b) => a.priority - b.priority);
+  try {
+    const rows = await database()
+      .prepare("SELECT payload FROM x2_providers ORDER BY provider")
+      .all<{ payload: string }>();
+    const parsed: ProviderConfig[] = [];
+    for (const r of rows.results ?? []) {
+      try {
+        const cfg = JSON.parse(r.payload) as ProviderConfig;
+        if (cfg && typeof cfg.provider === "string") parsed.push(cfg);
+      } catch {
+        // Ignore corrupt single provider payload rather than taking down all routes.
+      }
+    }
+    return parsed.sort((a, b) => a.priority - b.priority);
+  } catch {
+    return [];
+  }
 }
 
 export async function exchangeScanAvailable(subject: string): Promise<boolean> {
@@ -1074,17 +1085,26 @@ async function sourceResearch(
             out.limitations.push("News unavailable for this mapping/plan.");
           }
         }
-        const active = await database()
-          .prepare("SELECT version,payload FROM x2_providers WHERE provider=?")
-          .bind(c.provider)
-          .first<{ version: number; payload: string }>();
+        let active: { version: number; payload: string } | null = null;
+        let activePayload: ProviderConfig | null = null;
+        try {
+          active = await database()
+            .prepare("SELECT version,payload FROM x2_providers WHERE provider=?")
+            .bind(c.provider)
+            .first<{ version: number; payload: string }>();
+          activePayload = active ? (JSON.parse(active.payload) as ProviderConfig) : null;
+        } catch {
+          active = null;
+          activePayload = null;
+        }
         if (
           !active ||
+          !activePayload ||
           active.version !== c.version ||
           !(purpose === "display"
-            ? rightsActive(JSON.parse(active.payload), "display")
-            : rightsActive(JSON.parse(active.payload), "analysis") &&
-              rightsActive(JSON.parse(active.payload), "storage")) ||
+            ? rightsActive(activePayload, "display")
+            : rightsActive(activePayload, "analysis") &&
+              rightsActive(activePayload, "storage")) ||
           secretFrom(c.provider, environment()) !== secret
         )
           return emptyAsset(id, interval);

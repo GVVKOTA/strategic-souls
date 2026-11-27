@@ -88,7 +88,9 @@ export type ExchangeSessionInfo = {
   holidayName: string | null;
   specialSessionNote: string | null;
   verifiedThrough: string;
-  calendarStatus: "VERIFIED_2026" | "UNVERIFIED_YEAR";
+  calendarStatus: "VERIFIED_2026" | "VERIFIED_2027" | "UNVERIFIED_YEAR";
+  calendarVersion?: string;
+  calendarSource?: string;
 };
 
 export type NormalizedMarketQuote = {

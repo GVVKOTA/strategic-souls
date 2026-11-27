@@ -10,7 +10,7 @@ export const DEFAULT_EIGHT_CARD_IDS: readonly string[] = Object.freeze([
   "NSE:MIDCPNIFTY",
   "MCX:GOLD",
   "MCX:SILVER",
-  "GLOBAL:CLF27",
+  "GLOBAL:CL",
   "ECB:USDINR",
 ]);
 
@@ -21,11 +21,15 @@ export const ALLOWED_GLOBAL_MARKET_IDS: ReadonlySet<string> = new Set(
 /** Backward-compatible alias pointing strictly to the 8 allowed Global dashboard instruments. */
 export const DEFAULT_NINE_CARD_IDS: readonly string[] = DEFAULT_EIGHT_CARD_IDS;
 
-/** Existing dashboard layouts keep their order when an instrument slot is replaced. */
+/**
+ * Existing dashboard layouts keep their order when an instrument slot is replaced.
+ * Normalizes dated NYMEX WTI crude futures IDs (e.g. legacy GLOBAL:CLF27) back to
+ * canonical GLOBAL:CL so active front-month contract resolution never freezes on an expired contract.
+ */
 export function normalizeMarketTileId(raw: string): string {
   const id = raw.trim().toUpperCase();
   if (id === "NSE:NIFTYMIDCAP100") return "NSE:MIDCPNIFTY";
-  if (id === "GLOBAL:CL") return "GLOBAL:CLF27";
+  if (/^GLOBAL:CL[FGHJKMNQUVXZ]\d{2}$/.test(id)) return "GLOBAL:CL";
   return id;
 }
 

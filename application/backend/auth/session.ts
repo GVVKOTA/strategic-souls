@@ -445,16 +445,36 @@ export async function getAuthenticatedUser(
   const nowMs = Date.now();
   const row = await database()
     .prepare(
-      "SELECT u.id, u.email, u.display_name FROM auth_sessions s JOIN auth_users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
+      "SELECT u.id, u.email, u.display_name, s.last_seen_at FROM auth_sessions s JOIN auth_users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?",
     )
     .bind(tokenHash, nowMs)
     .first<{
       id: string;
       email: string;
       display_name: string;
+      last_seen_at: string | null;
     }>();
 
   if (!row) return null;
+
+  // Refresh session last_seen_at at most once per 60 seconds so Active Sessions stays accurate without write amplification.
+  const prevSeenMs = row.last_seen_at ? Date.parse(row.last_seen_at) : 0;
+  if (!Number.isFinite(prevSeenMs) || nowMs - prevSeenMs >= 60_000) {
+    const nowIso = new Date(nowMs).toISOString();
+    try {
+      const db = database();
+      await db.batch([
+        db
+          .prepare("UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ?")
+          .bind(nowIso, tokenHash),
+        db
+          .prepare("UPDATE v3_session_meta SET last_seen_at = ? WHERE token_hash = ?")
+          .bind(nowIso, tokenHash),
+      ]);
+    } catch {
+      // Non-fatal telemetry update; never fail an authenticated read.
+    }
+  }
 
   return {
     userId: row.id,
@@ -746,7 +766,7 @@ export async function requestPasswordReset(
     ]);
 
     const resetUrl = `${origin.replace(/\/$/, "")}/signin?reset_token=${encodeURIComponent(rawToken)}`;
-    await sendSecurityEmail({
+    const delivery = await sendSecurityEmail({
       to: user.email,
       purpose: "PASSWORD_RESET",
       subject: "Reset your Strategic Souls password",
@@ -759,6 +779,19 @@ export async function requestPasswordReset(
       token: rawToken,
       actionUrl: resetUrl,
     });
+    if (configured && !delivery.delivered) {
+      // Log sanitized operational failure internally (zero email addresses or tokens)
+      // while keeping the public response uniform and non-enumerating.
+      console.warn(
+        JSON.stringify({
+          event: "ss_security_email_delivery_failed",
+          purpose: "PASSWORD_RESET",
+          provider: delivery.provider,
+          errorCode: delivery.errorCode ?? "DELIVERY_REFUSED",
+          statusCode: delivery.statusCode ?? null,
+        }),
+      );
+    }
   } else {
     // Perform equivalent hash work so timing does not enumerate existing accounts.
     await sha256Hex(randomToken(32));
@@ -768,14 +801,14 @@ export async function requestPasswordReset(
     accepted: true,
     emailDeliveryConfigured: configured,
     message: configured
-      ? "If an account exists for that email address, password reset instructions have been sent. Reset links expire in 30 minutes."
+      ? "If an account exists for that email address, password reset instructions have been queued for delivery. Reset links expire in 30 minutes."
       : `If an account exists for that email address, a reset request was recorded. Outbound email delivery is not configured on this deployment yet — contact ${APP_RELEASE.supportEmail} if you need manual recovery assistance.`,
   };
 }
 
 /**
  * Completes a password reset using a single-use unconsumed token, updates password hash,
- * and revokes all active sessions for the user.
+ * and revokes all active sessions for the user in one atomic D1 batch.
  */
 export async function completePasswordReset(
   rawToken: unknown,
@@ -812,29 +845,34 @@ export async function completePasswordReset(
     throw new HttpError(400, "Reset token is invalid or has expired.");
   }
 
-  const consumed = await db
-    .prepare(
-      `UPDATE v3_auth_tokens
-       SET consumed_at = ?
-       WHERE id = ? AND consumed_at IS NULL AND expires_at > ?`,
-    )
-    .bind(nowIso, row.id, nowMs)
-    .run();
+  const { hashHex, saltHex } = await hashPassword(validatedNew);
+  const [consumed] = await db.batch([
+    db
+      .prepare(
+        `UPDATE v3_auth_tokens
+         SET consumed_at = ?
+         WHERE id = ? AND consumed_at IS NULL AND expires_at > ?`,
+      )
+      .bind(nowIso, row.id, nowMs),
+    db
+      .prepare(
+        `UPDATE auth_users
+         SET password_hash = ?, password_salt = ?, updated_at = ?
+         WHERE id = ?
+           AND EXISTS (SELECT 1 FROM v3_auth_tokens WHERE id = ? AND consumed_at = ?)`,
+      )
+      .bind(hashHex, saltHex, nowIso, row.user_id, row.id, nowIso),
+    db
+      .prepare(
+        `DELETE FROM auth_sessions
+         WHERE user_id = ?
+           AND EXISTS (SELECT 1 FROM v3_auth_tokens WHERE id = ? AND consumed_at = ?)`,
+      )
+      .bind(row.user_id, row.id, nowIso),
+  ]);
   if (!consumed.meta.changes) {
     throw new HttpError(400, "Reset token has already been used or expired.");
   }
-
-  const { hashHex, saltHex } = await hashPassword(validatedNew);
-  await db.batch([
-    db
-      .prepare(
-        "UPDATE auth_users SET password_hash = ?, password_salt = ?, updated_at = ? WHERE id = ?",
-      )
-      .bind(hashHex, saltHex, nowIso, row.user_id),
-    db
-      .prepare("DELETE FROM auth_sessions WHERE user_id = ?")
-      .bind(row.user_id),
-  ]);
   return { reset: true };
 }
 
@@ -945,6 +983,7 @@ export async function requestEmailChange(
 export async function confirmEmailChange(
   userId: string,
   rawToken: unknown,
+  currentTokenHash: string | null = null,
 ): Promise<{ email: string; verifiedAt: string }> {
   if (
     typeof rawToken !== "string" ||
@@ -985,33 +1024,49 @@ export async function confirmEmailChange(
     throw new HttpError(409, "That email address is already registered.");
   }
 
-  const consumed = await db
-    .prepare(
-      `UPDATE v3_auth_tokens
-       SET consumed_at = ?
-       WHERE id = ? AND consumed_at IS NULL AND expires_at > ?`,
-    )
-    .bind(nowIso, row.id, nowMs)
-    .run();
-  if (!consumed.meta.changes) {
-    throw new HttpError(400, "Verification token has already been used or expired.");
-  }
-
-  await db.batch([
+  const stmts = [
     db
-      .prepare("UPDATE auth_users SET email = ?, updated_at = ? WHERE id = ?")
-      .bind(row.target_email, nowIso, userId),
+      .prepare(
+        `UPDATE v3_auth_tokens
+         SET consumed_at = ?
+         WHERE id = ? AND consumed_at IS NULL AND expires_at > ?`,
+      )
+      .bind(nowIso, row.id, nowMs),
+    db
+      .prepare(
+        `UPDATE auth_users
+         SET email = ?, updated_at = ?
+         WHERE id = ?
+           AND EXISTS (SELECT 1 FROM v3_auth_tokens WHERE id = ? AND consumed_at = ?)`,
+      )
+      .bind(row.target_email, nowIso, userId, row.id, nowIso),
     db
       .prepare(
         `INSERT INTO v3_user_email_verification (user_id, verified_email, verified_at, updated_at)
-         VALUES (?, ?, ?, ?)
+         SELECT ?, ?, ?, ?
+         WHERE EXISTS (SELECT 1 FROM v3_auth_tokens WHERE id = ? AND consumed_at = ?)
          ON CONFLICT(user_id) DO UPDATE SET
            verified_email = excluded.verified_email,
            verified_at = excluded.verified_at,
            updated_at = excluded.updated_at`,
       )
-      .bind(userId, row.target_email, nowIso, nowIso),
-  ]);
+      .bind(userId, row.target_email, nowIso, nowIso, row.id, nowIso),
+  ];
+  if (currentTokenHash) {
+    stmts.push(
+      db
+        .prepare(
+          `DELETE FROM auth_sessions
+           WHERE user_id = ? AND token_hash != ?
+             AND EXISTS (SELECT 1 FROM v3_auth_tokens WHERE id = ? AND consumed_at = ?)`,
+        )
+        .bind(userId, currentTokenHash, row.id, nowIso),
+    );
+  }
+  const [consumed] = await db.batch(stmts);
+  if (!consumed.meta.changes) {
+    throw new HttpError(400, "Verification token has already been used or expired.");
+  }
 
   return { email: row.target_email, verifiedAt: nowIso };
 }

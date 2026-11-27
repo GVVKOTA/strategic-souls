@@ -351,7 +351,7 @@ test("8-Tile Global Market Grid persists per user, enforces 409 optimistic concu
   assert.equal(d0.cards.length, 8);
   assert.equal(d0.cards[3].canonicalId, "NSE:MIDCPNIFTY");
   assert.equal(d0.cards[3].shortLabel, "Nifty Midcap Select");
-  assert.equal(d0.cards[6].canonicalId, "GLOBAL:CLF27");
+  assert.equal(d0.cards[6].canonicalId, "GLOBAL:CL");
   assert.equal(d0.cards[6].quoteUnit, "USD/bbl");
   assert.equal(d0.cards[6].value, null);
   assert.equal(d0.layout.version, 0);
@@ -395,7 +395,7 @@ test("8-Tile Global Market Grid persists per user, enforces 409 optimistic concu
   assert.equal(rSave.status, 200);
   const saved = await rSave.json();
   assert.equal(saved.layout.version, 1);
-  const migratedIds = ["ECB:USDINR", "GLOBAL:CLF27", "MCX:SILVER", "MCX:GOLD", "NSE:MIDCPNIFTY", "NSE:BANKNIFTY", "BSE:SENSEX", "NSE:NIFTY"];
+  const migratedIds = ["ECB:USDINR", "GLOBAL:CL", "MCX:SILVER", "MCX:GOLD", "NSE:MIDCPNIFTY", "NSE:BANKNIFTY", "BSE:SENSEX", "NSE:NIFTY"];
   assert.deepEqual(saved.layout.ids, migratedIds);
 
   // Stale expectedVersion: 0 must return 409 Conflict

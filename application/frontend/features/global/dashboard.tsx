@@ -1854,19 +1854,21 @@ export default function Global({
                     />
                   </label>
                   <label>
-                    Transaction date
+                    Transaction date (IST)
                     <input
                       name="date"
                       type="date"
+                      min="1900-01-01"
                       required
                       defaultValue={
-                        editingTransaction?.payload.date || data?.asOf.slice(0, 10) ||
-                        new Date().toISOString().slice(0, 10)
+                        editingTransaction?.payload.date ||
+                        new Intl.DateTimeFormat("en-CA", {
+                          timeZone: "Asia/Kolkata",
+                        }).format(new Date())
                       }
-                      max={
-                        data?.asOf.slice(0, 10) ||
-                        new Date().toISOString().slice(0, 10)
-                      }
+                      max={new Intl.DateTimeFormat("en-CA", {
+                        timeZone: "Asia/Kolkata",
+                      }).format(new Date())}
                     />
                   </label>
                 </div>

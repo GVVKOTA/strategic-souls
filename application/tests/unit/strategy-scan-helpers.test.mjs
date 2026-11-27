@@ -11,11 +11,15 @@ import {
   sourceBadgeLabel,
 } from "../../frontend/features/strategy/scan-helpers.ts";
 
-test("safeCsvCell neutralizes spreadsheet formula injection and quotes delimiters", () => {
+test("safeCsvCell keeps negative numbers numeric, neutralizes formula injection, and quotes delimiters", () => {
   assert.equal(safeCsvCell(null), "");
+  assert.equal(safeCsvCell(-2.5), "-2.5");
+  assert.equal(safeCsvCell("-2.5"), "-2.5");
+  assert.equal(safeCsvCell("-10"), "-10");
   assert.equal(safeCsvCell("=CMD()"), "'=CMD()");
   assert.equal(safeCsvCell("+1+2"), "'+1+2");
-  assert.equal(safeCsvCell("-10"), "'-10");
+  assert.equal(safeCsvCell("-1+2"), "'-1+2");
+  assert.equal(safeCsvCell("-CMD()"), "'-CMD()");
   assert.equal(safeCsvCell("@SUM(A1)"), "'@SUM(A1)");
   assert.equal(safeCsvCell('hello, "world"'), '"hello, ""world"""');
 });

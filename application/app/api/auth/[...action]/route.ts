@@ -250,8 +250,9 @@ async function handle(request: Request): Promise<Response> {
       const user = await getAuthenticatedUser(request);
       if (!user) throw new HttpError(401, "Sign in to verify your email.");
       await rate("auth:emver:" + user.userId, 15, 900_000);
+      const currentHash = await getSessionTokenHashFromRequest(request);
       const input = await body(request, 2048);
-      const result = await confirmEmailChange(user.userId, input.token);
+      const result = await confirmEmailChange(user.userId, input.token, currentHash);
       return json({ ok: true, ...result }, 200);
     }
 
@@ -270,6 +271,7 @@ async function handle(request: Request): Promise<Response> {
       protectMutation(request, 2048);
       const user = await getAuthenticatedUser(request);
       if (!user) throw new HttpError(401, "Sign in to manage active sessions.");
+      await rate("auth:srev:" + user.userId, 30, 900_000);
       const currentHash = await getSessionTokenHashFromRequest(request);
       const input = await body(request, 2048);
       if (input.allOthers === true) {

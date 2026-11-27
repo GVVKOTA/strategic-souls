@@ -82,6 +82,18 @@ export default function AuthPanel({
     const params = new URLSearchParams(window.location.search);
     const tok = params.get("reset_token");
     if (tok && tok.trim().length >= 32) {
+      // Immediately scrub sensitive single-use reset token from browser address bar & history.
+      params.delete("reset_token");
+      const nextSearch = params.toString();
+      const scrubbed =
+        window.location.pathname +
+        (nextSearch ? `?${nextSearch}` : "") +
+        window.location.hash;
+      try {
+        window.history.replaceState(window.history.state, "", scrubbed);
+      } catch {
+        // Ignore history restrictions in sandboxed frames.
+      }
       let alive = true;
       queueMicrotask(() => {
         if (!alive) return;
