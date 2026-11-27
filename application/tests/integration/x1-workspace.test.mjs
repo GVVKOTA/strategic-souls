@@ -136,7 +136,7 @@ const context = vm.createContext({
   },
 });
 const cache = new Map();
-async function load(path) {
+function getModule(path) {
   const file = resolve(path);
   if (cache.has(file)) return cache.get(file);
   const normalized = file.replaceAll("\\", "/");
@@ -244,25 +244,31 @@ async function load(path) {
   }).outputText;
   const m = new vm.SourceTextModule(code, { context, identifier: file });
   cache.set(file, m);
-  await m.link(async (spec, refer) => {
-    if (spec === "cloudflare:workers") {
-      if (!cache.has(spec))
-        cache.set(
-          spec,
-          new vm.SyntheticModule(
-            ["env"],
-            function () {
-              this.setExport("env", env);
-            },
-            { context },
-          ),
-        );
-      return cache.get(spec);
-    }
-    let target = resolve(dirname(refer.identifier), spec);
-    if (!existsSync(target)) target += ".ts";
-    return load(target);
-  });
+  return m;
+}
+async function load(path) {
+  const m = getModule(path);
+  if (m.status === "unlinked") {
+    await m.link((spec, refer) => {
+      if (spec === "cloudflare:workers") {
+        if (!cache.has(spec))
+          cache.set(
+            spec,
+            new vm.SyntheticModule(
+              ["env"],
+              function () {
+                this.setExport("env", env);
+              },
+              { context },
+            ),
+          );
+        return cache.get(spec);
+      }
+      let target = resolve(dirname(refer.identifier), spec);
+      if (!existsSync(target)) target += ".ts";
+      return getModule(target);
+    });
+  }
   return m;
 }
 const route = await load("app/api/x1/workspace/route.ts");
