@@ -11,7 +11,6 @@ import {
   LogOut,
   Settings,
   Shield,
-  Sparkles,
   UserPlus,
   UserRound,
 } from "lucide-react";
@@ -43,11 +42,10 @@ type Props = {
   counts?: { followers: number; following: number; publishedSouls: number };
   discoverable?: boolean;
   unreadNotifications?: number;
-  motionPref: "system" | "minimal" | "full";
-  onMotionChange: (next: "system" | "minimal" | "full") => void;
   busy?: boolean;
   onOpenMyProfile?: () => void;
   onOpenSettings: (section: SettingsSection) => void;
+  onOpenOwnerData?: () => void;
   onOpenSaved: () => void;
   onOpenHelp: () => void;
   onSignIn: () => void;
@@ -73,11 +71,10 @@ export default function AccountQuickPanel({
   counts,
   discoverable,
   unreadNotifications = 0,
-  motionPref,
-  onMotionChange,
   busy = false,
   onOpenMyProfile,
   onOpenSettings,
+  onOpenOwnerData,
   onOpenSaved,
   onOpenHelp,
   onSignIn,
@@ -225,7 +222,7 @@ export default function AccountQuickPanel({
               >
                 <span className="x6-quick-row-left">
                   <Settings size={16} />
-                  <span>Settings &amp; Preferences</span>
+                  <span>Settings</span>
                 </span>
                 <ChevronRight size={15} />
               </button>
@@ -275,12 +272,13 @@ export default function AccountQuickPanel({
                   className="x6-quick-row"
                   onClick={() => {
                     onClose();
-                    onOpenSettings("data");
+                    if (onOpenOwnerData) onOpenOwnerData();
+                    else onOpenSettings("data");
                   }}
                 >
                   <span className="x6-quick-row-left">
                     <Database size={16} />
-                    <span>Data Connections</span>
+                    <span>Owner Data Connections</span>
                   </span>
                   <ChevronRight size={15} />
                 </button>
@@ -354,24 +352,6 @@ export default function AccountQuickPanel({
                 <UserPlus size={15} />
                 <span>Create account</span>
               </button>
-            </div>
-
-            <div className="x6-quick-guest-pref">
-              <span>
-                <Sparkles size={14} /> Motion
-              </span>
-              <div className="x1-segment" role="group" aria-label="Motion preference">
-                {(["system", "minimal"] as const).map((pref) => (
-                  <button
-                    key={pref}
-                    type="button"
-                    aria-pressed={motionPref === pref}
-                    onClick={() => onMotionChange(pref)}
-                  >
-                    {pref === "system" ? "System" : "Minimal"}
-                  </button>
-                ))}
-              </div>
             </div>
 
             <div className="x6-quick-list">

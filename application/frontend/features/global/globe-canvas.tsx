@@ -54,6 +54,7 @@ type Props = {
   showExchanges?: boolean;
   showArcs?: boolean;
   earthQuality?: "auto" | "balanced" | "reduced";
+  paused?: boolean;
 };
 
 const vertex = `
@@ -210,6 +211,7 @@ export default function GlobeCanvas({
   showExchanges = true,
   showArcs = true,
   earthQuality = "auto",
+  paused = false,
 }: Props) {
   const canvas = useRef<HTMLCanvasElement>(null),
     settings = useRef({
@@ -231,6 +233,7 @@ export default function GlobeCanvas({
       showExchanges,
       showArcs,
       earthQuality,
+      paused,
     }),
     rotation = useRef(focusCoords ? {
       yaw: -focusCoords.lon * Math.PI / 180,
@@ -278,6 +281,7 @@ export default function GlobeCanvas({
       showExchanges,
       showArcs,
       earthQuality,
+      paused,
     };
   }, [
     venues,
@@ -298,6 +302,7 @@ export default function GlobeCanvas({
     showExchanges,
     showArcs,
     earthQuality,
+    paused,
   ]);
 
   useEffect(() => {
@@ -320,6 +325,7 @@ export default function GlobeCanvas({
 
     let stopped = false,
       frame = 0,
+      idleTimer = 0,
       visible = false,
       last = 0,
       dirty = true,
@@ -327,6 +333,12 @@ export default function GlobeCanvas({
       resetSeen = -1,
       velYaw = 0,
       velPitch = 0,
+      slowFrameStreak = 0,
+      adaptiveDprScale = 1,
+      cachedCssW = Math.max(1, el.clientWidth || 320),
+      cachedCssH = Math.max(1, el.clientHeight || 320),
+      lastMetaZoom = "",
+      lastMetaMotion = "",
       lastTapTime = 0,
       lastTapX = 0,
       lastTapY = 0,
@@ -701,10 +713,11 @@ export default function GlobeCanvas({
 
     function draw(time: number) {
       frame = 0;
-      if (stopped || !visible || document.hidden) return;
+      const s = settings.current;
+      if (stopped || !visible || document.hidden || s.paused) return;
+      const drawStart = performance.now();
       const delta = last ? Math.min(100, time - last) : 0;
       last = time;
-      const s = settings.current;
 
       if (s.focusCoords && s.focusCoords.nonce !== focusNonceSeen) {
         focusNonceSeen = s.focusCoords.nonce;
@@ -880,21 +893,23 @@ export default function GlobeCanvas({
       }
 
       if (dirty || target) {
-        const dprCap =
+        const baseDprCap =
           s.earthQuality === "reduced"
             ? 1
             : s.earthQuality === "balanced" || constrained
               ? 1.5
               : 2;
-        const rect = el.getBoundingClientRect(),
+        const dprCap = Math.max(1, baseDprCap * adaptiveDprScale);
+        const cssW = Math.max(1, cachedCssW),
+          cssH = Math.max(1, cachedCssH),
           dpr = Math.min(window.devicePixelRatio || 1, dprCap),
-          width = Math.max(1, Math.round(rect.width * dpr)),
-          height = Math.max(1, Math.round(rect.height * dpr));
+          width = Math.max(1, Math.round(cssW * dpr)),
+          height = Math.max(1, Math.round(cssH * dpr));
         if (el.width !== width || el.height !== height) {
           el.width = width;
           el.height = height;
         }
-        const cam = globeCameraParams(currentZoom.current, rect.width || 1, rect.height || 1);
+        const cam = globeCameraParams(currentZoom.current, cssW, cssH);
         gl!.viewport(0, 0, width, height);
         gl!.clearColor(0, 0, 0, 0);
         gl!.clear(gl!.COLOR_BUFFER_BIT | gl!.DEPTH_BUFFER_BIT);
@@ -1006,32 +1021,73 @@ export default function GlobeCanvas({
           );
         }
 
-        el.dataset.visibility = "visible";
-        el.dataset.renderer = "webgl";
-        el.dataset.projection = "perspective";
-        el.dataset.zoom = currentZoom.current.toFixed(2);
-        el.dataset.solarLighting = "approximate-utc";
-        el.dataset.frameCount = String(++frames);
-        el.dataset.rotation = rotation.current.yaw.toFixed(4);
-        el.dataset.motion =
+        const nextZoomStr = currentZoom.current.toFixed(2);
+        const nextMotionStr =
           reducedMotion && !s.motionOverride
             ? "reduced"
             : s.autoRotate
               ? "rotating"
               : "paused";
+        if (frames === 0) {
+          el.dataset.visibility = "visible";
+          el.dataset.renderer = "webgl";
+          el.dataset.projection = "perspective";
+          el.dataset.solarLighting = "approximate-utc";
+        }
+        if (nextZoomStr !== lastMetaZoom) {
+          lastMetaZoom = nextZoomStr;
+          el.dataset.zoom = nextZoomStr;
+        }
+        if (nextMotionStr !== lastMetaMotion) {
+          lastMetaMotion = nextMotionStr;
+          el.dataset.motion = nextMotionStr;
+        }
+        el.dataset.frameCount = String(++frames);
+        el.dataset.rotation = rotation.current.yaw.toFixed(4);
         dirty = false;
+
+        // Auto-adaptive GPU budget: step down DPR smoothly if frame draw time exceeds 36ms repeatedly
+        const elapsedDraw = performance.now() - drawStart;
+        if (elapsedDraw > 36) {
+          slowFrameStreak += 1;
+          if (slowFrameStreak >= 4 && adaptiveDprScale > 0.65) {
+            adaptiveDprScale = 0.65;
+            slowFrameStreak = 0;
+          }
+        } else {
+          slowFrameStreak = 0;
+        }
       }
 
-      const animating =
+      const activelyMoving =
         Math.abs(s.zoom - currentZoom.current) > 0.002 ||
         !!target ||
         Math.abs(velYaw) > 0.00015 ||
-        Math.abs(velPitch) > 0.00015 ||
-        (s.autoRotate &&
-          (!reducedMotion || s.motionOverride) &&
-          !hovering &&
-          currentZoom.current <= 1.15);
-      if (animating) frame = requestAnimationFrame(safeDraw);
+        Math.abs(velPitch) > 0.00015;
+      const idleRotating =
+        !activelyMoving &&
+        s.autoRotate &&
+        (!reducedMotion || s.motionOverride) &&
+        !hovering &&
+        currentZoom.current <= 1.15;
+
+      if (activelyMoving) {
+        frame = requestAnimationFrame(safeDraw);
+      } else if (idleRotating) {
+        const throttleIdle = s.earthQuality === "reduced" || constrained || adaptiveDprScale < 1;
+        if (throttleIdle) {
+          if (!idleTimer) {
+            idleTimer = window.setTimeout(() => {
+              idleTimer = 0;
+              if (!stopped && visible && !document.hidden && !settings.current.paused && !frame) {
+                frame = requestAnimationFrame(safeDraw);
+              }
+            }, 34);
+          }
+        } else {
+          frame = requestAnimationFrame(safeDraw);
+        }
+      }
     }
 
     function safeDraw(time: number) {
@@ -1069,13 +1125,27 @@ export default function GlobeCanvas({
     );
     observer.observe(el);
 
-    const resize = new ResizeObserver(start);
+    const resize = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect;
+      if (box && box.width > 0 && box.height > 0) {
+        cachedCssW = box.width;
+        cachedCssH = box.height;
+      } else {
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          cachedCssW = rect.width;
+          cachedCssH = rect.height;
+        }
+      }
+      start();
+    });
     resize.observe(el);
 
     const onVisibility = () => {
       if (document.hidden) {
         cancelAnimationFrame(frame);
         frame = 0;
+        if (idleTimer) { window.clearTimeout(idleTimer); idleTimer = 0; }
         el.dataset.visibility = "hidden";
       } else {
         last = 0;
@@ -1091,7 +1161,11 @@ export default function GlobeCanvas({
 
     const onDown = (e: PointerEvent) => {
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      el.setPointerCapture(e.pointerId);
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        /* Some mobile browsers disallow capture on synthetic or cancelled pointers. */
+      }
       if (activePointers.size === 2) {
         drag = null;
         velYaw = 0;
@@ -1245,12 +1319,31 @@ export default function GlobeCanvas({
     };
 
     const onUp = (e: PointerEvent) => {
+      const wasPinching = activePointers.size >= 2;
       activePointers.delete(e.pointerId);
       if (activePointers.size < 2) pinchDistance = null;
+      // Smoothly transition from 2-finger pinch to remaining single finger without camera jump
+      if (wasPinching && activePointers.size === 1) {
+        const [remId, remPos] = [...activePointers.entries()][0]!;
+        drag = {
+          x: remPos.x,
+          y: remPos.y,
+          startX: remPos.x,
+          startY: remPos.y,
+          id: remId,
+        };
+        velYaw = 0;
+        velPitch = 0;
+        return;
+      }
       if (!drag || drag.id !== e.pointerId) return;
       const active = drag;
-      if (el.hasPointerCapture(e.pointerId))
-        el.releasePointerCapture(e.pointerId);
+      try {
+        if (el.hasPointerCapture(e.pointerId))
+          el.releasePointerCapture(e.pointerId);
+      } catch {
+        /* Ignore pointer release errors on synthetic touches */
+      }
       const click =
         Math.hypot(e.clientX - active.startX, e.clientY - active.startY) < 8;
       drag = null;
@@ -1392,6 +1485,7 @@ export default function GlobeCanvas({
       observer.disconnect();
       resize.disconnect();
       cancelAnimationFrame(frame);
+      if (idleTimer) { window.clearTimeout(idleTimer); idleTimer = 0; }
       document.removeEventListener("visibilitychange", onVisibility);
       reduced.removeEventListener("change", start);
       el.removeEventListener("pointerenter", onEnter);
@@ -1431,56 +1525,61 @@ export default function GlobeCanvas({
     showExchanges,
     showArcs,
     earthQuality,
+    paused,
   ]);
 
-  if (failure || forceFallback)
-    return (
-      <div className="x1-earth-fallback" role="status">
-        {/* eslint-disable-next-line @next/next/no-img-element -- Static Cloudflare Workers asset; exact source bytes preserved without Next image optimizer. */}
-        <img
-          className="x1-earth-static"
-          src="/data/earth-static.jpg"
-          alt="NASA Blue Marble eastern-hemisphere natural-color historical composite"
-        />
-        <p>
-          Natural-color static Earth · WebGL 3D renderer unavailable on this
-          browser. Open Info for keyboard-accessible event and venue records.
-        </p>
-        {failure && !forceFallback && (
-          <button
-            type="button"
-            className="x1-secondary"
-            onClick={() => {
-              setSatelliteStage("preparing");
-              setFailure(false);
-              setRetryNonce((n) => n + 1);
-            }}
-          >
-            Retry 3D globe
-          </button>
-        )}
-      </div>
-    );
+  const showFallback = failure || forceFallback;
 
   return (
     <div
       className="x1-satellite-renderer"
-      data-earth-stage={satelliteStage}
+      data-earth-stage={showFallback ? "failed" : satelliteStage}
     >
+      {/* Keep <canvas> mounted while hidden on WebGL context loss so webglcontextrestored can auto-recover */}
       <canvas
         ref={canvas}
         className="x1-globe-canvas"
         role="img"
-        tabIndex={0}
+        tabIndex={showFallback ? -1 : 0}
+        style={showFallback ? { display: "none" } : undefined}
+        aria-hidden={showFallback ? "true" : undefined}
         aria-label="Interactive natural-color 3D Earth with 24 global exchange cities, USGS seismic events, NASA EONET natural disasters, and approximate UTC solar day and night lighting. Drag to rotate, pinch or double-tap to zoom up to 5x, or use arrow keys and plus or minus keys."
       />
-      {(satelliteStage === "preparing" || satelliteStage === "loading") && (
-        <div className="x1-satellite-loading" role="status">
-          <span aria-hidden="true" />
-          {satelliteStage === "preparing"
-            ? "Preparing 3D Earth…"
-            : "Loading NASA Earth imagery…"}
+      {showFallback ? (
+        <div className="x1-earth-fallback" role="status">
+          {/* eslint-disable-next-line @next/next/no-img-element -- Static Cloudflare Workers asset; exact source bytes preserved without Next image optimizer. */}
+          <img
+            className="x1-earth-static"
+            src="/data/earth-static.jpg"
+            alt="NASA Blue Marble eastern-hemisphere natural-color historical composite"
+          />
+          <p>
+            Natural-color static Earth · WebGL 3D renderer unavailable on this
+            browser. Open Info for keyboard-accessible event and venue records.
+          </p>
+          {failure && !forceFallback && (
+            <button
+              type="button"
+              className="x1-secondary"
+              onClick={() => {
+                setSatelliteStage("preparing");
+                setFailure(false);
+                setRetryNonce((n) => n + 1);
+              }}
+            >
+              Retry 3D globe
+            </button>
+          )}
         </div>
+      ) : (
+        (satelliteStage === "preparing" || satelliteStage === "loading") && (
+          <div className="x1-satellite-loading" role="status">
+            <span aria-hidden="true" />
+            {satelliteStage === "preparing"
+              ? "Preparing 3D Earth…"
+              : "Loading NASA Earth imagery…"}
+          </div>
+        )
       )}
     </div>
   );

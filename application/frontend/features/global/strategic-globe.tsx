@@ -1,5 +1,5 @@
 "use client";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   ArrowUpRight,
@@ -445,6 +445,10 @@ export default function StrategicGlobe({
     if (mapReady) setMapCommand(({ id }) => ({ id: id + 1, direction: -1 }));
     else changeZoom(Math.round(clampGlobeZoom(zoom / 1.38) * 100) / 100);
   };
+  const stableVenues = useMemo(() => [...EXCHANGES], []);
+  const handleGlobeMount = useCallback(() => setGlobeMounted(true), []);
+  const handleGlobePause = useCallback(() => setAutoRotate(false), []);
+
   const markers: RegionalEvent[] = regional ? [
     ...(showExchanges ? EXCHANGES.map((venue) => ({ ...venue, label: venue.name, tone: "exchange", onSelect: () => handleSelectExchange(venue) })) : []),
     ...[...visibleHazardPoints, ...visibleCountryPoints, ...visibleConflictPoints].map((marker) => ({
@@ -471,11 +475,12 @@ export default function StrategicGlobe({
         data-projection={mapReady ? "regional" : "earth"}
       >
         {!mapReady && <DeferredGlobe
-          onMount={() => setGlobeMounted(true)}
-          venues={[...EXCHANGES]}
+          onMount={handleGlobeMount}
+          venues={stableVenues}
           selected={selectedExchange}
-          autoRotate={autoRotate}
+          autoRotate={autoRotate && !regional}
           motionOverride={motionOverride}
+          paused={!!regional}
           zoom={zoom}
           resetToken={resetToken}
           focusCoords={focusCoords}
@@ -487,7 +492,7 @@ export default function StrategicGlobe({
           showExchanges={showExchanges}
           showArcs={showArcs}
           earthQuality={earthQuality}
-          onPause={() => setAutoRotate(false)}
+          onPause={handleGlobePause}
           onSelect={handleSelectExchange}
           onSelectMarker={handleSelectMarker}
           onZoom={changeZoom}

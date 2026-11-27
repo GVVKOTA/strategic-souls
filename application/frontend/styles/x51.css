@@ -2382,8 +2382,13 @@
 }
 
 .x53-globe-stage canvas {
-  touch-action: none;
+  touch-action: pan-y;
   cursor: grab;
+}
+
+.x53-globe-stage.is-fullscreen canvas,
+.x53-globe-stage[data-projection="regional"] canvas {
+  touch-action: none;
 }
 
 .x53-globe-stage canvas:active {
@@ -2423,9 +2428,8 @@
   gap: 4px;
   padding: 4px;
   border-radius: 12px;
-  background: rgba(16, 18, 21, 0.86);
+  background: rgba(16, 18, 21, 0.92);
   border: 1px solid var(--x51-hairline-strong);
-  backdrop-filter: blur(8px);
 }
 
 .x53-globe-pill {
@@ -2436,12 +2440,11 @@
   padding: 0 11px;
   border-radius: 999px;
   border: 1px solid var(--x51-hairline-strong);
-  background: rgba(16, 18, 21, 0.84);
+  background: rgba(16, 18, 21, 0.92);
   color: var(--x1-text-primary);
   font-size: 0.82rem;
   font-weight: 500;
   cursor: pointer;
-  backdrop-filter: blur(8px);
   transition: border-color 180ms ease, background 180ms ease;
 }
 

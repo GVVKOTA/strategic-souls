@@ -16,7 +16,6 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  Send,
   SlidersHorizontal,
   Sparkles,
   X,
@@ -24,8 +23,6 @@ import {
 import { compileFormula, requiredScanBars } from "../../../backend/engines/scan";
 import {
   CLASSIC_50_PRESETS,
-  CLASSIC_CATEGORY_COUNTS,
-  CLASSIC_PRESET_CATEGORIES,
   findClassicPresetByFormula,
   findClassicPresetById,
   searchClassicPresets,
@@ -39,7 +36,6 @@ import {
 import {
   RESEARCH_GLOSSARY,
   SCAN_REQUEST_VERSION,
-  SCAN_UNIVERSE_LABEL,
   compileTree,
   scanUniverseForPreset,
   treeFromFormula,
@@ -63,9 +59,13 @@ import {
   type ScanRun,
   type WorkspaceState,
 } from "../../components/workspace/shared";
-import { IconGraveyard, IconPin, IconStrategy } from "../../components/workspace/ss-icons";
+import { IconPin, IconStrategy } from "../../components/workspace/ss-icons";
 import { triggerGoFeedback } from "../../components/workspace/go-feedback";
 import { ResearchInfo, RuleEditor } from "./controls";
+import FormulaPickerModal from "./formula-picker-modal";
+import GraveyardPanel from "./graveyard-panel";
+import SoulMemoryStrip from "./soul-memory-strip";
+import StrategyScopeBar, { type X3Timeframe } from "./strategy-scope-bar";
 import {
   cancelMarketScan,
   fetchActiveMarketScans,
@@ -117,7 +117,7 @@ type Props = {
 type StrategyTab = "scan" | "lab";
 type ScanTierMode = "CLASSIC" | "ADVANCED";
 type AdvancedEntryMode = "BUILD" | "DISCOVER" | "DRAW";
-type UserTimeframe = "30m" | "1h" | "1d" | "1wk" | "1mo";
+type UserTimeframe = X3Timeframe;
 type ScanPhase =
   | "IDLE"
   | "RUNNING"
@@ -128,28 +128,17 @@ type ScanPhase =
   | "FAILED"
   | "CANCELED";
 
-const TIMEFRAME_OPTIONS: readonly { value: UserTimeframe; label: string }[] = [
-  { value: "30m", label: "30m" },
-  { value: "1h", label: "1 Hour" },
-  { value: "1d", label: "Daily" },
-  { value: "1wk", label: "Weekly" },
-  { value: "1mo", label: "Monthly" },
-];
+const STRATEGY_DRAFT_STORAGE_KEY = "ss-x3-strategy-draft-v1";
 
 const TIMEFRAME_LABEL: Record<string, string> = {
   "30m": "30m",
-  "1h": "1 Hour",
-  "1d": "Daily",
+  "1h": "1H",
+  "3h": "3H",
+  "6h": "6H",
+  "1d": "24H",
   "1wk": "Weekly",
   "1mo": "Monthly",
 };
-
-const EXTRA_SCOPES: readonly { id: ScanUniversePreset; label: string }[] = [
-  { id: "INDIAN_EQUITIES", label: "NSE / BSE" },
-  { id: "NIFTY_500", label: "Nifty 500" },
-  { id: "MCX_FUTURES", label: "MCX Futures" },
-  { id: "CUSTOM_CSV", label: "Private CSV" },
-];
 
 const DEFAULT_OUTCOME: OutcomeDefinition = {
   family: "POSITIVE_RETURN",
@@ -245,33 +234,92 @@ export default function Strategy({
   const [discoverBlueprint, setDiscoverBlueprint] = useState<DiscoverBlueprint | null>(null);
   const [discoverLoading, setDiscoverLoading] = useState(false);
 
-  // An explicit scope stays selected across session and capability refreshes.
   const [scopedInstrument, setScopedInstrument] = useState<string>(
     initialInstrument?.trim() ?? "",
   );
-  const [chosenScope, setScanSource] = useState<ScanUniversePreset | null>(
-    initialInstrument?.trim().startsWith("ECB:")
-      ? "ECB_DAILY"
-      : initialUniversePreset ?? (initialInstrument?.trim() ? "MARKET" : null),
+  const [chosenScope, setScanSource] = useState<"MARKET" | "MY_WATCHLIST">(
+    initialUniversePreset === "MY_WATCHLIST" ? "MY_WATCHLIST" : "MARKET",
   );
   const [universeReadiness, setUniverseReadiness] = useState<UniverseReadinessView | null>(null);
   const [activeJob, setActiveJob] = useState<MarketScanProgress | null>(null);
   const [scanErrorRetryable, setScanErrorRetryable] = useState(false);
+  const [soulMemoryEnabled, setSoulMemoryEnabled] = useState(true);
+  const [soulMemoryRefreshNonce, setSoulMemoryRefreshNonce] = useState(0);
   const niftyReady = universeReadiness?.status === "READY";
   const exchangeAvailable = (workspace?.marketScanAvailable ?? false) || niftyReady || isOwner;
-  const scanSource = chosenScope ?? (exchangeAvailable ? "MARKET" : "ECB_DAILY");
-  const exchangeScopeUnavailable = !exchangeAvailable &&
-    (scanSource === "MARKET" || scanSource === "INDIAN_EQUITIES" || scanSource === "MCX_FUTURES" || scanSource === "NIFTY_500");
-  const [moreScopesOpen, setMoreScopesOpen] = useState(
-    !!initialUniversePreset &&
-      initialUniversePreset !== "MARKET" &&
-      initialUniversePreset !== "MY_WATCHLIST",
-  );
+  const scanSource: ScanUniversePreset = chosenScope;
+  const exchangeScopeUnavailable = !exchangeAvailable && scanSource === "MARKET";
   const [watchlistId, setWatchlistId] = useState<string>(initialWatchlistId ?? "");
-  const [customCsv, setCustomCsv] = useState<string>("");
 
-  // Timeframe (30m, 1h, Daily, Weekly, Monthly; default Daily)
+  // Timeframe: strictly 30m, 1H, 3H, 6H, 24H (default 24H / 1d)
   const [interval, setInterval] = useState<UserTimeframe>("1d");
+
+  // Restore saved guest/member draft on initial mount when no explicit formula/instrument was passed
+  useEffect(() => {
+    if (initialFormula || initialInstrument || initialUniversePreset) return;
+    try {
+      const raw = window.localStorage.getItem(STRATEGY_DRAFT_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<{
+        scanTier: ScanTierMode;
+        classicPresetId: string;
+        classicFormula: string;
+        advancedFormula: string;
+        chosenScope: "MARKET" | "MY_WATCHLIST";
+        interval: UserTimeframe;
+        name: string;
+      }>;
+      queueMicrotask(() => {
+        if (parsed.scanTier === "CLASSIC" || parsed.scanTier === "ADVANCED") {
+          setScanTier(parsed.scanTier);
+        }
+        if (typeof parsed.classicPresetId === "string" && findClassicPresetById(parsed.classicPresetId)) {
+          setClassicPresetId(parsed.classicPresetId);
+        }
+        if (typeof parsed.classicFormula === "string" && parsed.classicFormula.trim()) {
+          setClassicFormula(parsed.classicFormula);
+        }
+        if (typeof parsed.advancedFormula === "string" && parsed.advancedFormula.trim()) {
+          setAdvancedFormula(parsed.advancedFormula);
+        }
+        if (parsed.chosenScope === "MARKET" || parsed.chosenScope === "MY_WATCHLIST") {
+          setScanSource(parsed.chosenScope);
+        }
+        if (
+          parsed.interval === "30m" ||
+          parsed.interval === "1h" ||
+          parsed.interval === "3h" ||
+          parsed.interval === "6h" ||
+          parsed.interval === "1d"
+        ) {
+          setInterval(parsed.interval);
+        }
+        if (typeof parsed.name === "string") setName(parsed.name);
+      });
+    } catch {
+      /* Ignore storage failures */
+    }
+  }, [initialFormula, initialInstrument, initialUniversePreset]);
+
+  // Persist current Strategy draft across reloads and guest sign-in handoff
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        STRATEGY_DRAFT_STORAGE_KEY,
+        JSON.stringify({
+          scanTier,
+          classicPresetId,
+          classicFormula,
+          advancedFormula,
+          chosenScope,
+          interval,
+          name,
+        }),
+      );
+    } catch {
+      /* Ignore storage quota errors */
+    }
+  }, [scanTier, classicPresetId, classicFormula, advancedFormula, chosenScope, interval, name]);
 
   // Explicit scan execution lifecycle & cancellation
   const [scanPhase, setScanPhase] = useState<ScanPhase>("IDLE");
@@ -395,13 +443,7 @@ export default function Strategy({
     queueMicrotask(() => {
       if (!alive) return;
       setScopedInstrument(clean);
-      if (clean.startsWith("ECB:")) {
-        setScanSource("ECB_DAILY");
-        setMoreScopesOpen(true);
-        setInterval((cur) => (cur === "30m" || cur === "1h" ? "1d" : cur));
-      } else {
-        setScanSource("MARKET");
-      }
+      setScanSource("MARKET");
     });
     return () => {
       alive = false;
@@ -487,10 +529,7 @@ export default function Strategy({
       universeReadiness?.eligibleTimeframes?.includes("1h"),
   );
   const dailyOnlyScope =
-    scanSource === "ECB_DAILY" ||
-    scanSource === "CUSTOM_CSV" ||
-    (scanSource === "NIFTY_500" && !sharedSupportsIntraday) ||
-    (scanSource === "MARKET" && niftyReady && !isOwner && !sharedSupportsIntraday);
+    scanSource === "MARKET" && niftyReady && !isOwner && !sharedSupportsIntraday;
 
   // Select latest scan cleanly, prioritizing explicit completed scan
   const scans = useMemo(() => workspace?.scans ?? [], [workspace?.scans]);
@@ -548,17 +587,11 @@ export default function Strategy({
     setScanError("");
   }
 
-  function handleScopeChange(nextScope: ScanUniversePreset) {
+  function handleScopeChange(nextScope: "MARKET" | "MY_WATCHLIST") {
     invalidatePendingRun();
     if (nextScope !== scanSource) setScopedInstrument("");
     setScanSource(nextScope);
     setScanError("");
-    if (
-      (nextScope === "ECB_DAILY" || nextScope === "CUSTOM_CSV") &&
-      (interval === "30m" || interval === "1h")
-    ) {
-      setInterval("1d");
-    }
   }
 
   async function saveClassicCopy() {
@@ -715,13 +748,8 @@ export default function Strategy({
     if (scanSource === "MY_WATCHLIST" && watchlistItems.length === 0) {
       setScanPhase("BLOCKED");
       setScanError(
-        "Your Watchlist is empty. Add instruments or choose ECB FX.",
+        "Your Watchlist is empty. Add instruments or switch to Markets.",
       );
-      return;
-    }
-    if (scanSource === "CUSTOM_CSV" && !customCsv.trim()) {
-      setScanPhase("BLOCKED");
-      setScanError("Paste or upload dated daily CSV bars before running a Private CSV scan.");
       return;
     }
 
@@ -791,7 +819,6 @@ export default function Strategy({
           scanTier,
           origin: scanTier === "CLASSIC" ? "CLASSIC" : advancedEntry,
           ...requestDef,
-          ...(scanSource === "CUSTOM_CSV" ? { customCsv } : {}),
           requestId: crypto.randomUUID(),
         },
         { signal: ctrl.signal, timeoutMs: 65_000 },
@@ -813,6 +840,7 @@ export default function Strategy({
         setSelectedScanId(scanId);
         setJustCompletedId(scanId);
       }
+      setSoulMemoryRefreshNonce((n) => n + 1);
       setUniverseTableOpen(null);
       setScanPhase(
         initial.jobId
@@ -975,244 +1003,25 @@ export default function Strategy({
   const isDrawMode = scanTier === "ADVANCED" && advancedEntry === "DRAW";
 
   const scopeAndTimeframeControls = (
-    <>
-      <div className="x54-field-group">
-        <div className="x54-field-label">
-          <span>Scan Source</span>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <span className="x1-caption">
-              {scopedInstrument
-                ? scopedInstrument
-                : scanSource === "MARKET"
-                  ? "NSE · BSE · MCX"
-                  : scanSource === "MY_WATCHLIST"
-                    ? `${watchlistItems.length} symbol${watchlistItems.length === 1 ? "" : "s"}`
-                    : SCAN_UNIVERSE_LABEL[scanSource]}
-            </span>
-            <button
-              type="button"
-              className="x1-text-button"
-              style={{ padding: "2px 4px", fontSize: "0.78rem" }}
-              aria-expanded={moreScopesOpen}
-              onClick={() => setMoreScopesOpen((v) => !v)}
-            >
-              {moreScopesOpen ? "Fewer scopes" : "More scopes"}
-            </button>
-          </div>
-        </div>
-
-        {scopedInstrument && (
-          <div className="ss-v31-scope-chip" role="status">
-            <span>Scoped to <strong>{scopedInstrument}</strong></span>
-            <button
-              type="button"
-              className="x1-text-button"
-              style={{ padding: "2px 6px", fontSize: "0.78rem" }}
-              onClick={() => {
-                setScopedInstrument("");
-              }}
-            >
-              Scan all
-            </button>
-          </div>
-        )}
-
-        <div
-          className="ss-v3-source-grid"
-          role="group"
-          aria-label="Primary scan source"
-        >
-          <button
-            type="button"
-            aria-pressed={scanSource === "ECB_DAILY"}
-            className={"ss-v3-seg-btn" + (scanSource === "ECB_DAILY" ? " is-active" : "")}
-            onClick={() => handleScopeChange("ECB_DAILY")}
-          >
-            ECB FX
-          </button>
-          <button
-            type="button"
-            aria-pressed={scanSource === "MY_WATCHLIST"}
-            className={
-              "ss-v3-seg-btn" +
-              (scanSource === "MY_WATCHLIST" ? " is-active" : "")
-            }
-            onClick={() => handleScopeChange("MY_WATCHLIST")}
-          >
-            Watchlist
-          </button>
-          <button
-            type="button"
-            aria-pressed={scanSource === "MARKET"}
-            className={
-              "ss-v3-seg-btn" + (scanSource === "MARKET" ? " is-active" : "")
-            }
-            onClick={() => handleScopeChange("MARKET")}
-          >
-            Indian markets
-          </button>
-        </div>
-
-        {exchangeScopeUnavailable && (
-          <div className="x1-callout" role="status">
-            <span>
-              {universeReadiness?.status === "WARMING" || universeReadiness?.status === "RATE_LIMITED"
-                ? universeReadiness.reason
-                : universeReadiness?.reason || "Shared NSE, BSE and MCX history requires a licensed feed. ECB daily FX is available."}
-            </span>
-            <button type="button" className="x1-secondary" onClick={() => handleScopeChange("ECB_DAILY")}>
-              Choose ECB FX
-            </button>
-          </div>
-        )}
-        {!exchangeScopeUnavailable &&
-          (scanSource === "MARKET" || scanSource === "NIFTY_500") &&
-          universeReadiness?.membership && (
-            <p className="x1-caption" role="status">
-              Nifty 500 ({universeReadiness.membership.effectiveDate} ·{" "}
-              {universeReadiness.coverage?.ready ?? 0}/
-              {universeReadiness.membership.distinctCount ?? universeReadiness.membership.count} ready)
-              {universeReadiness.rightsMode === "DERIVED_ONLY"
-                ? " · Derived scan outcomes only (raw prices withheld by licence)"
-                : " · Published EOD"}
-            </p>
-          )}
-        {moreScopesOpen && (
-          <div
-            className="ss-v31-extra-scopes"
-            role="group"
-            aria-label="Additional scan scopes"
-          >
-            {EXTRA_SCOPES.map((sc) => (
-              <button
-                key={sc.id}
-                type="button"
-                aria-pressed={scanSource === sc.id}
-                className={
-                  "ss-v31-scope-pill" + (scanSource === sc.id ? " is-active" : "")
-                }
-                onClick={() => handleScopeChange(sc.id)}
-              >
-                {sc.label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {!exchangeScopeUnavailable && scanSource === "NIFTY_500" && !niftyReady && (
-          <p className="x1-caption" role="status">
-            {universeReadiness?.reason ??
-              "Nifty 500 is unavailable. It requires authorized constituents and eligible historical coverage."}
-          </p>
-        )}
-        {scanSource === "MY_WATCHLIST" && watchlists.length > 1 && (
-          <select
-            id="ss-v31-watchlist-select"
-            name="watchlistId"
-            aria-label="Choose watchlist"
-            className="x54-name-input"
-            value={activeWatchlist?.id ?? ""}
-            onChange={(e) => setWatchlistId(e.target.value)}
-          >
-            {watchlists.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name} ({w.payload.items?.length ?? 0})
-              </option>
-            ))}
-          </select>
-        )}
-
-        {scanSource === "MY_WATCHLIST" && watchlistItems.length === 0 && (
-          <div className="x54-quota-popover" role="note">
-            <div>
-              Your Watchlist is empty. Add instruments or choose an available scan scope.
-            </div>
-            <div className="x1-actions" style={{ marginTop: 8, gap: 8 }}>
-              <button
-                type="button"
-                className="x1-secondary"
-                onClick={() => handleScopeChange(exchangeAvailable ? "MARKET" : "ECB_DAILY")}
-              >
-                {exchangeAvailable ? "Choose Indian markets" : "Choose ECB FX"}
-              </button>
-              {onOpenWatchlist && (
-                <button
-                  type="button"
-                  className="x1-secondary"
-                  onClick={onOpenWatchlist}
-                >
-                  Open Watchlist
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {scanSource === "CUSTOM_CSV" && (
-          <div className="x54-field-group" style={{ marginTop: 6 }}>
-            <label className="x1-caption" htmlFor="ss-v31-custom-csv">
-              Paste daily OHLCV CSV (columns: symbol,date,open,high,low,close,volume)
-            </label>
-            <textarea
-              id="ss-v31-custom-csv"
-              name="customCsv"
-              rows={3}
-              className="x54-name-input"
-              style={{
-                fontFamily: '"IBM Plex Mono", ui-monospace, monospace',
-                fontSize: "0.8rem",
-              }}
-              value={customCsv}
-              onChange={(e) => setCustomCsv(e.target.value)}
-              placeholder="symbol,date,open,high,low,close,volume"
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Timeframe: 30m, 1 Hour, Daily, Weekly, Monthly */}
-      <div className="x54-field-group">
-        <div className="x54-field-label">
-          <span>Timeframe</span>
-          {dailyOnlyScope && (
-            <span className="x1-caption">Daily bars only for this source</span>
-          )}
-        </div>
-        <div
-          className="ss-v31-tf-grid"
-          role="group"
-          aria-label="Scan timeframe"
-        >
-          {TIMEFRAME_OPTIONS.map((tf) => {
-            const disabled =
-              dailyOnlyScope && (tf.value === "30m" || tf.value === "1h");
-            return (
-              <button
-                key={tf.value}
-                type="button"
-                disabled={disabled}
-                aria-pressed={interval === tf.value}
-                title={
-                  disabled
-                    ? `${tf.label} requires an intraday exchange feed`
-                    : tf.label
-                }
-                className={
-                  "ss-v3-seg-btn" + (interval === tf.value ? " is-active" : "")
-                }
-                onClick={() => {
-                  invalidatePendingRun();
-                  setInterval(tf.value);
-                  setScanError("");
-                }}
-              >
-                {tf.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    </>
+    <StrategyScopeBar
+      scanSource={scanSource}
+      onSelectSource={handleScopeChange}
+      interval={interval}
+      onSelectInterval={(tf) => {
+        invalidatePendingRun();
+        setInterval(tf);
+        setScanError("");
+      }}
+      dailyOnlyScope={dailyOnlyScope}
+      exchangeScopeUnavailable={exchangeScopeUnavailable}
+      universeReadiness={universeReadiness}
+      watchlists={watchlists}
+      activeWatchlist={activeWatchlist}
+      watchlistItemCount={watchlistItems.length}
+      onSelectWatchlistId={setWatchlistId}
+      onOpenWatchlist={onOpenWatchlist}
+      authenticated={authenticated}
+    />
   );
 
   return (
@@ -1311,24 +1120,18 @@ export default function Strategy({
               </button>
             </div>
 
-            {/* Require a name when saving a named Soul. */}
-            <div className="x54-field-group">
-              <label className="x54-field-label" htmlFor="ss-v3-soul-name">
-                <span>Soul Name</span>
-              </label>
-              <input
-                id="ss-v3-soul-name"
-                name="soulName"
-                type="text"
-                className="x54-name-input"
-                value={name}
-                maxLength={100}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Name your Soul scan"
-              />
-            </div>
+            {/* Mobile-first flow: 1. Source (Markets/Watchlist) & 2. Timeframe (30m/1H/3H/6H/24H) */}
+            {scopeAndTimeframeControls}
 
-            {/* 4. Classic Editable Formula + Full-Width Browse Button OR Advanced Mode */}
+            {/* Compact daily SOUL MEMORY status & ranking toggle */}
+            <SoulMemoryStrip
+              authenticated={authenticated}
+              refreshNonce={soulMemoryRefreshNonce}
+              enabled={soulMemoryEnabled}
+              onToggle={setSoulMemoryEnabled}
+            />
+
+            {/* 3. Formula (Classic 50 editable OR Advanced) */}
             {scanTier === "CLASSIC" ? (
               <div className="x54-field-group">
                 <div className="x54-field-label">
@@ -1603,8 +1406,6 @@ export default function Strategy({
 
                 {isDrawMode ? (
                   <>
-                    {/* In Pattern Scan mode, Source & Timeframe sit above Canvas so Find Similar Patterns is the final bottom CTA */}
-                    {scopeAndTimeframeControls}
                     <Suspense
                       fallback={
                         <WorkspaceSkeleton label="Opening Pattern Scan…" kind="panel" />
@@ -1620,7 +1421,6 @@ export default function Strategy({
                           scanSource === "MY_WATCHLIST" ? activeWatchlist?.id : undefined
                         }
                         interval={interval}
-                        customCsv={scanSource === "CUSTOM_CSV" ? customCsv : undefined}
                         instrumentIds={scopedInstrument ? [scopedInstrument] : undefined}
                         savedPatterns={workspace?.savedPatterns ?? []}
                         onPatternSaved={reload}
@@ -1629,6 +1429,7 @@ export default function Strategy({
                           await reload();
                           setSelectedScanId(res.id);
                           setJustCompletedId(res.id);
+                          setSoulMemoryRefreshNonce((n) => n + 1);
                           setScanPhase(
                             (res.drawReport?.matches?.length ?? 0) > 0
                               ? "COMPLETE"
@@ -1690,8 +1491,22 @@ export default function Strategy({
               </div>
             )}
 
-            {/* 5 & 6. Scope & Timeframe (placed here for Classic, Build & Discover) */}
-            {!isDrawMode && scopeAndTimeframeControls}
+            {/* 4. Soul Name */}
+            <div className="x54-field-group">
+              <label className="x54-field-label" htmlFor="ss-v3-soul-name">
+                <span>Soul Name</span>
+              </label>
+              <input
+                id="ss-v3-soul-name"
+                name="soulName"
+                type="text"
+                className="x54-name-input"
+                value={name}
+                maxLength={100}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Name your Soul scan"
+              />
+            </div>
 
             {scanError && (
               <div className="x1-callout" role="alert" style={{ margin: 0 }}>
@@ -1709,7 +1524,7 @@ export default function Strategy({
                   <button
                     type="button"
                     className="x1-secondary"
-                    disabled={sessionPending || busy || exchangeScopeUnavailable}
+                    disabled={sessionPending || busy || (authenticated && exchangeScopeUnavailable)}
                     onClick={() => void executeScan()}
                   >
                     <RefreshCw size={14} aria-hidden="true" />
@@ -1719,18 +1534,26 @@ export default function Strategy({
               </div>
             )}
 
-            {/* 7. Primary Run Scan CTA + Cancel during active request */}
+            {/* 5. Primary Run Scan CTA (Guest CTA always enabled: "Sign in to run this scan") */}
             {!isDrawMode && (
               <div className="ss-v31-run-row">
                 <button
                   type="button"
                   className="ss-v3-run-cta"
-                    disabled={sessionPending || busy || exchangeScopeUnavailable}
-                    aria-busy={sessionPending || busy}
+                  disabled={sessionPending || busy || (authenticated && exchangeScopeUnavailable)}
+                  aria-busy={sessionPending || busy}
                   onClick={() => void executeScan()}
                 >
-                   <span>{sessionPending ? "Checking session…" : busy ? "Scanning completed bars…" : "Run Scan"}</span>
-                   {!sessionPending && !busy && <ArrowRight size={17} aria-hidden="true" />}
+                  <span>
+                    {sessionPending
+                      ? "Checking session…"
+                      : !authenticated
+                        ? "Sign in to run this scan"
+                        : busy
+                          ? "Scanning completed bars…"
+                          : "Run Scan"}
+                  </span>
+                  {!sessionPending && !busy && <ArrowRight size={17} aria-hidden="true" />}
                 </button>
                 {busy && (
                   <button
@@ -1812,7 +1635,27 @@ export default function Strategy({
                 const evaluatedRows = allRows.filter(
                   (r) => r.status === "PASS" || r.status === "FAIL",
                 );
-                const sortedMatched = sortScanRows(matchedRaw, resultSort);
+                const soulMemoryPayload = (
+                  activeScan.payload as {
+                    soulMemory?: {
+                      status?: string;
+                      rankings?: { instrumentId: string; score: number }[];
+                    };
+                  }
+                ).soulMemory;
+                const soulScoreById = new Map<string, number>();
+                for (const rk of soulMemoryPayload?.rankings ?? []) {
+                  soulScoreById.set(rk.instrumentId, rk.score);
+                }
+                const baseMatched = sortScanRows(matchedRaw, resultSort);
+                const sortedMatched =
+                  soulMemoryEnabled && soulScoreById.size > 0
+                    ? [...baseMatched].sort(
+                        (a, b) =>
+                          (soulScoreById.get(b.instrumentId) ?? -1) -
+                          (soulScoreById.get(a.instrumentId) ?? -1),
+                      )
+                    : baseMatched;
                 const sortedEvaluated = sortScanRows(evaluatedRows, resultSort);
                 const nonMatchCount = res?.failed ?? 0;
                 const unknownCount = res?.unknown ?? 0;
@@ -2036,6 +1879,14 @@ export default function Strategy({
                                     {typeof item.patternFit === "number" && (
                                       <span className="ss-v31-teal-pill">
                                         Fit {item.patternFit.toFixed(0)}%
+                                      </span>
+                                    )}
+                                    {soulMemoryEnabled && soulScoreById.has(item.instrumentId) && (
+                                      <span
+                                        className="x51-pill x51-pill-blue"
+                                        title="SOUL MEMORY same-day research ranking index (0–100)"
+                                      >
+                                        SM {Math.round(soulScoreById.get(item.instrumentId)!)}
                                       </span>
                                     )}
                                   </button>
@@ -2353,381 +2204,52 @@ export default function Strategy({
               })()
             ) : (
               <Empty title="Ready for your first scan">
-                {exchangeScopeUnavailable
-                  ? `${sourceBadgeLabel(scanSource)} is locked until a licensed feed is active — switch to ECB FX or Watchlist above, then tap Run Scan.`
-                  : `${scanTier === "CLASSIC" ? "Classic" : isDrawMode ? "Pattern Scan" : "Advanced"} mode with ${sourceBadgeLabel(scanSource)} and ${TIMEFRAME_LABEL[interval] ?? interval} is selected — tap ${isDrawMode ? "Find Similar Patterns" : "Run Scan"} above whenever you are ready.`}
+                {!authenticated
+                  ? `Explore formulas, choose Markets or Watchlist and a timeframe (${TIMEFRAME_LABEL[interval] ?? interval}), then tap Sign in to run this scan.`
+                  : exchangeScopeUnavailable
+                    ? "Connected Markets history is awaiting an active exchange provider key. Switch to Watchlist or wait for sync to complete."
+                    : `${scanTier === "CLASSIC" ? "Classic" : isDrawMode ? "Pattern Scan" : "Advanced"} mode with ${scanSource === "MY_WATCHLIST" ? "Watchlist" : "Markets"} and ${TIMEFRAME_LABEL[interval] ?? interval} is selected — tap ${isDrawMode ? "Find Similar Patterns" : "Run Scan"} above whenever you are ready.`}
               </Empty>
             )}
           </section>
 
           {/* 3. GRAVEYARD (Preserved Approved Visual DNA, Standalone Heading, Zero Subtitle) */}
-          <section
-            className="x53-graveyard-shell"
-            aria-labelledby="ss-v3-graveyard-heading"
-          >
-            <div className="x53-graveyard-head">
-              <div className="x53-graveyard-title-wrap">
-                <span className="x53-graveyard-icon" aria-hidden="true">
-                  <IconGraveyard size={22} />
-                </span>
-                <h2 id="ss-v3-graveyard-heading" className="x53-graveyard-title">
-                  GRAVEYARD
-                </h2>
-              </div>
-              <span className="x51-pill x51-pill-blue">
-                {scans.length} saved
-              </span>
-            </div>
-
-            <div className="x51-chip-row" role="group" aria-label="Filter GRAVEYARD">
-              {(["ALL", "CLASSIC", "ADVANCED", "RETIRED"] as const).map((f) => (
-                <button
-                  key={f}
-                  type="button"
-                  aria-pressed={graveyardFilter === f}
-                  className={
-                    "x51-chip" + (graveyardFilter === f ? " is-active" : "")
-                  }
-                  onClick={() => setGraveyardFilter(f)}
-                >
-                  {f === "ALL"
-                    ? "All"
-                    : f === "CLASSIC"
-                      ? "Classic"
-                      : f === "ADVANCED"
-                        ? "Advanced"
-                        : "Retired"}
-                </button>
-              ))}
-            </div>
-
-            <input
-              id="ss-v31-graveyard-search"
-              name="graveyardSearch"
-              type="search"
-              className="x56-formula-search-input"
-              aria-label="Search GRAVEYARD scans"
-              placeholder="Search saved Souls or formulas…"
-              value={graveyardQuery}
-              onChange={(e) => setGraveyardQuery(e.target.value)}
-            />
-
-            {graveyardScans.length > 0 ? (
-              <div className="x53-graveyard-list">
-                {graveyardScans.map((s) => {
-                  const tfKey =
-                    (s.payload as { research?: { interval?: string } }).research
-                      ?.interval ??
-                    s.payload.interval ??
-                    "1d";
-                  const presetKey = (
-                    s.payload as { research?: { universePreset?: string } }
-                  ).research?.universePreset;
-                  const srcStr = (s.payload as { source?: string }).source;
-                  return (
-                    <div
-                      key={s.id}
-                      className={
-                        "x53-graveyard-card" +
-                        (activeScan?.id === s.id ? " is-selected" : "")
-                      }
-                    >
-                      <button
-                        type="button"
-                        className="x53-graveyard-main"
-                        onClick={() => {
-                          setSelectedScanId(s.id);
-                          setUniverseTableOpen(null);
-                        }}
-                      >
-                        <div className="x53-graveyard-card-top">
-                          <strong>{s.name}</strong>
-                          <span className="x51-pill">
-                            {s.mode === "SIMPLE" ? "Classic" : "Advanced"}
-                          </span>
-                          <span className="x51-pill">
-                            {sourceBadgeLabel(presetKey, srcStr)}
-                          </span>
-                          <span className="x51-pill">
-                            {TIMEFRAME_LABEL[tfKey] ?? tfKey}
-                          </span>
-                          {s.reviewState && (
-                            <span className="x51-pill x51-pill-amber">
-                              {s.reviewState}
-                            </span>
-                          )}
-                        </div>
-                        <code className="x53-compact-formula">
-                          {s.payload.rule?.formula ?? ""}
-                        </code>
-                        <span className="x1-caption">
-                          {s.payload.results?.matches ?? 0} matched ·{" "}
-                          {s.payload.results?.eligible ?? 0} evaluated ·{" "}
-                          {moment(s.created_at)}
-                        </span>
-                      </button>
-
-                      <div className="ss-v3-graveyard-actions">
-                        <button
-                          type="button"
-                          className="x51-accent-btn"
-                          style={{ minHeight: 40, padding: "0 12px", fontSize: "0.84rem" }}
-                          disabled={publishingId === s.id}
-                          onClick={() => void publishScanToCommunity(s)}
-                        >
-                          <Send size={14} aria-hidden="true" />
-                          <span>
-                            {publishingId === s.id
-                              ? "Publishing…"
-                              : "Publish Soul"}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          className="x1-secondary"
-                          style={{ minHeight: 40, padding: "0 12px", fontSize: "0.84rem" }}
-                          onClick={() => setReview(s)}
-                        >
-                          Review Scan
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <Empty title="No archived Souls match">
-                Completed Soul scans appear here automatically and stay preserved
-                as immutable records.
-              </Empty>
-            )}
-          </section>
+          <GraveyardPanel
+            totalSavedCount={scans.length}
+            graveyardFilter={graveyardFilter}
+            setGraveyardFilter={setGraveyardFilter}
+            graveyardQuery={graveyardQuery}
+            setGraveyardQuery={setGraveyardQuery}
+            graveyardScans={graveyardScans}
+            activeScanId={activeScan?.id ?? null}
+            publishingId={publishingId}
+            timeframeLabel={TIMEFRAME_LABEL}
+            onSelectScan={(scanId) => {
+              setSelectedScanId(scanId);
+              setUniverseTableOpen(null);
+            }}
+            onPublishScan={(s) => void publishScanToCommunity(s)}
+            onOpenReview={setReview}
+          />
         </>
       )}
 
       {/* 50-Formula Picker Modal with Pinned Section First */}
-      {formulaPickerOpen && (
-        <Modal
-          title="Browse all 50 Classic Formulas"
-          onClose={() => setFormulaPickerOpen(false)}
-        >
-          <div className="x56-formula-modal-shell">
-            <div className="x56-formula-modal-subhead">
-              <p className="x56-formula-modal-subtitle">
-                Select any formula to load and customize its parameters. Pin
-                favorites to keep them on top.
-              </p>
-              <span className="x56-formula-count-badge">
-                {filteredPresets.total} of {CLASSIC_50_PRESETS.length}
-              </span>
-            </div>
-
-            <div className="x56-formula-search-row">
-              <input
-                id="ss-v31-formula-picker-search"
-                name="formulaSearch"
-                type="search"
-                className="x56-formula-search-input"
-                aria-label="Search 50 Classic formulas"
-                placeholder="Search RSI, EMA, MACD, Bollinger, Supertrend…"
-                value={formulaQuery}
-                onChange={(e) => setFormulaQuery(e.target.value)}
-              />
-              {formulaQuery && (
-                <button
-                  type="button"
-                  className="x56-formula-search-clear"
-                  onClick={() => setFormulaQuery("")}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            <div className="x56-formula-chip-bar" role="group" aria-label="Formula categories">
-              <button
-                type="button"
-                className={
-                  "x51-chip" + (formulaCategory === "ALL" ? " is-active" : "")
-                }
-                onClick={() => setFormulaCategory("ALL")}
-              >
-                All ({CLASSIC_50_PRESETS.length})
-              </button>
-              {CLASSIC_PRESET_CATEGORIES.map((cat) => (
-                <button
-                  key={cat}
-                  type="button"
-                  className={
-                    "x51-chip" + (formulaCategory === cat ? " is-active" : "")
-                  }
-                  onClick={() => setFormulaCategory(cat)}
-                >
-                  {cat} ({CLASSIC_CATEGORY_COUNTS[cat]})
-                </button>
-              ))}
-            </div>
-
-            <div className="x56-formula-list">
-              {filteredPresets.pinned.length > 0 && (
-                <>
-                  <small className="x1-caption" style={{ paddingLeft: 4 }}>
-                    Pinned ({filteredPresets.pinned.length})
-                  </small>
-                  {filteredPresets.pinned.map((p) => {
-                    const isSelected = p.id === classicPresetId;
-                    const isExpanded = expandedFormulaId === p.id;
-                    return (
-                      <div
-                        key={`pin-${p.id}`}
-                        className={
-                          "x56-formula-item" + (isSelected ? " is-active" : "")
-                        }
-                      >
-                        <div className="x56-formula-item-top">
-                          <button
-                            type="button"
-                            className="x56-formula-select-btn"
-                            onClick={() => {
-                              applyClassicPreset(p);
-                              setFormulaPickerOpen(false);
-                            }}
-                          >
-                            <div className="x56-formula-title-row">
-                              <span className="x54-formula-rank-badge">
-                                {p.rankCode}
-                              </span>
-                              <span className="x56-formula-title">{p.label}</span>
-                            </div>
-                            <p className="x56-formula-meaning">{p.shortDescription}</p>
-                          </button>
-                          <div className="x56-formula-actions-col">
-                            <button
-                              type="button"
-                              className="ss-v3-pin-btn is-pinned"
-                              style={{ minWidth: 36, minHeight: 36, padding: 0 }}
-                              aria-label={`Unpin ${p.label}`}
-                              disabled={pinningId === p.id}
-                              onClick={() => void togglePin(p.id)}
-                            >
-                              <IconPin size={16} active />
-                            </button>
-                            <button
-                              type="button"
-                              className="x56-formula-details-btn"
-                              onClick={() =>
-                                setExpandedFormulaId(isExpanded ? null : p.id)
-                              }
-                            >
-                              {isExpanded ? "Hide" : "Formula"}
-                            </button>
-                          </div>
-                        </div>
-                        {isExpanded && (
-                          <div className="x56-formula-drawer">
-                            <code className="x56-formula-drawer-code">
-                              {p.formula}
-                            </code>
-                            <div className="x56-formula-drawer-grid">
-                              <span>Min bars: {p.minBars}</span>
-                              <span>{p.ruleType}</span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {filteredPresets.unpinned.length > 0 && (
-                    <small className="x1-caption" style={{ paddingLeft: 4, marginTop: 4 }}>
-                      All Classic Formulas
-                    </small>
-                  )}
-                </>
-              )}
-
-              {filteredPresets.unpinned.map((p) => {
-                const isSelected = p.id === classicPresetId;
-                const isExpanded = expandedFormulaId === p.id;
-                return (
-                  <div
-                    key={p.id}
-                    className={
-                      "x56-formula-item" + (isSelected ? " is-active" : "")
-                    }
-                  >
-                    <div className="x56-formula-item-top">
-                      <button
-                        type="button"
-                        className="x56-formula-select-btn"
-                        onClick={() => {
-                          applyClassicPreset(p);
-                          setFormulaPickerOpen(false);
-                        }}
-                      >
-                        <div className="x56-formula-title-row">
-                          <span className="x54-formula-rank-badge">
-                            {p.rankCode}
-                          </span>
-                          <span className="x56-formula-title">{p.label}</span>
-                        </div>
-                        <p className="x56-formula-meaning">{p.shortDescription}</p>
-                      </button>
-                      <div className="x56-formula-actions-col">
-                        <button
-                          type="button"
-                          className="ss-v3-pin-btn"
-                          style={{ minWidth: 36, minHeight: 36, padding: 0 }}
-                          aria-label={`Pin ${p.label}`}
-                          disabled={pinningId === p.id}
-                          onClick={() => void togglePin(p.id)}
-                        >
-                          <IconPin size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          className="x56-formula-details-btn"
-                          onClick={() =>
-                            setExpandedFormulaId(isExpanded ? null : p.id)
-                          }
-                        >
-                          {isExpanded ? "Hide" : "Formula"}
-                        </button>
-                      </div>
-                    </div>
-                    {isExpanded && (
-                      <div className="x56-formula-drawer">
-                        <code className="x56-formula-drawer-code">
-                          {p.formula}
-                        </code>
-                        <div className="x56-formula-drawer-grid">
-                          <span>Min bars: {p.minBars}</span>
-                          <span>{p.ruleType}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {filteredPresets.total === 0 && (
-                <div className="x56-formula-empty">
-                  <strong>No formulas matched</strong>
-                  <button
-                    type="button"
-                    className="x1-secondary"
-                    onClick={() => {
-                      setFormulaQuery("");
-                      setFormulaCategory("ALL");
-                    }}
-                  >
-                    Reset search
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </Modal>
-      )}
+      <FormulaPickerModal
+        open={formulaPickerOpen}
+        onClose={() => setFormulaPickerOpen(false)}
+        formulaQuery={formulaQuery}
+        setFormulaQuery={setFormulaQuery}
+        formulaCategory={formulaCategory}
+        setFormulaCategory={setFormulaCategory}
+        filteredPresets={filteredPresets}
+        classicPresetId={classicPresetId}
+        expandedFormulaId={expandedFormulaId}
+        setExpandedFormulaId={setExpandedFormulaId}
+        pinningId={pinningId}
+        onApplyPreset={applyClassicPreset}
+        onTogglePin={(id) => void togglePin(id)}
+      />
 
       {/* Consolidated Guide & Limits Modal */}
       {guideOpen && (

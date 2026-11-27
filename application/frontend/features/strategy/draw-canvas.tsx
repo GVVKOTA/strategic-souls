@@ -42,7 +42,7 @@ type Props = {
   universe: "ECB_DAILY" | "CONNECTED_MARKETS" | "NIFTY_500";
   universePreset?: ScanUniversePreset;
   watchlistId?: string;
-  interval: "30m" | "1h" | "1d" | "1wk" | "1mo";
+  interval: "30m" | "1h" | "3h" | "6h" | "1d" | "1wk" | "1mo";
   customCsv?: string;
   instrumentIds?: string[];
   savedPatterns?: SavedPatternRecord[];
@@ -594,6 +594,11 @@ export default function PatternDrawCanvas({
       request.current = null;
       if (mounted.current) notify(res.state === "PARTIAL" ? "Some market data was unavailable. Partial results were saved." : "Pattern scan complete.");
     } catch (err) {
+      // Clear idempotency key on non-transient/user-canceled errors so subsequent retry gets a fresh key
+      const errStatus = (err as { status?: number })?.status;
+      if ((err as Error)?.name === "AbortError" || (typeof errStatus === "number" && errStatus >= 400 && errStatus < 500)) {
+        request.current = null;
+      }
       if (!mounted.current) return;
       notify(
         err instanceof Error ? err.message : "Pattern scan could not complete.",

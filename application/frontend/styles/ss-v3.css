@@ -2540,9 +2540,283 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
   }
 }
 
-.ss-scan-progress { display: block; width: min(100%, 32rem); height: 5px; margin-top: 10px; accent-color: var(--ss-accent, #64c8bd); }
-.x1-sidebar nav a.is-active { box-shadow: inset 2px 0 0 var(--x1-title-blue); }
+.ss-scan-progress { display: block; width: min(100%, 32rem); height: 5px; margin-top: 10px; accent-color: var(--ss-section-accent, var(--ss-accent, #76c0ff)); }
+.x1-sidebar nav a.is-active { box-shadow: inset 2px 0 0 var(--ss-section-accent, var(--x1-title-blue)); }
 .ss-v3-strategy-head, .ss-v3-comm-header {
   border-bottom: 1px solid var(--x1-divider-strong);
   padding-bottom: 12px;
+}
+
+/* ==========================================================================
+   STRATEGIC SOULS X 3.0 — Section Accents, Calm Grouped Settings, & Layout
+   Global = Subtle Green (#42CF91)
+   Strategy = Strategic Blue (#76C0FF)
+   Community = Soft Lavender (#C4B5FD, zero blue accent leakage)
+   ========================================================================== */
+
+.x1-app[data-section="global"] {
+  --ss-section-accent: #42cf91;
+  --ss-section-accent-soft: rgba(66, 207, 145, 0.12);
+  --ss-section-accent-border: rgba(66, 207, 145, 0.36);
+  --ss-v3-accent-top: 2px solid rgba(66, 207, 145, 0.55);
+}
+
+.x1-app[data-section="strategy"] {
+  --ss-section-accent: #76c0ff;
+  --ss-section-accent-soft: rgba(118, 192, 255, 0.14);
+  --ss-section-accent-border: rgba(118, 192, 255, 0.4);
+  --ss-v3-accent-top: 2px solid rgba(118, 192, 255, 0.58);
+}
+
+.x1-app[data-section="community"] {
+  --ss-section-accent: #c4b5fd;
+  --ss-section-accent-soft: rgba(196, 181, 253, 0.14);
+  --ss-section-accent-border: rgba(196, 181, 253, 0.42);
+  --ss-v3-accent-top: 2px solid rgba(196, 181, 253, 0.56);
+}
+
+/* Active navigation follows the current section's luxury accent */
+.x1-app .x1-sidebar nav a[aria-current="page"],
+.x1-app .x1-sidebar nav a.is-active {
+  color: var(--ss-section-accent);
+  background: var(--ss-section-accent-soft);
+  box-shadow: inset 2px 0 0 var(--ss-section-accent);
+}
+
+.x1-app .x1-sidebar nav a[aria-current="page"] strong,
+.x1-app .x1-sidebar nav a[aria-current="page"] svg {
+  color: var(--ss-section-accent);
+}
+
+.x1-app .x1-mobile-nav a[aria-current="page"] {
+  color: var(--ss-section-accent);
+}
+
+.x1-app .x1-mobile-nav a[aria-current="page"]::before {
+  background: var(--ss-section-accent);
+}
+
+/* Global section subtle green accents (calm tonal depth, reduced borders) */
+.x1-app[data-section="global"] .x53-globe-head h2,
+.x1-app[data-section="global"] .x51-drawer-item.is-active,
+.x1-app[data-section="global"] .x53-globe-pill.is-active,
+.x1-app[data-section="global"] .x53-globe-pill:hover,
+.x1-app[data-section="global"] .ss-v3-welcome-head h2 {
+  color: #42cf91;
+  border-color: rgba(66, 207, 145, 0.36);
+}
+
+.x1-app[data-section="global"] .ss-v3-icon-badge {
+  background: rgba(66, 207, 145, 0.12);
+  border-color: rgba(66, 207, 145, 0.32);
+  color: #42cf91;
+}
+
+.x1-app[data-section="global"] .ss-v3-market-grid-8 .ss-v3-mcard:hover,
+.x1-app[data-section="global"] .ss-v3-market-grid-8 .ss-v3-mcard:focus-visible,
+.x1-app[data-section="global"] .ss-v3-pw-card-featured {
+  border-color: rgba(66, 207, 145, 0.34);
+}
+
+/* Community section soft lavender accents — ZERO blue accent leakage */
+.x1-app[data-section="community"] .ss-v3-comm-tab.is-active,
+.x1-app[data-section="community"] .ss-v3-comm-tab:hover,
+.x1-app[data-section="community"] .x51-chip.is-active,
+.x1-app[data-section="community"] .x51-pill-blue,
+.x1-app[data-section="community"] .x51-drawer-item.is-active {
+  color: #c4b5fd;
+  border-color: rgba(196, 181, 253, 0.42);
+  background: rgba(196, 181, 253, 0.14);
+}
+
+.x1-app[data-section="community"] .ss-v3-comm-badge,
+.x1-app[data-section="community"] .x51-bell-badge {
+  background: #c4b5fd;
+  color: #0b0a10;
+}
+
+.x1-app[data-section="community"] .x54-btn-primary,
+.x1-app[data-section="community"] .x1-primary {
+  background: rgba(196, 181, 253, 0.18);
+  border-color: rgba(196, 181, 253, 0.5);
+  color: #f5f3ff;
+}
+
+.x1-app[data-section="community"] .x54-btn-primary:hover:not(:disabled),
+.x1-app[data-section="community"] .x1-primary:hover:not(:disabled) {
+  background: rgba(196, 181, 253, 0.28);
+}
+
+.x1-app[data-section="community"] .x51-soul-card:hover,
+.x1-app[data-section="community"] .ss-v3-post-stat-btn.is-saved,
+.x1-app[data-section="community"] .ss-v3-post-stat-btn.is-liked {
+  border-color: rgba(196, 181, 253, 0.42);
+  color: #c4b5fd;
+}
+
+.x1-app[data-section="community"] .x1-text-button,
+.x1-app[data-section="community"] a:not(.x1-secondary):not(.x1-primary) {
+  color: #d8ccfe;
+}
+
+/* Calm, Border-Light Grouped Settings (X3-058–077) */
+.ss-x3-settings-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.ss-x3-settings-group-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ss-x3-settings-group-label {
+  margin: 0;
+  padding: 0 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--x1-text-muted);
+}
+
+.ss-x3-settings-group {
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: #101318;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.ss-x3-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 54px;
+  padding: 12px 14px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: var(--x1-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.ss-x3-settings-row:last-child {
+  border-bottom: 0;
+}
+
+.ss-x3-settings-row:hover,
+.ss-x3-settings-row:focus-visible {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ss-x3-settings-row.is-active {
+  background: var(--ss-section-accent-soft, rgba(118, 192, 255, 0.12));
+  box-shadow: inset 3px 0 0 var(--ss-section-accent, var(--x1-title-blue));
+}
+
+.ss-x3-settings-row.is-danger strong,
+.ss-x3-settings-row.is-danger .ss-v3-settings-row-icon {
+  color: #ef666a;
+}
+
+.ss-x3-settings-pane {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: #0e1116;
+}
+
+.ss-x3-settings-pane .x6-setting-row {
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 0;
+}
+
+/* Strategy X 3.0 — 2 Sources, 5 Timeframes, Compact SOUL MEMORY Strip */
+.ss-x3-source-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ss-x3-tf-grid-5 {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 480px) {
+  .ss-x3-tf-grid-5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 5px;
+  }
+
+  .ss-x3-tf-grid-5 .ss-v3-seg-btn {
+    padding: 8px 4px;
+    font-size: 0.82rem;
+  }
+}
+
+.ss-x3-soul-memory-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: rgba(118, 192, 255, 0.06);
+  border: 1px solid rgba(118, 192, 255, 0.22);
+}
+
+.ss-x3-soul-memory-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ss-x3-soul-memory-meta strong {
+  font-size: 0.84rem;
+  color: var(--x1-text-primary);
+}
+
+.ss-x3-soul-memory-meta span {
+  font-size: 0.76rem;
+  color: var(--x1-text-muted);
+}
+
+/* Legal Footer — Refined Smaller Typography (X3-095) while preserving contrast & touch targets */
+.x1-footer {
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.x1-footer > span {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+
+.x1-footer > p {
+  font-size: 0.75rem;
+}
+
+.x1-footer > div {
+  gap: 6px 14px;
+}
+
+.x1-footer > div a,
+.x1-footer > div button {
+  font-size: 0.76rem;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
 }

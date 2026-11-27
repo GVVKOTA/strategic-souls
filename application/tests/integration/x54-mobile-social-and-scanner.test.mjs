@@ -670,7 +670,13 @@ test("X5.4 UI source invariants: dashboard copy removed, Soul name blank, no sea
   assert.doesNotMatch(bubbleSrc, /Sent to server/);
   assert.match(bubbleSrc, /Message retracted/);
 
-  const settingsSrc = readFileSync("frontend/features/account/settings-view.tsx", "utf8");
+  const settingsSrc = [
+    "frontend/features/account/settings-view.tsx",
+    "frontend/features/account/settings/settings-profile-section.tsx",
+    "frontend/features/account/settings/settings-privacy-section.tsx",
+  ]
+    .map((p) => readFileSync(p, "utf8"))
+    .join("\n");
   assert.match(settingsSrc, /x54-optional-grid/);
   assert.match(settingsSrc, /x56-banner-grid/);
   assert.match(settingsSrc, /legacyPrivateProfile/);

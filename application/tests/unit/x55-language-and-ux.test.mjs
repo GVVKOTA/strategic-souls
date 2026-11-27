@@ -12,7 +12,10 @@ function stripComments(src) {
 }
 
 test("X5.5 P2: GRAVEYARD heading is strictly standalone with zero subtitle or descriptor", () => {
-  const strat = readFileSync("frontend/features/strategy/workspace.tsx", "utf8");
+  const strat =
+    readFileSync("frontend/features/strategy/workspace.tsx", "utf8") +
+    "\n" +
+    readFileSync("frontend/features/strategy/graveyard-panel.tsx", "utf8");
   const wrapMatch = strat.match(
     /<div className="x53-graveyard-title-wrap">([\s\S]*?)<\/div>/,
   );
@@ -74,7 +77,10 @@ test("X5.5 P2: canonical brand vocabulary applied and internal jargon removed fr
   assert.match(profileSheet, />Share profile</);
   assert.match(profileSheet, />Try this formula</);
 
-  const strat = readFileSync("frontend/features/strategy/workspace.tsx", "utf8");
+  const strat =
+    readFileSync("frontend/features/strategy/workspace.tsx", "utf8") +
+    "\n" +
+    readFileSync("frontend/features/strategy/graveyard-panel.tsx", "utf8");
   assert.match(strat, /Publish Soul/);
   assert.match(strat, /GRAVEYARD/);
   assert.match(strat, /Run Scan/);

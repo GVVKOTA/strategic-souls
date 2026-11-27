@@ -10,7 +10,6 @@ import {
   MoveDown,
   RefreshCw,
   Image as ImageIcon,
-  SlidersHorizontal,
   Star,
   Info,
   Bell,
@@ -134,8 +133,6 @@ type Props = {
   onNavigate?: (view: "Global" | "Strategy" | "Community") => void;
   earthQuality?: "auto" | "balanced" | "reduced";
   portfolioBackdrop?: PortfolioBackdropSettings;
-  privateTickerEnabled?: boolean;
-  privateTickerMode?: "HOLDINGS" | "WATCHLIST";
   onProfileSynced?: (profile: UserProfileSnapshot) => void;
   selectedAlert?: string;
   selectedEvent?: string;
@@ -272,8 +269,6 @@ export default function Global({
   onNavigate,
   earthQuality = "auto",
   portfolioBackdrop,
-  privateTickerEnabled = false,
-  privateTickerMode = "HOLDINGS",
   onProfileSynced,
   selectedAlert,
   selectedEvent,
@@ -346,37 +341,6 @@ export default function Global({
       notify("Portfolio banner saved.");
     } catch (err) {
       notify(err instanceof Error ? err.message : "Could not save backdrop.", true);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function toggleTickerSetting(
-    nextEnabled: boolean,
-    nextMode: "HOLDINGS" | "WATCHLIST" = privateTickerMode,
-  ) {
-    if (!authenticated) {
-      onRequireAuth?.();
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await api<{ ok: boolean; profile: UserProfileSnapshot }>(
-        "/api/profile",
-        {
-          action: "update-preferences",
-          privateTickerEnabled: nextEnabled,
-          privateTickerMode: nextMode,
-        },
-      );
-      onProfileSynced?.(res.profile);
-      notify(
-        nextEnabled
-          ? `Private ${nextMode === "HOLDINGS" ? "Holdings" : "Watchlist"} ticker enabled across your dashboards.`
-          : "Private ticker hidden.",
-      );
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "Could not update ticker preference.", true);
     } finally {
       setBusy(false);
     }
@@ -1260,22 +1224,6 @@ export default function Global({
                       >
                         <ImageIcon size={14} aria-hidden="true" />
                         <span>Change Banner</span>
-                      </button>
-                      <button
-                        type="button"
-                        className="x1-secondary"
-                        style={{ minHeight: 40, fontSize: "0.84rem" }}
-                        disabled={busy}
-                        onClick={() =>
-                          void toggleTickerSetting(!privateTickerEnabled)
-                        }
-                      >
-                        <SlidersHorizontal size={14} aria-hidden="true" />
-                        <span>
-                          {privateTickerEnabled
-                            ? "Hide Private Ticker"
-                            : "Show Private Ticker"}
-                        </span>
                       </button>
                       <button
                         className="x1-secondary x1-motion-button"

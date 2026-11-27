@@ -281,7 +281,10 @@ test("X5.3 Data fidelity: no synthetic T16:00:00Z on date-only quotes; Marketaux
 
 // ── 6. Strategy Compact Results, Bold GRAVEYARD & Redesigned Calendar Contracts
 test("X5.3 UI contracts: Strategy matches collapsed by default, bold GRAVEYARD, Evidence charts, Calendar clean", () => {
-  const stratSrc = readFileSync("frontend/features/strategy/workspace.tsx", "utf8");
+  const stratSrc =
+    readFileSync("frontend/features/strategy/workspace.tsx", "utf8") +
+    "\n" +
+    readFileSync("frontend/features/strategy/graveyard-panel.tsx", "utf8");
   assert.doesNotMatch(
     stratSrc,
     /<details key=\{r\.instrumentId\} open>/,

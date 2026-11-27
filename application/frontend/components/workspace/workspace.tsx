@@ -15,7 +15,6 @@ import {
   X,
   Info,
   ArrowRight,
-  FolderArchive,
   UserRound,
   MoreVertical,
   Bell,
@@ -26,9 +25,6 @@ import { notificationLabel } from "../../../backend/services/community/notificat
 import type { ScanUniversePreset } from "../../../backend/services/research/research";
 import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import type {
-  DensityPreference,
-  EarthQualityPreference,
-  MotionPreference,
   UserProfileSnapshot,
 } from "../../../backend/services/profile/profile";
 import Global, { AssetDialog } from "../../features/global/dashboard";
@@ -38,6 +34,7 @@ const CommunityNetwork = lazy(
   () => import("../../features/community/research-network-shell"),
 );
 const SettingsView = lazy(() => import("../../features/account/settings-view"));
+const OwnerDataControl = lazy(() => import("../../features/global/data-control"));
 import AvatarBadge from "../../features/account/avatar-badge";
 import AccountQuickPanel, {
   type SettingsSection,
@@ -46,7 +43,6 @@ import EclipseIntro from "./eclipse-intro";
 import GoFeedbackHost from "./go-feedback";
 import { IconCommunity, IconGlobal, IconStrategy } from "./ss-icons";
 import UniversalSearch from "./universal-search";
-import PrivateHoldingsTicker from "./private-ticker";
 import AuthPanel, {
   type AuthSessionResponse,
 } from "../../features/auth/auth-panel";
@@ -130,10 +126,8 @@ export default function X1Workspace() {
     [busy, setBusy] = useState(false),
     [sessionError, setSessionError] = useState(""),
     [isOwner, setIsOwner] = useState(false),
-    [refreshing, setRefreshing] = useState(false),
-    [motionPref, setMotionPref] = useState<MotionPreference>("system"),
-    [densityPref, setDensityPref] = useState<DensityPreference>("comfortable"),
-    [earthQuality, setEarthQuality] = useState<EarthQualityPreference>("auto");
+    [ownerDataOpen, setOwnerDataOpen] = useState(false),
+    [refreshing, setRefreshing] = useState(false);
 
   const avatarTriggerRef = useRef<HTMLButtonElement>(null);
   const drawerTriggerRef = useRef<HTMLButtonElement>(null);
@@ -216,28 +210,16 @@ export default function X1Workspace() {
   }, [sectionDrawerOpen]);
 
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem("ss-motion-pref");
-      if (stored === "minimal" || stored === "full") {
-        queueMicrotask(() => setMotionPref(stored));
-      }
-      const storedDensity = window.localStorage.getItem("ss-density-pref");
-      if (storedDensity === "compact") {
-        queueMicrotask(() => setDensityPref("compact"));
-      }
-    } catch {
-      /* Storage is optional. */
-    }
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    const isSecure =
+      window.location.protocol === "https:" ||
+      window.location.hostname === "localhost" ||
+      window.location.hostname === "127.0.0.1";
+    if (!isSecure) return;
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* PWA service worker registration is non-blocking. */
+    });
   }, []);
-
-  const updateMotionPref = (next: MotionPreference) => {
-    setMotionPref(next);
-    try {
-      window.localStorage.setItem("ss-motion-pref", next);
-    } catch {
-      /* Storage is optional. */
-    }
-  };
 
   const refreshLock = useRef(false);
   const sessionGeneration = useRef(0);
@@ -327,12 +309,6 @@ export default function X1Workspace() {
       setMarketUnavailable(false);
       setWorkspace(null);
       setData(null);
-
-      if (session.user?.preferences) {
-        setMotionPref(session.user.preferences.motion);
-        setDensityPref(session.user.preferences.density);
-        setEarthQuality(session.user.preferences.earthQuality);
-      }
 
       const canLoadPrivate = session.authenticated && session.accepted;
       if (canLoadPrivate) {
@@ -525,6 +501,15 @@ export default function X1Workspace() {
       setAuthModal("signin");
       return;
     }
+    if (section === "data") {
+      if (isOwner) {
+        setOwnerDataOpen(true);
+        return;
+      }
+      section = "profile";
+    }
+    if (section === "appearance") section = "profile";
+    if (section === "account") section = "privacy";
     settingsReturnFocus.current = helpMenuOpen
       ? helpTrigger.current
       : document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -536,7 +521,7 @@ export default function X1Workspace() {
     window.history.pushState({ workspaceSettings: true }, "", url);
     settingsLocationOpen.current = true;
     setSettingsOpen(true);
-  }, [helpMenuOpen]);
+  }, [helpMenuOpen, isOwner]);
 
   const closeSettings = useCallback((skipHistoryBack = false) => {
     if (!skipHistoryBack && window.history.state?.workspaceSettings) {
@@ -576,16 +561,7 @@ export default function X1Workspace() {
           }
         : prev,
     );
-    setMotionPref(profile.preferences.motion);
-    setDensityPref(profile.preferences.density);
-    setEarthQuality(profile.preferences.earthQuality);
     setProfileRevision((r) => r + 1);
-    try {
-      window.localStorage.setItem("ss-motion-pref", profile.preferences.motion);
-      window.localStorage.setItem("ss-density-pref", profile.preferences.density);
-    } catch {
-      /* Storage is optional. */
-    }
   }, []);
 
   const loadNotices = useCallback(async () => {
@@ -630,23 +606,6 @@ export default function X1Workspace() {
       } else notify("The notification target is no longer available.", true);
     } catch (err) { notify((err as Error).message, true); }
     finally { setNoticeBusy(false); }
-  }
-
-  async function hidePrivateTicker() {
-    if (!isSignedIn) return;
-    try {
-      const res = await api<{ ok: boolean; profile: UserProfileSnapshot }>(
-        "/api/profile",
-        {
-          action: "update-preferences",
-          privateTickerEnabled: false,
-        },
-      );
-      handleProfileSynced(res.profile);
-      notify("Private ticker hidden.");
-    } catch (err) {
-      notify(err instanceof Error ? err.message : "Could not hide ticker.", true);
-    }
   }
 
   const [watchlistToggleBusy, setWatchlistToggleBusy] = useState(false);
@@ -738,7 +697,11 @@ export default function X1Workspace() {
       setFollowRequests([]);
       setAccepted(null);
       setIsOwner(false);
+      setOwnerDataOpen(false);
       setWorkspace(null);
+      if (typeof navigator !== "undefined" && navigator.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: "CLEAR_USER_CACHES" });
+      }
       setData(null);
       setMarketUnavailable(false);
       setInitialProfileHandle(null);
@@ -792,8 +755,9 @@ export default function X1Workspace() {
   return (
     <div
       className={"x1-app" + (mobileChatActive ? " is-mobile-chat-active" : "")}
-      data-motion={motionPref === "minimal" ? "minimal" : "system"}
-      data-density={densityPref}
+      data-section={view.toLowerCase()}
+      data-motion="system"
+      data-density="comfortable"
     >
       {view === "Global" && globalView === "DASHBOARD" && <>
         <link rel="preload" as="image" type="image/webp" href="/eclipse-horizon-mobile.webp" media="(width < 768px)" fetchPriority="high" />
@@ -801,7 +765,7 @@ export default function X1Workspace() {
       </>}
       <EclipseIntro
         ready={
-          motionPref === "minimal" || !!sessionError || view !== "Global" || globalView !== "DASHBOARD" || !!authModal
+          !!sessionError || view !== "Global" || globalView !== "DASHBOARD" || !!authModal
         }
       />
       <a href="#x1-main" className="x1-skip">
@@ -839,11 +803,6 @@ export default function X1Workspace() {
           ))}
         </nav>
         <div className="x1-sidebar-foot">
-          <a href="/legacy" className="x1-archive-link">
-            <FolderArchive size={16} />
-            Existing saved research
-            <ArrowUpRight size={14} />
-          </a>
           <button className="x1-about-link" onClick={() => setAbout(true)}>
             About Strategic Souls
             <Info size={14} />
@@ -1029,8 +988,9 @@ export default function X1Workspace() {
                   {isSignedIn ? "All Settings" : "Sign in for settings"}
                 </button>
                 <button type="button" onClick={() => {
+                  setHelpMenuOpen(false);
                   if (isSignedIn) openSettings("about");
-                  else { setHelpMenuOpen(false); setContextHelpOpen("about"); }
+                  else setAbout(true);
                 }}>About</button>
               </div>
             )}
@@ -1085,9 +1045,7 @@ export default function X1Workspace() {
               genderSymbol={authUser?.genderSymbol}
               instagramHandle={authUser?.instagramHandle}
               counts={authUser?.counts}
-                    unreadNotifications={authUser?.unreadNotifications ?? 0}
-              motionPref={motionPref}
-              onMotionChange={updateMotionPref}
+              unreadNotifications={authUser?.unreadNotifications ?? 0}
               busy={busy}
               onOpenMyProfile={() => {
                 if (authUser?.handle) {
@@ -1101,6 +1059,7 @@ export default function X1Workspace() {
                 }
               }}
               onOpenSettings={openSettings}
+              onOpenOwnerData={() => setOwnerDataOpen(true)}
               onOpenSaved={() => {
                 setCommunityTab("web");
                 setCommunitySavedOnly(true);
@@ -1115,15 +1074,6 @@ export default function X1Workspace() {
           </div>
         </header>
 
-        {/* Opt-In Private Holdings / Watchlist Ticker (OFF by default; owner-only across all 3 dashboards) */}
-        <PrivateHoldingsTicker
-          enabled={!!authUser?.preferences?.privateTickerEnabled}
-          mode={authUser?.preferences?.privateTickerMode ?? "HOLDINGS"}
-          authenticated={isSignedIn && accepted === true}
-          workspace={workspace}
-          onOpenAsset={setAsset}
-          onHide={() => void hidePrivateTicker()}
-        />
         <main id="x1-main" tabIndex={-1} className="x1-main">
           {marketUnavailable && view === "Global" && globalView !== "DASHBOARD" && (
             <div className="x1-callout" role="status">
@@ -1241,10 +1191,8 @@ export default function X1Workspace() {
                   intelligenceSubView={intelligenceSubView}
                   onIntelligenceSubViewChange={(sub) => selectGlobalView("INTELLIGENCE", sub)}
                   onNavigate={navigate}
-                  earthQuality={earthQuality}
+                  earthQuality="auto"
                   portfolioBackdrop={authUser?.portfolioBackdrop}
-                  privateTickerEnabled={!!authUser?.preferences?.privateTickerEnabled}
-                  privateTickerMode={authUser?.preferences?.privateTickerMode ?? "HOLDINGS"}
                   onProfileSynced={handleProfileSynced}
                   selectedAlert={selectedAlert}
                   selectedEvent={deepLink.event}
@@ -1582,14 +1530,16 @@ export default function X1Workspace() {
         </Modal>
       )}
 
-      {/* Contextual Help & Guide */}
-      {contextHelpOpen === "about" && (
-        <Modal title="About Strategic Souls" onClose={() => setContextHelpOpen(false)}>
-          <p>{APP_RELEASE.versionLabel} by {APP_RELEASE.organization}</p>
-          <p>Read-only market research, strategy testing and community discussion.</p>
-          <a href={`mailto:${APP_RELEASE.supportEmail}`}>{APP_RELEASE.supportEmail}</a>
+      {/* Owner-only Data Connections workspace drawer/modal (kept separate from ordinary Settings) */}
+      {isOwner && ownerDataOpen && (
+        <Modal title="Owner Data Connections" className="x11-settings-sheet" onClose={() => setOwnerDataOpen(false)}>
+          <Suspense fallback={<WorkspaceSkeleton label="Loading data connections…" kind="panel" />}>
+            <OwnerDataControl notify={notify} />
+          </Suspense>
         </Modal>
       )}
+
+      {/* Contextual Help & Guide */}
       {contextHelpOpen === true && (
         <Modal
           title={
@@ -1651,7 +1601,7 @@ export default function X1Workspace() {
                 <dt>8-Tile Markets Grid</dt>
                 <dd>
                   Displays the 8 core instruments (NIFTY 50, SENSEX, BANK NIFTY,
-                  Nifty Midcap Select, GOLD, SILVER MCX, CL Jan 2027, and USD/INR) in a balanced
+                  Nifty Midcap Select, GOLD, SILVER MCX, Crude Oil (WTI), and USD/INR) in a balanced
                   2×4 desktop and 2-column mobile grid. Tap Reorder to arrange
                   your view.
                 </dd>
@@ -1745,23 +1695,8 @@ export default function X1Workspace() {
             Payments, commercial brokerage execution, automated trade routing,
             and unverified forward probability claims remain disabled.
           </p>
-          <div className="x3-motion-pref">
-            <span>Interface motion</span>
-            <div className="x1-segment" role="group" aria-label="Interface motion preference">
-              {(["system", "minimal"] as const).map((pref) => (
-                <button
-                  key={pref}
-                  type="button"
-                  aria-pressed={motionPref === pref}
-                  onClick={() => updateMotionPref(pref)}
-                >
-                  {pref === "system" ? "System (default)" : "Minimal"}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="x1-actions">
-            {isSignedIn && (
+          {isSignedIn && (
+            <div className="x1-actions">
               <a
                 className="x1-secondary x1-motion-button"
                 href="/api/export"
@@ -1771,12 +1706,8 @@ export default function X1Workspace() {
                 Export my private data
                 <ArrowUpRight size={15} />
               </a>
-            )}
-            <a className="x1-text-button" href="/legacy">
-              Existing research archive
-              <ArrowUpRight size={15} />
-            </a>
-          </div>
+            </div>
+          )}
         </Modal>
       )}
     </div>

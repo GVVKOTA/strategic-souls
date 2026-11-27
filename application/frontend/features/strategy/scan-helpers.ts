@@ -251,7 +251,7 @@ export function formatScanBarTimestamp(
   interval?: string,
 ): string {
   if (!iso) return "";
-  if (interval === "30m" || interval === "1h") {
+  if (interval === "30m" || interval === "1h" || interval === "3h" || interval === "6h") {
     return formatIstMoment(iso);
   }
   const ms = Date.parse(iso);
