@@ -256,6 +256,30 @@ export default function Community({
     };
   }, [initialTab, tabNonce]);
 
+  // Sync notification deep-link room & anchor even when staying mounted on Rooms tab
+  useEffect(() => {
+    if (!initialRoom) return;
+    let alive = true;
+    queueMicrotask(() => {
+      if (!alive) return;
+      setTab("rooms");
+      setGroupId(initialRoom);
+      if (initialAnchor) setRoomSection("discussion");
+    });
+    return () => {
+      alive = false;
+    };
+  }, [initialRoom, initialAnchor]);
+
+  useEffect(() => {
+    if (!initialAnchor || loading || !data) return;
+    const el =
+      document.getElementById("ss-room-msg-" + initialAnchor) ??
+      document.getElementById("ss-post-" + initialAnchor) ??
+      document.getElementById("ss-comment-" + initialAnchor);
+    el?.scrollIntoView({ block: "center" });
+  }, [initialAnchor, loading, data, roomSection]);
+
   // URL params and omnibar search event
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

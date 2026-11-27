@@ -22,6 +22,7 @@ import {
   Search,
 } from "lucide-react";
 import { APP_RELEASE } from "../../../backend/services/release-meta";
+import { notificationLabel } from "../../../backend/services/community/notification-target";
 import type { ScanUniversePreset } from "../../../backend/services/research/research";
 import type { MarketSnapshot } from "../../../backend/services/market-data/market-data";
 import type {
@@ -142,6 +143,26 @@ export default function X1Workspace() {
   const settingsReturnFocus = useRef<HTMLElement | null>(null);
   const helpAnchor = useRef<HTMLDivElement>(null);
   const helpTrigger = useRef<HTMLButtonElement>(null);
+  const bellAnchor = useRef<HTMLDivElement>(null);
+  const bellTrigger = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!bellOpen) return;
+    function dismiss(event: PointerEvent) {
+      if (!bellAnchor.current?.contains(event.target as Node)) setBellOpen(false);
+    }
+    function escape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setBellOpen(false);
+      bellTrigger.current?.focus();
+    }
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [bellOpen]);
 
   useEffect(() => {
     if (!helpMenuOpen) return;
@@ -485,6 +506,7 @@ export default function X1Workspace() {
     if (next !== "Community") {
       setCommunitySavedOnly(false);
       setInitialProfileHandle(null);
+      setCommunitySearch("");
     }
     if (view !== next) setDeepLink({ thread: "", room: "", post: "", anchor: "", scan: "", event: "" });
     setView(next);
@@ -516,8 +538,8 @@ export default function X1Workspace() {
     setSettingsOpen(true);
   }, [helpMenuOpen]);
 
-  const closeSettings = useCallback(() => {
-    if (window.history.state?.workspaceSettings) {
+  const closeSettings = useCallback((skipHistoryBack = false) => {
+    if (!skipHistoryBack && window.history.state?.workspaceSettings) {
       window.history.back();
       return;
     }
@@ -527,7 +549,7 @@ export default function X1Workspace() {
       url.searchParams.delete("section");
     }
     url.searchParams.delete("settings");
-    window.history.replaceState(window.history.state, "", url);
+    window.history.replaceState(null, "", url);
     settingsLocationOpen.current = false;
     setSettingsOpen(false);
   }, []);
@@ -898,91 +920,94 @@ export default function X1Workspace() {
             </>
           )}
 
-          {/* COMMUNITY HEADER: Body ID (@handle) Search + Notification Bell (with Follow Requests) + Avatar */}
+          {/* COMMUNITY HEADER: Body ID (@handle) Search */}
           {view === "Community" && (
-            <>
-              <div className="x51-topbar-search-wrap">
-                <label className="x51-body-search">
-                  <Search size={16} aria-hidden="true" />
-                  <input
-                    id="ss-v31-community-search"
-                    name="communitySearch"
-                    type="search"
-                    aria-label="Search Body ID or Souls"
-                    value={communitySearch}
-                    onChange={(e) => setCommunitySearch(e.target.value)}
-                    placeholder="Search Body ID or Soul…"
-                  />
-                </label>
-              </div>
-              <div className="x51-topbar-right">
-                <div className="x51-bell-wrap">
-                  <button
-                    type="button"
-                    className="x51-bell-btn"
+            <div className="x51-topbar-search-wrap">
+              <label className="x51-body-search">
+                <Search size={16} aria-hidden="true" />
+                <input
+                  id="ss-v31-community-search"
+                  name="communitySearch"
+                  type="search"
+                  aria-label="Search Body ID or Souls"
+                  value={communitySearch}
+                  onChange={(e) => setCommunitySearch(e.target.value)}
+                  placeholder="Search Body ID or Soul…"
+                />
+              </label>
+            </div>
+          )}
+
+          {/* WORKSPACE-WIDE NOTIFICATION BELL (Global, Strategy & Community) */}
+          {(isSignedIn || view === "Community") && (
+            <div className="x51-topbar-right">
+              <div className="x51-bell-wrap" ref={bellAnchor}>
+                <button
+                  ref={bellTrigger}
+                  type="button"
+                  className="x51-bell-btn"
+                  aria-label="Notifications"
+                  aria-expanded={bellOpen}
+                  onClick={() => {
+                    const next = !bellOpen;
+                    setBellOpen(next);
+                    if (next) void loadNotices();
+                  }}
+                >
+                  <Bell size={18} />
+                  {(authUser?.unreadNotifications ?? 0) > 0 && (
+                    <span className="x51-bell-badge">
+                      {authUser?.unreadNotifications ?? 0}
+                    </span>
+                  )}
+                </button>
+                {bellOpen && (
+                  <div
+                    className="x51-bell-dropdown"
+                    role="dialog"
                     aria-label="Notifications"
-                    aria-expanded={bellOpen}
-                    onClick={() => {
-                      const next = !bellOpen;
-                      setBellOpen(next);
-                      if (next) void loadNotices();
-                    }}
                   >
-                    <Bell size={18} />
-                    {(authUser?.unreadNotifications ?? 0) > 0 && (
-                      <span className="x51-bell-badge">
-                        {authUser?.unreadNotifications ?? 0}
-                      </span>
-                    )}
-                  </button>
-                  {bellOpen && (
                     <div
-                      className="x51-bell-dropdown"
-                      role="dialog"
-                      aria-label="Notifications"
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}
                     >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
+                      <strong>Notifications</strong>
+                      <button
+                        type="button"
+                        className="x1-text-button"
+                        onClick={() => {
+                          setBellOpen(false);
+                          openSettings("notifications");
                         }}
                       >
-                        <strong>Notifications</strong>
-                        <button
-                          type="button"
-                          className="x1-text-button"
-                          onClick={() => {
-                            setBellOpen(false);
-                            openSettings("notifications");
-                          }}
-                        >
-                          All settings
-                        </button>
-                      </div>
-                      {isSignedIn && followRequests.length > 0 && <div className="x1-global-menu-group">
-                        <h3>Follow requests</h3>
-                        {followRequests.map(({ handle, displayName }) => <div className="x1-actions" key={handle}>
-                          <span>{displayName} @{handle}</span>
-                          <button type="button" disabled={noticeBusy} className="x1-text-button"
-                            onClick={() => void respondFollowRequest(handle, "APPROVE")}>Approve</button>
-                          <button type="button" disabled={noticeBusy} className="x1-text-button"
-                            onClick={() => void respondFollowRequest(handle, "DECLINE")}>Decline</button>
-                        </div>)}
-                      </div>}
-                      {noticeStatus ? <p role="status">{noticeStatus}</p> : isSignedIn ? (
-                        notices.length ? <div className="x1-global-menu-group">
-                          {notices.map((item) => <button type="button" className={"x51-drawer-item" + (item.readAt ? "" : " is-active")}
-                            key={item.id} disabled={noticeBusy} onClick={() => void openNotification(item.id)}>
-                            {item.kind.replaceAll("_", " ").toLowerCase()} <ArrowRight size={14} aria-hidden="true" />
-                          </button>)}
-                        </div> : <p>No notifications.</p>
-                      ) : <p>Sign in to view notifications.</p>}
+                        All settings
+                      </button>
                     </div>
-                  )}
-                </div>
+                    {isSignedIn && followRequests.length > 0 && <div className="x1-global-menu-group">
+                      <h3>Follow requests</h3>
+                      {followRequests.map(({ handle, displayName }) => <div className="x1-actions" key={handle}>
+                        <span>{displayName} @{handle}</span>
+                        <button type="button" disabled={noticeBusy} className="x1-text-button"
+                          onClick={() => void respondFollowRequest(handle, "APPROVE")}>Approve</button>
+                        <button type="button" disabled={noticeBusy} className="x1-text-button"
+                          onClick={() => void respondFollowRequest(handle, "DECLINE")}>Decline</button>
+                      </div>)}
+                    </div>}
+                    {noticeStatus ? <p role="status">{noticeStatus}</p> : isSignedIn ? (
+                      notices.length ? <div className="x1-global-menu-group">
+                        {notices.map((item) => <button type="button" className={"x51-drawer-item" + (item.readAt ? "" : " is-active")}
+                          key={item.id} disabled={noticeBusy} onClick={() => void openNotification(item.id)}>
+                          <span>{notificationLabel(item.kind)}</span> <ArrowRight size={14} aria-hidden="true" />
+                        </button>)}
+                      </div> : <p>No notifications.</p>
+                    ) : <p>Sign in to view notifications.</p>}
+                  </div>
+                )}
               </div>
-            </>
+            </div>
           )}
 
           <div className="x11-help-anchor" ref={helpAnchor}>
@@ -1295,6 +1320,7 @@ export default function X1Workspace() {
                     setStrategyPanel("scan");
                     navigate("Strategy", "scan");
                   }}
+                  onClearSearch={() => setCommunitySearch("")}
                   onMobileChatActive={setMobileChatActive}
                   onSelectTab={setCommunityTab}
                 />
@@ -1530,7 +1556,7 @@ export default function X1Workspace() {
       )}
 
       {settingsOpen && authenticated !== null && (
-        <Modal title="All Settings" className="x11-settings-sheet" onClose={closeSettings}>
+        <Modal title="All Settings" className="x11-settings-sheet" onClose={() => closeSettings(false)}>
           {isSignedIn ? (
             <Suspense fallback={<WorkspaceSkeleton label="Opening settings…" kind="panel" />}>
               <SettingsView
@@ -1540,15 +1566,15 @@ export default function X1Workspace() {
                 notify={notify}
                 onProfileSynced={handleProfileSynced}
                 onSignOut={() => void handleSignOut()}
-                onOpenNotification={(id) => { closeSettings(); void openNotification(id); }}
-                onOpenPriceAlerts={() => { if (navigate("Global")) selectGlobalView("PRICE_ALERTS"); }}
+                onOpenNotification={(id) => { closeSettings(true); void openNotification(id); }}
+                onOpenPriceAlerts={() => { closeSettings(true); if (navigate("Global")) selectGlobalView("PRICE_ALERTS"); }}
               />
             </Suspense>
           ) : (
             <div className="x1-panel">
               <p>Sign in to manage your profile, privacy and preferences.</p>
               <button type="button" className="x1-primary" onClick={() => {
-                closeSettings();
+                closeSettings(false);
                 setAuthModal("signin");
               }}>Sign in</button>
             </div>

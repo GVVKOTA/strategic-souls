@@ -860,12 +860,16 @@ export default function Strategy({
     try {
       const targetList = activeWatchlist ?? watchlists[0] ?? null;
       if (!targetList) {
-        await api("/api/x1/workspace", {
-          action: "create-record",
-          kind: "watchlist",
+        const created = await api<{ id: string }>("/api/x1/workspace", {
+          action: "create-list",
           name: "Primary Watchlist",
-          items: [instrumentId],
           requestId: crypto.randomUUID(),
+        });
+        await api("/api/x1/workspace", {
+          action: "list-items",
+          id: created.id,
+          version: 1,
+          items: [instrumentId],
         });
       } else {
         const existing = targetList.payload.items ?? [];
@@ -893,25 +897,45 @@ export default function Strategy({
     }
   }
 
-  async function publishScanToCommunity(scan: ScanRun) {
+  const publishKeyRef = useRef<Map<string, string>>(new Map());
+
+  async function publishScanToCommunity(
+    scan: ScanRun,
+    audience: "PUBLIC" | "FOLLOWERS" = "PUBLIC",
+  ) {
     if (!authenticated) {
       onRequireAuth?.();
       return;
     }
     if (publishingId) return;
     setPublishingId(scan.id);
+    const cacheKey = `${scan.id}:${audience}`;
+    const existingKey = publishKeyRef.current.get(cacheKey);
+    const idempotencyKey =
+      existingKey ??
+      `pub_${scan.id.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 28)}_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    publishKeyRef.current.set(cacheKey, idempotencyKey);
     try {
-      await api("/api/community/network", {
-        action: "publish-soul",
-        scanId: scan.id,
-        title: scan.name,
-        audience: "PUBLIC",
-      });
+      const res = await api<{ postId?: string; replayed?: boolean }>(
+        "/api/community/network",
+        {
+          action: "publish-soul",
+          scanId: scan.id,
+          title: scan.name,
+          audience,
+          idempotencyKey,
+        },
+      );
+      publishKeyRef.current.delete(cacheKey);
       triggerGoFeedback(
-        "Soul published",
+        res.replayed ? "Soul already published" : "Soul published",
         `publish-${scan.id}-${crypto.randomUUID()}`,
       );
-      notify("Soul published to Community.");
+      notify(
+        res.replayed
+          ? "Soul was already published to Community."
+          : "Soul published to Community.",
+      );
       onOpenCommunityWeb?.();
     } catch (err) {
       notify(

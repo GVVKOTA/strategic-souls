@@ -445,7 +445,7 @@ export function buildShareSafeSoulSummary(
       ? `Empirical Twins (n=${genome.futurePaths.sampleSize})`
       : "Current Filter · Uncalibrated";
 
-  const timeframe = String(research.interval ?? "1d");
+  const timeframe = String(research.interval ?? payload.interval ?? "1d");
   const universeLabel = isPrivateCsv
     ? "User-Supplied Private CSV (raw rows redacted)"
     : String(research.universe ?? "ECB_DAILY") === "ECB_DAILY"
@@ -739,6 +739,21 @@ export async function publishSoulFromScan(
   return { postId: saved.id, replayed: false, audience: saved.audience };
 }
 
+function escapeLikePattern(raw: string): string {
+  return raw.replace(/[\\%_]/g, (ch) => "\\" + ch);
+}
+
+function parseFeedCursor(raw?: string): { createdAt: string; id: string } | null {
+  if (!raw || typeof raw !== "string") return null;
+  const idx = raw.lastIndexOf("|");
+  if (idx <= 0) return null;
+  const createdAt = raw.slice(0, idx).trim();
+  const postId = raw.slice(idx + 1).trim();
+  if (!createdAt || !Number.isFinite(Date.parse(createdAt))) return null;
+  if (!/^[A-Za-z0-9_-]{8,80}$/.test(postId)) return null;
+  return { createdAt, id: postId };
+}
+
 export async function listWebSouls(
   viewerSubject: string | null,
   options: {
@@ -750,22 +765,28 @@ export async function listWebSouls(
     authorHandle?: string;
     postId?: string;
     savedOnly?: boolean;
+    cursor?: string;
+    before?: string;
+    limit?: number;
   } = {},
-): Promise<{ posts: PublishedSoulCard[] }> {
+): Promise<{ posts: PublishedSoulCard[]; nextCursor: string | null; hasMore: boolean }> {
   const db = database();
   const viewer = viewerSubject ?? "__guest__";
 
   const modeQ = (options.mode ?? "ALL").toUpperCase();
-  const tfQ = (options.timeframe ?? "ALL").toLowerCase();
+  const rawTfQ = (options.timeframe ?? "ALL").trim().toLowerCase();
+  const tfQ = rawTfQ === "24h" ? "1d" : rawTfQ;
   const symQ = (options.symbol ?? "").trim().toUpperCase();
   const searchQ = (options.search ?? "").trim().toLowerCase();
   const authorQ = (options.authorHandle ?? "").trim().replace(/^@/, "").toLowerCase();
+  const parsedCursor = parseFeedCursor(options.cursor ?? options.before);
+  const requestedLimit = Number(options.limit);
+  const pageSize =
+    Number.isFinite(requestedLimit) && requestedLimit >= 1
+      ? Math.min(50, Math.floor(requestedLimit))
+      : 25;
 
-  const whereAuthor = authorQ ? " AND lower(p.author_handle) = ?" : "";
-  const wherePost = options.postId ? " AND p.id = ?" : "";
-  const whereSaved = options.savedOnly
-    ? " AND EXISTS(SELECT 1 FROM x51_web_soul_saves sv WHERE sv.post_id = p.id AND sv.subject = ?)"
-    : "";
+  const extraClauses: string[] = [];
   const bindParams: unknown[] = [
     viewer,
     viewer,
@@ -776,9 +797,59 @@ export async function listWebSouls(
     viewer,
     viewer,
   ];
-  if (authorQ) bindParams.push(authorQ);
-  if (options.savedOnly) bindParams.push(viewer);
-  if (options.postId) bindParams.push(options.postId);
+  if (authorQ) {
+    extraClauses.push("AND lower(p.author_handle) = ?");
+    bindParams.push(authorQ);
+  }
+  if (options.savedOnly) {
+    extraClauses.push(
+      "AND EXISTS(SELECT 1 FROM x51_web_soul_saves sv WHERE sv.post_id = p.id AND sv.subject = ?)",
+    );
+    bindParams.push(viewer);
+  }
+  if (options.postId) {
+    extraClauses.push("AND p.id = ?");
+    bindParams.push(options.postId);
+  }
+  if (modeQ === "CLASSIC" || modeQ === "ADVANCED") {
+    extraClauses.push("AND upper(p.mode) = ?");
+    bindParams.push(modeQ);
+  }
+  if (tfQ && tfQ !== "all") {
+    extraClauses.push("AND lower(p.timeframe) = ?");
+    bindParams.push(tfQ);
+  }
+  if (options.sort === "following") {
+    extraClauses.push(
+      "AND (p.author_subject = ? OR EXISTS(SELECT 1 FROM x51_follows f2 WHERE f2.follower_subject = ? AND f2.target_subject = p.author_subject AND f2.state = 'ACTIVE'))",
+    );
+    bindParams.push(viewer, viewer);
+  }
+  if (searchQ) {
+    const pat = `%${escapeLikePattern(searchQ)}%`;
+    extraClauses.push(
+      "AND (lower(p.title) LIKE ? ESCAPE '\\' OR lower(p.summary) LIKE ? ESCAPE '\\' OR lower(p.formula) LIKE ? ESCAPE '\\' OR lower(p.author_handle) LIKE ? ESCAPE '\\' OR lower(p.matched_symbols_json) LIKE ? ESCAPE '\\')",
+    );
+    bindParams.push(pat, pat, pat, pat, pat);
+  }
+  if (symQ) {
+    const symShort = symQ.includes(":") ? symQ.split(":")[1] : symQ;
+    const symPat = `%${escapeLikePattern(symShort)}%`;
+    extraClauses.push(
+      "AND (upper(p.matched_symbols_json) LIKE ? ESCAPE '\\' OR upper(p.title) LIKE ? ESCAPE '\\')",
+    );
+    bindParams.push(symPat, symPat);
+  }
+  if (parsedCursor && options.sort !== "evidence") {
+    extraClauses.push(
+      "AND (p.created_at < ? OR (p.created_at = ? AND p.id < ?))",
+    );
+    bindParams.push(parsedCursor.createdAt, parsedCursor.createdAt, parsedCursor.id);
+  }
+
+  // Fetch pageSize + 1 (or a slightly larger window when strict symbol post-filtering is requested)
+  const sqlLimit = symQ ? Math.min(200, pageSize * 3 + 1) : pageSize + 1;
+  bindParams.push(sqlLimit);
 
   // Server-enforced visibility query:
   // PUBLIC visible to all non-blocked viewers;
@@ -811,9 +882,10 @@ export async function listWebSouls(
            SELECT 1 FROM x2_blocks z
            WHERE (z.subject = ? AND z.target = p.author_subject)
               OR (z.subject = p.author_subject AND z.target = ?)
-         )${whereAuthor}${whereSaved}${wherePost}
+         )
+         ${extraClauses.join("\n         ")}
        ORDER BY p.created_at DESC, p.id DESC
-       LIMIT 80`,
+       LIMIT ?`,
     )
     .bind(...bindParams)
     .all<
@@ -855,14 +927,9 @@ export async function listWebSouls(
 
   const metaCache = new Map<string, "MALE" | "FEMALE" | "HIDDEN">();
 
-  let items: (PublishedSoulCard & { _following: boolean })[] = [];
+  const items: (PublishedSoulCard & { _following: boolean })[] = [];
 
   for (const r of rows.results ?? []) {
-    if (options.savedOnly && !r.saved_by_me) continue;
-    if (modeQ !== "ALL" && r.mode.toUpperCase() !== modeQ) continue;
-    if (tfQ !== "all" && r.timeframe.toLowerCase() !== tfQ) continue;
-    if (authorQ && r.author_handle.toLowerCase() !== authorQ) continue;
-
     let matchedSymbols: string[] = [];
     try {
       const parsed = JSON.parse(r.matched_symbols_json);
@@ -878,11 +945,6 @@ export async function listWebSouls(
           (s) => s.toUpperCase() === symQ || s.toUpperCase().endsWith(":" + symShort),
         ) || r.title.toUpperCase().includes(symShort);
       if (!matchesSym) continue;
-    }
-
-    if (searchQ) {
-      const hay = `${r.title} ${r.summary} ${r.formula} ${r.author_handle} ${matchedSymbols.join(" ")}`.toLowerCase();
-      if (!hay.includes(searchQ)) continue;
     }
 
     let gs = metaCache.get(r.author_subject);
@@ -928,9 +990,7 @@ export async function listWebSouls(
     });
   }
 
-  if (options.sort === "following") {
-    items = items.filter((p) => p._following || p.isMine);
-  } else if (options.sort === "evidence") {
+  if (options.sort === "evidence") {
     items.sort(
       (a, b) =>
         (b.evidenceStatus.startsWith("Empirical") ? 1 : 0) -
@@ -940,12 +1000,22 @@ export async function listWebSouls(
     );
   }
 
+  const hasMore = items.length > pageSize;
+  const pageItems = hasMore ? items.slice(0, pageSize) : items;
+  const lastItem = pageItems[pageItems.length - 1] ?? null;
+  const nextCursor =
+    hasMore && lastItem && options.sort !== "evidence"
+      ? `${lastItem.createdAt}|${lastItem.id}`
+      : null;
+
   return {
-    posts: items.map((item) => {
+    posts: pageItems.map((item) => {
       const post = { ...item };
       delete (post as { _following?: boolean })._following;
       return post;
     }),
+    nextCursor,
+    hasMore,
   };
 }
 
@@ -1557,8 +1627,10 @@ export async function mutateResearchNetwork(
     return publishSoulFromScan(subject, input);
   }
 
+  await rate(subject + ":x51-network-write", 60, 60_000);
+  const bodyRow = await requireBodyForNetwork(subject);
+
   if (action === "like-post") {
-    await rate(subject + ":x51-network-write", 60, 60_000);
     const postId = id(input.postId, "Post");
     const post = await getAuthorizedWebSoulById(subject, postId);
     if (!post) {
@@ -1577,6 +1649,14 @@ export async function mutateResearchNetwork(
         )
         .bind(postId, subject, now)
         .run();
+      if (post.authorSubject !== subject) {
+        await pushNotification(
+          post.authorSubject,
+          "SOUL_LIKE",
+          postId,
+          `like:${postId}:${subject}`,
+        );
+      }
     } else {
       await db
         .prepare("DELETE FROM v3_post_likes WHERE post_id=? AND subject=?")
@@ -1593,9 +1673,6 @@ export async function mutateResearchNetwork(
       likeCount: Number(countRow?.n ?? 0),
     };
   }
-
-  await rate(subject + ":x51-network-write", 60, 60_000);
-  const bodyRow = await requireBodyForNetwork(subject);
 
   if (action === "save-soul") {
     const postId = id(input.postId, "Post");

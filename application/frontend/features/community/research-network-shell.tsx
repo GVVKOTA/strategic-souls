@@ -11,6 +11,7 @@ import {
   Pin,
   PinOff,
   Play,
+  RefreshCw,
   Send,
   Share2,
   Trash2,
@@ -53,8 +54,11 @@ const COMM_TAB_ORDER: PrimaryCommunityTab[] = ["web", "chats", "groups"];
 
 function formatFeedTimeframe(tf: string): string {
   const lower = tf.toLowerCase();
-  if (lower === "1h") return "1 Hour";
-  if (lower === "1d") return "Daily";
+  if (lower === "30m") return "30m";
+  if (lower === "1h") return "1H";
+  if (lower === "3h") return "3H";
+  if (lower === "6h") return "6H";
+  if (lower === "1d" || lower === "24h") return "24H";
   if (lower === "1wk") return "Weekly";
   if (lower === "1mo") return "Monthly";
   return tf;
@@ -162,6 +166,7 @@ type Props = {
   onOpenSettings: (section: SettingsSection) => void;
   onOpenAsset: (symbol: string) => void;
   onCopyToStrategy: (formula: string) => void;
+  onClearSearch?: () => void;
   onMobileChatActive?: (active: boolean) => void;
   onSelectTab?: (tab: PrimaryCommunityTab) => void;
 };
@@ -186,6 +191,7 @@ export default function ResearchNetworkShell({
   onOpenSettings,
   onOpenAsset,
   onCopyToStrategy,
+  onClearSearch,
   onMobileChatActive,
   onSelectTab,
 }: Props) {
@@ -201,8 +207,15 @@ export default function ResearchNetworkShell({
   const [savedOnly, setSavedOnly] = useState(savedOnlyRequested);
 
   const [posts, setPosts] = useState<PublishedSoulCard[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [loadingFeed, setLoadingFeed] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [refreshingFeed, setRefreshingFeed] = useState(false);
+  const [pullOffset, setPullOffset] = useState(0);
   const [feedError, setFeedError] = useState("");
+  const lastFeedFetchAtRef = useRef(0);
+  const pullStartRef = useRef<{ x: number; y: number } | null>(null);
   const [myProfile, setMyProfile] = useState<UserProfileSnapshot | null>(null);
   // Author-only Post Insights modal
   const [insightsPost, setInsightsPost] = useState<PublishedSoulCard | null>(null);
@@ -259,6 +272,38 @@ export default function ResearchNetworkShell({
     queueMicrotask(() => setTab(initialTab));
   }, [initialTab]);
 
+  const clearPendingThread = useCallback(() => setPendingThreadId(""), []);
+
+  const openComments = useCallback(async (post: PublishedSoulCard) => {
+    commentsAbortRef.current?.abort();
+    const controller = new AbortController();
+    commentsAbortRef.current = controller;
+    const seq = ++commentsSeqRef.current;
+    setDiscussPost(post);
+    setCommentText("");
+    setComments([]);
+    setCommentsLoading(true);
+    try {
+      const res = await api<{ comments: SoulComment[] }>(
+        `/api/community/network?view=comments&postId=${encodeURIComponent(post.id)}`,
+        undefined,
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted || seq !== commentsSeqRef.current) return;
+      setComments(res.comments ?? []);
+    } catch (err) {
+      if (controller.signal.aborted || seq !== commentsSeqRef.current) return;
+      notify(
+        err instanceof Error ? err.message : "Could not load discussion.",
+        true,
+      );
+    } finally {
+      if (!controller.signal.aborted && seq === commentsSeqRef.current) {
+        setCommentsLoading(false);
+      }
+    }
+  }, [notify]);
+
   useEffect(() => {
     if (!initialPost) return;
     const controller = new AbortController();
@@ -267,11 +312,11 @@ export default function ResearchNetworkShell({
         if (!controller.signal.aborted) {
           setNoticePost(post);
           setNoticePostError("");
-          if (initialAnchor) setDiscussPost(post);
+          if (initialAnchor) void openComments(post);
         }
       }).catch(() => { if (!controller.signal.aborted) setNoticePostError("This Soul is unavailable."); });
     return () => controller.abort();
-  }, [initialPost, initialAnchor, authenticated]);
+  }, [initialPost, initialAnchor, authenticated, openComments]);
 
   useEffect(() => {
     if (initialPost && noticePost?.id === initialPost && !initialAnchor)
@@ -344,38 +389,62 @@ export default function ResearchNetworkShell({
     };
   }, [loadMyProfile, profileRevision]);
 
-  const loadWebFeed = useCallback(async () => {
-    feedAbortRef.current?.abort();
-    const controller = new AbortController();
-    feedAbortRef.current = controller;
-    const seq = ++feedSeqRef.current;
-    setFeedError("");
-    setLoadingFeed(true);
-    try {
-      const qs = new URLSearchParams({
-        view: "web",
-        mode: modeFilter,
-        timeframe: tfFilter,
-        sort,
-      });
-      if (savedOnly) qs.set("saved", "1");
-      if (searchQuery.trim()) qs.set("q", searchQuery.trim());
-      const res = await api<{ posts: PublishedSoulCard[] }>(
-        `/api/community/network?${qs}`,
-        undefined,
-        { signal: controller.signal },
-      );
-      if (controller.signal.aborted || seq !== feedSeqRef.current) return;
-      setPosts(res.posts ?? []);
-    } catch (err) {
-      if (controller.signal.aborted || seq !== feedSeqRef.current) return;
-      setFeedError(err instanceof Error ? err.message : "Please try again.");
-    } finally {
-      if (!controller.signal.aborted && seq === feedSeqRef.current) {
-        setLoadingFeed(false);
+  const loadWebFeed = useCallback(
+    async (opts?: { silent?: boolean; cursor?: string | null; append?: boolean }) => {
+      const append = Boolean(opts?.append && opts?.cursor);
+      const silent = Boolean(opts?.silent);
+      if (!append) feedAbortRef.current?.abort();
+      const controller = new AbortController();
+      if (!append) feedAbortRef.current = controller;
+      const seq = append ? feedSeqRef.current : ++feedSeqRef.current;
+      if (!silent && !append) setFeedError("");
+      if (append) setLoadingMore(true);
+      else if (silent) setRefreshingFeed(true);
+      else setLoadingFeed(true);
+      try {
+        const qs = new URLSearchParams({
+          view: "web",
+          mode: modeFilter,
+          timeframe: tfFilter,
+          sort,
+          limit: "25",
+        });
+        if (savedOnly) qs.set("saved", "1");
+        if (searchQuery.trim()) qs.set("q", searchQuery.trim());
+        if (append && opts?.cursor) qs.set("cursor", opts.cursor);
+        const res = await api<{
+          posts: PublishedSoulCard[];
+          nextCursor?: string | null;
+          hasMore?: boolean;
+        }>(`/api/community/network?${qs}`, undefined, {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted || seq !== feedSeqRef.current) return;
+        const incoming = res.posts ?? [];
+        setPosts((prev) => {
+          if (!append) return incoming;
+          const seen = new Set(prev.map((p) => p.id));
+          return [...prev, ...incoming.filter((p) => !seen.has(p.id))];
+        });
+        setNextCursor(res.nextCursor ?? null);
+        setHasMore(Boolean(res.hasMore && res.nextCursor));
+        setFeedError("");
+        lastFeedFetchAtRef.current = Date.now();
+      } catch (err) {
+        if (controller.signal.aborted || seq !== feedSeqRef.current) return;
+        if (!silent) {
+          setFeedError(err instanceof Error ? err.message : "Please try again.");
+        }
+      } finally {
+        if (!controller.signal.aborted && seq === feedSeqRef.current) {
+          setLoadingFeed(false);
+          setLoadingMore(false);
+          setRefreshingFeed(false);
+        }
       }
-    }
-  }, [modeFilter, tfFilter, sort, savedOnly, searchQuery]);
+    },
+    [modeFilter, tfFilter, sort, savedOnly, searchQuery],
+  );
 
   useEffect(() => {
     if (tab !== "web") return;
@@ -386,6 +455,37 @@ export default function ResearchNetworkShell({
     return () => {
       alive = false;
       feedAbortRef.current?.abort();
+    };
+  }, [tab, loadWebFeed]);
+
+  // Active-tab Soul Feed freshness: periodic refresh (~45s with jitter) + focus/visibility sync (15s floor)
+  useEffect(() => {
+    if (tab !== "web") return;
+    let alive = true;
+    let timer: number | null = null;
+    const scheduleNext = () => {
+      const jitterMs = Math.floor(Math.random() * 10_000) - 5_000;
+      timer = window.setTimeout(() => {
+        if (!alive) return;
+        if (document.visibilityState === "visible") {
+          void loadWebFeed({ silent: true });
+        }
+        scheduleNext();
+      }, 45_000 + jitterMs);
+    };
+    const maybeRefreshOnFocus = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastFeedFetchAtRef.current < 15_000) return;
+      void loadWebFeed({ silent: true });
+    };
+    scheduleNext();
+    document.addEventListener("visibilitychange", maybeRefreshOnFocus);
+    window.addEventListener("focus", maybeRefreshOnFocus);
+    return () => {
+      alive = false;
+      if (timer !== null) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", maybeRefreshOnFocus);
+      window.removeEventListener("focus", maybeRefreshOnFocus);
     };
   }, [tab, loadWebFeed]);
 
@@ -801,36 +901,6 @@ export default function ResearchNetworkShell({
     onCopyToStrategy(post.formula);
   }
 
-  async function openComments(post: PublishedSoulCard) {
-    commentsAbortRef.current?.abort();
-    const controller = new AbortController();
-    commentsAbortRef.current = controller;
-    const seq = ++commentsSeqRef.current;
-    setDiscussPost(post);
-    setCommentText("");
-    setComments([]);
-    setCommentsLoading(true);
-    try {
-      const res = await api<{ comments: SoulComment[] }>(
-        `/api/community/network?view=comments&postId=${encodeURIComponent(post.id)}`,
-        undefined,
-        { signal: controller.signal },
-      );
-      if (controller.signal.aborted || seq !== commentsSeqRef.current) return;
-      setComments(res.comments ?? []);
-    } catch (err) {
-      if (controller.signal.aborted || seq !== commentsSeqRef.current) return;
-      notify(
-        err instanceof Error ? err.message : "Could not load discussion.",
-        true,
-      );
-    } finally {
-      if (!controller.signal.aborted && seq === commentsSeqRef.current) {
-        setCommentsLoading(false);
-      }
-    }
-  }
-
   async function submitComment(e: React.FormEvent) {
     e.preventDefault();
     if (!discussPost || !commentText.trim() || actionBusy) return;
@@ -1090,56 +1160,108 @@ export default function ResearchNetworkShell({
 
       {/* TAB 1: SOUL FEED — Published Souls Discovery Feed */}
       {tab === "web" && (
-        <section aria-label="Souls">
-          <details className="x11-feed-filters">
-            <summary>Filter</summary>
-            <div className="x51-cal-toolbar x55-feed-toolbar">
-            <div className="x51-chip-row" role="group" aria-label="Feed mode">
-              {(["ALL", "CLASSIC", "ADVANCED"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  className={"x51-chip" + (modeFilter === m ? " is-active" : "")}
-                  onClick={() => setModeFilter(m)}
-                >
-                  {m === "ALL" ? "All" : m === "CLASSIC" ? "Classic" : "Advanced"}
-                </button>
-              ))}
-              <button
-                type="button"
-                className={"x51-chip" + (savedOnly ? " is-active" : "")}
-                onClick={() => setSavedOnly((v) => !v)}
-              >
-                <Bookmark size={12} /> Saved
-              </button>
+        <section
+          aria-label="Souls"
+          onTouchStart={(e) => {
+            if (window.scrollY > 0 || e.touches.length !== 1) return;
+            const t = e.touches[0];
+            pullStartRef.current = { x: t.clientX, y: t.clientY };
+          }}
+          onTouchMove={(e) => {
+            const start = pullStartRef.current;
+            if (!start || e.touches.length !== 1 || window.scrollY > 0) {
+              pullStartRef.current = null;
+              if (pullOffset !== 0) setPullOffset(0);
+              return;
+            }
+            const t = e.touches[0];
+            const dx = Math.abs(t.clientX - start.x);
+            const dy = t.clientY - start.y;
+            if (dx > 28 || dy <= 0) {
+              pullStartRef.current = null;
+              if (pullOffset !== 0) setPullOffset(0);
+              return;
+            }
+            setPullOffset(Math.min(84, Math.round(dy * 0.55)));
+          }}
+          onTouchEnd={() => {
+            if (pullOffset >= 52 && !refreshingFeed && !loadingFeed) {
+              void loadWebFeed({ silent: true });
+            }
+            pullStartRef.current = null;
+            setPullOffset(0);
+          }}
+        >
+          {pullOffset > 12 && (
+            <div className="x1-caption" role="status" style={{ textAlign: "center", padding: "4px 0 8px" }}>
+              {pullOffset >= 52 ? "Release to refresh Soul Feed" : "Pull down to refresh"}
             </div>
-            <div className="x55-feed-selects">
-              <select
-                aria-label="Filter by timeframe"
-                className="x55-feed-select"
-                value={tfFilter}
-                onChange={(e) => setTfFilter(e.target.value)}
-              >
-                <option value="ALL">All Timeframes</option>
-                <option value="1h">1 Hour</option>
-                <option value="1d">Daily</option>
-                <option value="1wk">Weekly</option>
-                <option value="1mo">Monthly</option>
-              </select>
-              <select
-                aria-label="Sort Souls"
-                className="x55-feed-select"
-                value={sort}
-                onChange={(e) =>
-                  setSort(e.target.value as "newest" | "following")
-                }
-              >
-                <option value="newest">Newest</option>
-                <option value="following">Following</option>
-              </select>
-            </div>
-            </div>
-          </details>
+          )}
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+            <details className="x11-feed-filters" style={{ flex: 1 }}>
+              <summary>Filter</summary>
+              <div className="x51-cal-toolbar x55-feed-toolbar">
+                <div className="x51-chip-row" role="group" aria-label="Feed mode">
+                  {(["ALL", "CLASSIC", "ADVANCED"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      className={"x51-chip" + (modeFilter === m ? " is-active" : "")}
+                      onClick={() => setModeFilter(m)}
+                    >
+                      {m === "ALL" ? "All" : m === "CLASSIC" ? "Classic" : "Advanced"}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className={"x51-chip" + (savedOnly ? " is-active" : "")}
+                    onClick={() => setSavedOnly((v) => !v)}
+                  >
+                    <Bookmark size={12} /> Saved
+                  </button>
+                </div>
+                <div className="x55-feed-selects">
+                  <select
+                    aria-label="Filter by timeframe"
+                    className="x55-feed-select"
+                    value={tfFilter}
+                    onChange={(e) => setTfFilter(e.target.value)}
+                  >
+                    <option value="ALL">All Timeframes</option>
+                    <option value="30m">30m</option>
+                    <option value="1h">1H</option>
+                    <option value="3h">3H</option>
+                    <option value="6h">6H</option>
+                    <option value="1d">24H</option>
+                    <option value="1wk">Weekly (Archive)</option>
+                    <option value="1mo">Monthly (Archive)</option>
+                  </select>
+                  <select
+                    aria-label="Sort Souls"
+                    className="x55-feed-select"
+                    value={sort}
+                    onChange={(e) =>
+                      setSort(e.target.value as "newest" | "following")
+                    }
+                  >
+                    <option value="newest">Newest</option>
+                    <option value="following">Following</option>
+                  </select>
+                </div>
+              </div>
+            </details>
+            <button
+              type="button"
+              className="x1-secondary"
+              aria-label="Refresh Soul Feed"
+              disabled={loadingFeed || refreshingFeed}
+              onClick={() => void loadWebFeed({ silent: posts.length > 0 })}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
+            >
+              <RefreshCw size={14} aria-hidden="true" />
+              <span>{refreshingFeed ? "Refreshing…" : "Refresh"}</span>
+            </button>
+          </div>
 
           {loadingFeed ? (
             <div className="x55-feed-skeleton" aria-busy="true" aria-label="Loading Souls">
@@ -1154,18 +1276,52 @@ export default function ResearchNetworkShell({
                 Retry feed
               </button>
             </div>
-          ) : posts.length === 0 ? (
-            <Empty
-              title={
-                savedOnly
-                  ? "No saved Souls yet"
-                  : "No Souls match these filters."
-              }
-            >
-              Run a scan in Strategy and tap <strong>Publish Soul</strong> to share
-              transparent research in the Soul Feed.
-            </Empty>
-          ) : (
+          ) : posts.length === 0 ? (() => {
+            const hasActiveFilters =
+              modeFilter !== "ALL" ||
+              tfFilter !== "ALL" ||
+              sort !== "newest" ||
+              searchQuery.trim().length > 0;
+            return (
+              <Empty
+                title={
+                  savedOnly
+                    ? "No saved Souls yet"
+                    : hasActiveFilters
+                      ? "No Souls match these filters"
+                      : "No published Souls yet"
+                }
+              >
+                {hasActiveFilters || savedOnly ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-start" }}>
+                    <span>
+                      {savedOnly
+                        ? "Bookmark Souls from the feed to return to them quickly."
+                        : "Try clearing one or more active filters to view all published Souls."}
+                    </span>
+                    <button
+                      type="button"
+                      className="x1-secondary"
+                      onClick={() => {
+                        setModeFilter("ALL");
+                        setTfFilter("ALL");
+                        setSort("newest");
+                        setSavedOnly(false);
+                        onClearSearch?.();
+                      }}
+                    >
+                      Reset filters
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    Run a scan in Strategy and tap <strong>Publish Soul</strong> to share
+                    transparent research in the Soul Feed.
+                  </>
+                )}
+              </Empty>
+            );
+          })() : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {posts.map((post) => (
                 <article key={post.id} className="x51-soul-card">
@@ -1340,6 +1496,18 @@ export default function ResearchNetworkShell({
                   </div>
                 </article>
               ))}
+              {hasMore && nextCursor && (
+                <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
+                  <button
+                    type="button"
+                    className="x1-secondary"
+                    disabled={loadingMore}
+                    onClick={() => void loadWebFeed({ cursor: nextCursor, append: true })}
+                  >
+                    {loadingMore ? "Loading more Souls…" : "Load more Souls"}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -1359,7 +1527,7 @@ export default function ResearchNetworkShell({
                 query={searchQuery}
                 initialThreadId={pendingThreadId || initialThread}
                 initialMessageId={initialAnchor}
-                onClearInitialThread={() => setPendingThreadId("")}
+                onClearInitialThread={clearPendingThread}
                 onOpenNotification={onOpenNotification}
                 onOpenProfile={openResearcherProfile}
                 onOpenGroup={() => selectCommunityTab("groups")}
@@ -1407,7 +1575,7 @@ export default function ResearchNetworkShell({
       {initialPost && noticePostError && <p role="status">{noticePostError}</p>}
       {initialPost && noticePost?.id === initialPost && !discussPost && <section id="ss-linked-soul" className="x1-panel" aria-label="Linked Soul">
         <h2>{noticePost.title}</h2><p>{noticePost.summary}</p>
-        <button type="button" className="x1-secondary" onClick={() => setDiscussPost(noticePost)}>Open discussion</button>
+        <button type="button" className="x1-secondary" onClick={() => void openComments(noticePost)}>Open discussion</button>
       </section>}
       {discussPost && (
         <Modal

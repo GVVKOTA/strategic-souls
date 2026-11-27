@@ -48,6 +48,11 @@ export default function PriceAlerts({ openAsset, selected, instrument, standalon
   }
 
   const alerts = list?.alerts.filter((alert) => !instrument || alert.instrumentId === instrument) ?? [];
+
+  useEffect(() => {
+    if (!selected || !list) return;
+    document.getElementById("ss-alert-" + selected)?.scrollIntoView({ block: "center" });
+  }, [selected, list]);
   const form = draft && <form className="x1-form" onSubmit={(event) => {
     event.preventDefault();
     void mutate("save", { ...draft, threshold: Number(draft.threshold) });
@@ -83,7 +88,7 @@ export default function PriceAlerts({ openAsset, selected, instrument, standalon
     {list && !list.available && <p className="x1-callout">Alert monitoring is paused until licensed NSE closes are configured.</p>}
     {selected && list && !alerts.some((alert) => alert.id === selected) && <p role="status">This alert is unavailable.</p>}
     {list && !alerts.length && !draft && <Empty title="No saved price alerts">{null}</Empty>}
-    {alerts.map((alert) => <div key={alert.id} className={"x1-list-item" + (selected === alert.id ? " x1-alert-selected" : "")}>
+    {alerts.map((alert) => <div id={"ss-alert-" + alert.id} key={alert.id} className={"x1-list-item" + (selected === alert.id ? " x1-alert-selected" : "")}>
       <div>
         <button className="x1-text-button" onClick={() => openAsset(alert.instrumentId)}>{alert.instrumentId}</button>
         <p>{RULES[alert.rule]} {number(alert.threshold, 4)} · {alert.state.toLowerCase()}</p>

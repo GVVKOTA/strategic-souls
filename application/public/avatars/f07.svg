@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-hidden="true">
+  <defs>
+    <radialGradient id="bg_f07" cx="50%" cy="28%" r="76%">
+      <stop offset="0%" stop-color="#1C2838"/>
+      <stop offset="100%" stop-color="#07090E"/>
+    </radialGradient>
+    <clipPath id="clip_f07"><circle cx="64" cy="64" r="60"/></clipPath>
+  </defs>
+  <circle cx="64" cy="64" r="61" fill="url(#bg_f07)"/>
+  <g clip-path="url(#clip_f07)">
+    <polygon points="64,24 100,92 28,92" fill="none" stroke="#E8EDF2" stroke-width="2"/>
+    <polygon points="64,44 84,82 44,82" fill="#76C0FF" fill-opacity="0.24" stroke="#94D0FF" stroke-width="1.4"/>
+    <circle cx="64" cy="69" r="4" fill="#E8EDF2"/>
+  </g>
+  <circle cx="64" cy="64" r="60" fill="none" stroke="#94D0FF" stroke-opacity="0.32" stroke-width="2"/>
+</svg>

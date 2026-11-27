@@ -524,17 +524,22 @@ test("X5.6 Phase 2: new accounts receive cryptographically random avatars across
   );
 });
 
-// ── 3. 8 Visual Artwork Banners (6 Dark + 2 Light) & 36 Indian States/UTs ────
-test("X5.6 Phase 3 & 4: 8 visual banner presets (including 2 light designs) and 36 Indian States/UTs validate, persist, and render on public profiles", async () => {
-  assert.equal(bannersMod.BANNER_PRESETS.length, 8);
+// ── 3. 30 Visual Artwork Banners (24 Dark + 6 Light) & 36 Indian States/UTs ────
+test("X5.6/X3.0 Phase 3 & 4: 30 visual banner presets (24 dark + 6 light) and 36 Indian States/UTs validate, persist, and render on public profiles", async () => {
+  assert.equal(bannersMod.BANNER_PRESETS.length, 30);
   const lightBanners = bannersMod.BANNER_PRESETS.filter(
     (b) => b.theme === "light",
   );
   const darkBanners = bannersMod.BANNER_PRESETS.filter(
     (b) => b.theme === "dark",
   );
-  assert.equal(lightBanners.length, 2, "Must provide 2 light-theme banners");
-  assert.equal(darkBanners.length, 6, "Must provide 6 dark-theme banners");
+  assert.equal(lightBanners.length, 6, "Must provide 6 light-theme banners");
+  assert.equal(darkBanners.length, 24, "Must provide 24 dark-theme banners");
+  assert.equal(
+    new Set(bannersMod.BANNER_PRESETS.map((b) => b.artworkDataUrl)).size,
+    30,
+    "All 30 banners must have distinct SVG artwork",
+  );
   for (const b of bannersMod.BANNER_PRESETS) {
     assert.ok(
       b.artworkDataUrl.startsWith("data:image/svg+xml;utf8,"),

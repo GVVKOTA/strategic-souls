@@ -68,11 +68,11 @@ const conflicts = (await load('backend/services/earth/conflicts.ts')).namespace;
 const locations = (await load('backend/services/earth/locations.ts')).namespace;
 const newsAndDisasters = (await load('backend/services/intelligence/news-and-disasters.ts')).namespace;
 
-test('50-avatar catalog has exactly 50 unique presets across 5x10 collections with distinct safe SVGs', () => {
-  assert.equal(avatars.AVATAR_CATALOG.length, 50);
+test('60-avatar catalog has exactly 60 unique presets across 6x10 collections with distinct safe SVGs', () => {
+  assert.equal(avatars.AVATAR_CATALOG.length, 60);
   const namedCollections = avatars.AVATAR_COLLECTIONS.filter((c) => c.id !== 'all');
-  assert.equal(namedCollections.length, 5);
-  assert.equal(avatars.AVATAR_IDS.size, 50);
+  assert.equal(namedCollections.length, 6);
+  assert.equal(avatars.AVATAR_IDS.size, 60);
 
   const byCollection = new Map();
   const svgHashes = new Set();
@@ -91,11 +91,12 @@ test('50-avatar catalog has exactly 50 unique presets across 5x10 collections wi
   for (const col of namedCollections) {
     assert.equal(byCollection.get(col.id), 10, `Collection ${col.id} must have exactly 10 presets`);
   }
-  assert.equal(svgHashes.size, 50, 'All 50 avatar SVG files must be visually distinct');
+  assert.equal(svgHashes.size, 60, 'All 60 avatar SVG files must be visually distinct');
 
   // Legacy name mapping and invalid fallback
   assert.equal(avatars.normalizeAvatarId('mint'), 'a01');
   assert.equal(avatars.normalizeAvatarId('e10'), 'e10');
+  assert.equal(avatars.normalizeAvatarId('f10'), 'f10');
   assert.equal(avatars.normalizeAvatarId('https://evil.invalid/x.png'), 'a01');
   assert.equal(avatars.isValidAvatarPresetId('https://evil.invalid/x.png'), false);
 });

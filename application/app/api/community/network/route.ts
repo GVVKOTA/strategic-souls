@@ -98,6 +98,10 @@ export async function GET(request: Request): Promise<Response> {
     const sort =
       rawSort === "following" || rawSort === "evidence" ? rawSort : "newest";
 
+    const rawLimit = Number(params.get("limit") ?? "");
+    const limit =
+      Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.min(50, Math.floor(rawLimit)) : 25;
+
     const feed = await listWebSouls(viewerId, {
       mode: params.get("mode") ?? "ALL",
       timeframe: params.get("timeframe") ?? "ALL",
@@ -106,8 +110,12 @@ export async function GET(request: Request): Promise<Response> {
       authorHandle: params.get("author") ?? "",
       savedOnly: params.get("saved") === "1",
       sort,
+      cursor: params.get("cursor") ?? params.get("before") ?? "",
+      limit,
     });
-    return json(feed, 200, !!viewerId);
+    // Always disable HTTP caching on the Soul Feed so newly published, edited, or deleted
+    // Souls propagate immediately across users and guests without stale edge responses.
+    return json(feed, 200, true);
   } catch (err) {
     return json(
       {

@@ -330,7 +330,7 @@ test("Economic Calendar upcoming filter excludes released events", () => {
   }
 });
 
-test("Obsidian Banner catalog provides 8 unique curated presets", () => {
-  assert.equal(BANNER_PRESETS.length, 8);
-  assert.equal(new Set(BANNER_PRESETS.map((b) => b.id)).size, 8);
+test("Obsidian Banner catalog provides 30 unique curated presets", () => {
+  assert.equal(BANNER_PRESETS.length, 30);
+  assert.equal(new Set(BANNER_PRESETS.map((b) => b.id)).size, 30);
 });

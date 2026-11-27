@@ -1,9 +1,7 @@
 /**
- * Strategic Souls X5.6 — 8 Original Visual Banner Artwork Presets (6 Dark + 2 Light).
- * Every preset includes multi-layered SVG vector artwork (orbit rings, aurora ribbons,
- * eclipse corona, sculpted Arctic horizon, topographic oceanic contours, glass prisms,
- * perspective titanium architecture, and cosmic nebula geometry) encoded as zero-latency
- * inline SVG data URLs so banners render crisply at any aspect ratio without external R2 fetches.
+ * Strategic Souls X 3.0 — 30 Original Visual Banner Artwork Presets (24 Dark + 6 Light).
+ * Every preset includes multi-layered SVG vector artwork encoded as zero-latency
+ * inline SVG data URLs so banners render crisply at any aspect ratio without external fetches.
  */
 
 export type BannerThemeTone = "dark" | "light";
@@ -12,7 +10,12 @@ export type BannerPreset = {
   readonly id: string;
   readonly name: string;
   readonly legacyName: string;
-  readonly category: "Obsidian" | "Celestial" | "Quant Grid" | "Atelier Light";
+  readonly category:
+    | "Obsidian"
+    | "Celestial"
+    | "Quant Grid"
+    | "Atelier Light"
+    | "Atmospheric";
   readonly theme: BannerThemeTone;
   readonly description: string;
   readonly artworkDataUrl: string;
@@ -356,7 +359,345 @@ export const BANNER_PRESETS: readonly BannerPreset[] = Object.freeze([
     badgeBg: "rgba(13, 12, 24, 0.8)",
     badgeText: "#E8EDF2",
   },
+  ...buildExpandedBanners(),
 ]);
+
+type ExpandedBannerSeed = {
+  id: string;
+  name: string;
+  category: BannerPreset["category"];
+  theme: BannerThemeTone;
+  description: string;
+  bgA: string;
+  bgB: string;
+  bgC: string;
+  accent: string;
+  accentRgba: string;
+  motif: string;
+};
+
+function buildExpandedBanners(): BannerPreset[] {
+  const seeds: ExpandedBannerSeed[] = [
+    {
+      id: "b09",
+      name: "Silver Meridian",
+      category: "Celestial",
+      theme: "dark",
+      description: "Longitudinal silver meridian arcs crossing a deep graphite zenith.",
+      bgA: "#0B1018",
+      bgB: "#151F2E",
+      bgC: "#07090D",
+      accent: "#CAD3DC",
+      accentRgba: "rgba(202, 211, 220, 0.36)",
+      motif: `<path d="M480,0 V300" stroke="#CAD3DC" stroke-opacity="0.22" stroke-width="1"/><ellipse cx="480" cy="150" rx="180" ry="220" fill="none" stroke="#94D0FF" stroke-opacity="0.34" stroke-width="1.3"/><ellipse cx="480" cy="150" rx="340" ry="240" fill="none" stroke="#CAD3DC" stroke-opacity="0.2" stroke-width="1.1"/><circle cx="480" cy="112" r="5" fill="#E8EDF2"/>`,
+    },
+    {
+      id: "b10",
+      name: "Emerald Ledger",
+      category: "Quant Grid",
+      theme: "dark",
+      description: "Stepped algorithmic histogram bars illuminated in calm market green.",
+      bgA: "#071410",
+      bgB: "#0E231B",
+      bgC: "#07090B",
+      accent: "#42CF91",
+      accentRgba: "rgba(66, 207, 145, 0.38)",
+      motif: `<g fill="#42CF91" fill-opacity="0.18" stroke="#42CF91" stroke-opacity="0.42" stroke-width="1"><rect x="140" y="185" width="44" height="115" rx="4"/><rect x="210" y="145" width="44" height="155" rx="4"/><rect x="280" y="165" width="44" height="135" rx="4"/><rect x="350" y="110" width="44" height="190" rx="4"/><rect x="420" y="88" width="44" height="212" rx="4"/><rect x="490" y="128" width="44" height="172" rx="4"/><rect x="560" y="74" width="44" height="226" rx="4"/><rect x="630" y="102" width="44" height="198" rx="4"/><rect x="700" y="60" width="44" height="240" rx="4"/></g><line x1="80" y1="240" x2="880" y2="240" stroke="#6EE7B7" stroke-opacity="0.28" stroke-width="1"/>`,
+    },
+    {
+      id: "b11",
+      name: "Lavender Dusk",
+      category: "Atmospheric",
+      theme: "dark",
+      description: "Soft lavender atmospheric ribbons drifting above matte obsidian twilight.",
+      bgA: "#161124",
+      bgB: "#211834",
+      bgC: "#09080E",
+      accent: "#C4B5FD",
+      accentRgba: "rgba(196, 181, 253, 0.42)",
+      motif: `<path d="M-20,185 C200,110 420,235 670,130 C810,75 900,125 990,95 L990,300 L-20,300 Z" fill="#C4B5FD" fill-opacity="0.14"/><path d="M-20,145 C220,75 450,205 700,105 C830,52 910,95 990,70" fill="none" stroke="#C4B5FD" stroke-opacity="0.52" stroke-width="1.6"/><path d="M-20,215 C240,145 480,255 740,165 C850,125 920,160 990,140" fill="none" stroke="#DDD6FE" stroke-opacity="0.3" stroke-width="1.1"/>`,
+    },
+    {
+      id: "b12",
+      name: "Ivory Meridian",
+      category: "Atelier Light",
+      theme: "light",
+      description: "Warm alabaster daylight canvas etched with crisp architectural slate arcs.",
+      bgA: "#FAF8F5",
+      bgB: "#ECE8E1",
+      bgC: "#DCD6CC",
+      accent: "#475569",
+      accentRgba: "rgba(71, 85, 105, 0.36)",
+      motif: `<circle cx="710" cy="145" r="118" fill="none" stroke="#475569" stroke-opacity="0.28" stroke-width="1.3"/><circle cx="710" cy="145" r="76" fill="#FFFFFF" fill-opacity="0.5" stroke="#64748B" stroke-opacity="0.25" stroke-width="1"/><line x1="60" y1="145" x2="900" y2="145" stroke="#475569" stroke-opacity="0.22" stroke-width="1"/><path d="M120,245 Q420,170 860,230" fill="none" stroke="#334155" stroke-opacity="0.3" stroke-width="1.4"/>`,
+    },
+    {
+      id: "b13",
+      name: "Basalt Strata",
+      category: "Obsidian",
+      theme: "dark",
+      description: "Layered volcanic basalt strata etched with fine silver mineral seams.",
+      bgA: "#14161A",
+      bgB: "#0D0F13",
+      bgC: "#060709",
+      accent: "#B9C3CE",
+      accentRgba: "rgba(185, 195, 206, 0.32)",
+      motif: `<path d="M0,110 L190,82 L410,122 L640,76 L960,115 L960,300 L0,300 Z" fill="#181C22" fill-opacity="0.72"/><path d="M0,175 L230,142 L470,188 L720,136 L960,172 L960,300 L0,300 Z" fill="#101318" fill-opacity="0.88"/><path d="M0,110 L190,82 L410,122 L640,76 L960,115" fill="none" stroke="#CAD3DC" stroke-opacity="0.34" stroke-width="1.3"/><path d="M0,175 L230,142 L470,188 L720,136 L960,172" fill="none" stroke="#94A3B8" stroke-opacity="0.24" stroke-width="1.1"/>`,
+    },
+    {
+      id: "b14",
+      name: "Solar Corona",
+      category: "Celestial",
+      theme: "dark",
+      description: "Warm amber rim light emerging along a dark eclipse horizon.",
+      bgA: "#1F150C",
+      bgB: "#120D0A",
+      bgC: "#070709",
+      accent: "#F59E0B",
+      accentRgba: "rgba(245, 158, 11, 0.42)",
+      motif: `<circle cx="480" cy="310" r="215" fill="#070709" stroke="#FBBF24" stroke-opacity="0.6" stroke-width="2.4"/><circle cx="480" cy="310" r="245" fill="none" stroke="#F59E0B" stroke-opacity="0.24" stroke-width="1.2"/><circle cx="480" cy="310" r="285" fill="none" stroke="#FDE68A" stroke-opacity="0.14" stroke-width="1"/><circle cx="230" cy="70" r="1.8" fill="#FEF3C7" fill-opacity="0.75"/><circle cx="760" cy="84" r="2" fill="#FDE68A" fill-opacity="0.7"/>`,
+    },
+    {
+      id: "b15",
+      name: "Teal Bathymetry",
+      category: "Atmospheric",
+      theme: "dark",
+      description: "Concentric deep marine teal bathymetric contour trenches.",
+      bgA: "#061A1B",
+      bgB: "#0B292A",
+      bgC: "#050B0D",
+      accent: "#4FA3A1",
+      accentRgba: "rgba(79, 163, 161, 0.42)",
+      motif: `<ellipse cx="640" cy="175" rx="340" ry="125" fill="none" stroke="#4FA3A1" stroke-opacity="0.26" stroke-width="1.2"/><ellipse cx="640" cy="175" rx="255" ry="92" fill="none" stroke="#5EEAD4" stroke-opacity="0.34" stroke-width="1.4"/><ellipse cx="640" cy="175" rx="170" ry="60" fill="none" stroke="#99F6E4" stroke-opacity="0.45" stroke-width="1.5"/><ellipse cx="640" cy="175" rx="85" ry="28" fill="#134E4A" fill-opacity="0.4" stroke="#CCFBF1" stroke-opacity="0.45" stroke-width="1.2"/>`,
+    },
+    {
+      id: "b16",
+      name: "Mist Glacier",
+      category: "Atelier Light",
+      theme: "light",
+      description: "Cool platinum mist and pale silver-sage geometric ridge silhouettes.",
+      bgA: "#F1F5F4",
+      bgB: "#DEE8E5",
+      bgC: "#C7D8D3",
+      accent: "#3F625B",
+      accentRgba: "rgba(63, 98, 91, 0.36)",
+      motif: `<polygon points="80,300 280,108 480,300" fill="#B2C9C2" fill-opacity="0.6"/><polygon points="340,300 570,84 820,300" fill="#8FB0A6" fill-opacity="0.55"/><polygon points="620,300 810,136 980,300" fill="#6F948A" fill-opacity="0.5"/><line x1="0" y1="220" x2="960" y2="220" stroke="#2F4D47" stroke-opacity="0.22" stroke-width="1"/>`,
+    },
+    {
+      id: "b17",
+      name: "Vector Lattice",
+      category: "Quant Grid",
+      theme: "dark",
+      description: "Diagonal institutional lattice matrix with luminous intersection nodes.",
+      bgA: "#0B111C",
+      bgB: "#101826",
+      bgC: "#07090F",
+      accent: "#76C0FF",
+      accentRgba: "rgba(118, 192, 255, 0.38)",
+      motif: `<g stroke="#76C0FF" stroke-opacity="0.2" stroke-width="1"><line x1="0" y1="300" x2="300" y2="0"/><line x1="160" y1="300" x2="460" y2="0"/><line x1="320" y1="300" x2="620" y2="0"/><line x1="480" y1="300" x2="780" y2="0"/><line x1="640" y1="300" x2="940" y2="0"/><line x1="0" y1="0" x2="300" y2="300"/><line x1="220" y1="0" x2="520" y2="300"/><line x1="440" y1="0" x2="740" y2="300"/><line x1="660" y1="0" x2="960" y2="300"/></g><circle cx="480" cy="140" r="5" fill="#94D0FF"/><circle cx="700" cy="140" r="4" fill="#42CF91"/>`,
+    },
+    {
+      id: "b18",
+      name: "Nocturne Violet",
+      category: "Celestial",
+      theme: "dark",
+      description: "Matte midnight charcoal swept by twin soft-violet starfield arcs.",
+      bgA: "#140F20",
+      bgB: "#0E0C17",
+      bgC: "#06060A",
+      accent: "#A78BFA",
+      accentRgba: "rgba(167, 139, 250, 0.38)",
+      motif: `<path d="M-40,260 Q360,20 990,175" fill="none" stroke="#C4B5FD" stroke-opacity="0.45" stroke-width="1.6"/><path d="M-40,295 Q380,68 990,210" fill="none" stroke="#8B5CF6" stroke-opacity="0.28" stroke-width="1.1"/><circle cx="310" cy="116" r="3" fill="#EDE9FE"/><circle cx="545" cy="96" r="3.6" fill="#C4B5FD"/><circle cx="790" cy="142" r="2.6" fill="#E8EDF2"/>`,
+    },
+    {
+      id: "b19",
+      name: "Carbon Weave",
+      category: "Obsidian",
+      theme: "dark",
+      description: "Architectural matte carbon chevron planes with quiet silver edge highlights.",
+      bgA: "#15171B",
+      bgB: "#0E1014",
+      bgC: "#07080A",
+      accent: "#94A3B8",
+      accentRgba: "rgba(148, 163, 184, 0.3)",
+      motif: `<g fill="none" stroke="#CAD3DC" stroke-opacity="0.2" stroke-width="1.2"><polyline points="80,260 220,120 360,260"/><polyline points="260,260 400,120 540,260"/><polyline points="440,260 580,120 720,260"/><polyline points="620,260 760,120 900,260"/></g><polyline points="440,220 580,80 720,220" fill="none" stroke="#E8EDF2" stroke-opacity="0.42" stroke-width="1.6"/>`,
+    },
+    {
+      id: "b20",
+      name: "Paper Blueprint",
+      category: "Atelier Light",
+      theme: "light",
+      description: "Drafting cream studio sheet overlaid with fine slate-blue compass rings.",
+      bgA: "#FAF6EE",
+      bgB: "#EFE8DA",
+      bgC: "#E2D8C5",
+      accent: "#3B5D7D",
+      accentRgba: "rgba(59, 93, 125, 0.38)",
+      motif: `<g stroke="#3B5D7D" stroke-opacity="0.24" stroke-width="1" fill="none"><circle cx="290" cy="150" r="95"/><circle cx="290" cy="150" r="145" stroke-dasharray="6 5"/><line x1="290" y1="20" x2="290" y2="280"/><line x1="120" y1="150" x2="840" y2="150"/><rect x="520" y="70" width="260" height="160" rx="4"/></g><circle cx="290" cy="150" r="4" fill="#2D4A66"/>`,
+    },
+    {
+      id: "b21",
+      name: "Monsoon Horizon",
+      category: "Atmospheric",
+      theme: "dark",
+      description: "Slate storm clouds parting over calm nocturnal waters with fine silver vectors.",
+      bgA: "#0E1621",
+      bgB: "#182433",
+      bgC: "#080C12",
+      accent: "#93C5FD",
+      accentRgba: "rgba(147, 197, 253, 0.36)",
+      motif: `<line x1="0" y1="205" x2="960" y2="205" stroke="#93C5FD" stroke-opacity="0.35" stroke-width="1.2"/><g stroke="#BFDBFE" stroke-opacity="0.22" stroke-width="1"><line x1="180" y1="30" x2="140" y2="185"/><line x1="340" y1="20" x2="300" y2="185"/><line x1="510" y1="35" x2="470" y2="185"/><line x1="690" y1="25" x2="650" y2="185"/><line x1="830" y1="40" x2="790" y2="185"/></g><rect x="0" y="205" width="960" height="95" fill="#0A111A" fill-opacity="0.65"/>`,
+    },
+    {
+      id: "b22",
+      name: "Quantum Wave",
+      category: "Quant Grid",
+      theme: "dark",
+      description: "Harmonic dual-phase analytical sine waves oscillating over deep navy.",
+      bgA: "#07101C",
+      bgB: "#0D1B2E",
+      bgC: "#06080E",
+      accent: "#38BDF8",
+      accentRgba: "rgba(56, 189, 248, 0.4)",
+      motif: `<path d="M0,150 Q120,45 240,150 T480,150 T720,150 T960,150" fill="none" stroke="#38BDF8" stroke-opacity="0.56" stroke-width="1.8"/><path d="M0,150 Q120,255 240,150 T480,150 T720,150 T960,150" fill="none" stroke="#C4B5FD" stroke-opacity="0.4" stroke-width="1.4"/><line x1="0" y1="150" x2="960" y2="150" stroke="#E8EDF2" stroke-opacity="0.16" stroke-width="1"/>`,
+    },
+    {
+      id: "b23",
+      name: "Copper Dusk",
+      category: "Obsidian",
+      theme: "dark",
+      description: "Smoked bronze and matte obsidian architectural folds with warm rim accents.",
+      bgA: "#1D1410",
+      bgB: "#120D0B",
+      bgC: "#070708",
+      accent: "#FB923C",
+      accentRgba: "rgba(251, 146, 60, 0.36)",
+      motif: `<polygon points="0,300 320,75 640,300" fill="#2A1C15" fill-opacity="0.62" stroke="#FDBA74" stroke-opacity="0.34" stroke-width="1.3"/><polygon points="360,300 690,55 960,260 960,300" fill="#1F1510" fill-opacity="0.72" stroke="#FB923C" stroke-opacity="0.4" stroke-width="1.3"/>`,
+    },
+    {
+      id: "b24",
+      name: "Silk Alabaster",
+      category: "Atelier Light",
+      theme: "light",
+      description: "Pearl ivory and soft lilac-silver contour waves in calm studio lighting.",
+      bgA: "#FBF9FC",
+      bgB: "#EFEAF5",
+      bgC: "#DFD7EA",
+      accent: "#6D5D87",
+      accentRgba: "rgba(109, 93, 135, 0.38)",
+      motif: `<path d="M-20,90 C220,165 440,35 690,115 C830,160 910,115 980,90" fill="none" stroke="#7C6A96" stroke-opacity="0.42" stroke-width="1.5"/><path d="M-20,155 C240,225 470,95 720,180 C845,220 920,175 980,155" fill="none" stroke="#6D5D87" stroke-opacity="0.34" stroke-width="1.3"/><path d="M-20,220 C260,275 510,165 760,240 C860,270 930,235 980,220" fill="none" stroke="#8B7BA3" stroke-opacity="0.26" stroke-width="1.1"/>`,
+    },
+    {
+      id: "b25",
+      name: "Polaris Grid",
+      category: "Celestial",
+      theme: "dark",
+      description: "Calibrated polar coordinate rings anchored on a luminous North Star node.",
+      bgA: "#090F1A",
+      bgB: "#111C2D",
+      bgC: "#06090F",
+      accent: "#94D0FF",
+      accentRgba: "rgba(148, 208, 255, 0.4)",
+      motif: `<g stroke="#94D0FF" stroke-opacity="0.26" fill="none" stroke-width="1"><circle cx="720" cy="135" r="50"/><circle cx="720" cy="135" r="105"/><circle cx="720" cy="135" r="165"/><circle cx="720" cy="135" r="230"/><line x1="460" y1="135" x2="960" y2="135"/><line x1="720" y1="0" x2="720" y2="300"/></g><circle cx="720" cy="135" r="5" fill="#E8EDF2"/>`,
+    },
+    {
+      id: "b26",
+      name: "Alpine Shadow",
+      category: "Atmospheric",
+      theme: "dark",
+      description: "Monochrome obsidian mountain summits resting under a quiet crescent moon.",
+      bgA: "#0E1218",
+      bgB: "#161D27",
+      bgC: "#07090D",
+      accent: "#E8EDF2",
+      accentRgba: "rgba(232, 237, 242, 0.34)",
+      motif: `<circle cx="775" cy="72" r="24" fill="#E8EDF2" fill-opacity="0.82"/><circle cx="786" cy="66" r="22" fill="#131922"/><path d="M0,240 L175,135 L335,205 L515,105 L685,195 L835,142 L960,192 L960,300 L0,300 Z" fill="#0B0E14"/><path d="M0,240 L175,135 L335,205 L515,105 L685,195 L835,142 L960,192" fill="none" stroke="#CAD3DC" stroke-opacity="0.38" stroke-width="1.3"/>`,
+    },
+    {
+      id: "b27",
+      name: "Emerald Pulse",
+      category: "Quant Grid",
+      theme: "dark",
+      description: "Clean green market waveform crossing a restrained institutional grid.",
+      bgA: "#08120F",
+      bgB: "#0D1A16",
+      bgC: "#060809",
+      accent: "#42CF91",
+      accentRgba: "rgba(66, 207, 145, 0.42)",
+      motif: `<g stroke="#42CF91" stroke-opacity="0.12" stroke-width="1"><line x1="0" y1="75" x2="960" y2="75"/><line x1="0" y1="150" x2="960" y2="150"/><line x1="0" y1="225" x2="960" y2="225"/></g><polyline points="0,185 160,185 240,162 320,198 410,108 495,165 595,88 685,140 790,72 960,115" fill="none" stroke="#42CF91" stroke-opacity="0.72" stroke-width="2.1"/><circle cx="790" cy="72" r="4.5" fill="#6EE7B7"/>`,
+    },
+    {
+      id: "b28",
+      name: "Obsidian Prism",
+      category: "Obsidian",
+      theme: "dark",
+      description: "Smoked obsidian crystal facets catching a single silver refraction beam.",
+      bgA: "#13161C",
+      bgB: "#0B0D11",
+      bgC: "#050608",
+      accent: "#E2E8F0",
+      accentRgba: "rgba(226, 232, 240, 0.34)",
+      motif: `<line x1="0" y1="185" x2="430" y2="145" stroke="#E8EDF2" stroke-opacity="0.45" stroke-width="1.5"/><line x1="535" y1="145" x2="960" y2="95" stroke="#94D0FF" stroke-opacity="0.42" stroke-width="1.3"/><line x1="535" y1="155" x2="960" y2="155" stroke="#C4B5FD" stroke-opacity="0.34" stroke-width="1.2"/><line x1="535" y1="165" x2="960" y2="215" stroke="#42CF91" stroke-opacity="0.34" stroke-width="1.2"/><polygon points="480,46 575,230 385,230" fill="#171C24" fill-opacity="0.82" stroke="#E8EDF2" stroke-opacity="0.48" stroke-width="1.5"/>`,
+    },
+    {
+      id: "b29",
+      name: "Zenith Lavender",
+      category: "Celestial",
+      theme: "dark",
+      description: "Sweeping concentric lavender-silver orbital rings centered on deep charcoal.",
+      bgA: "#14111E",
+      bgB: "#1B1629",
+      bgC: "#08080D",
+      accent: "#C4B5FD",
+      accentRgba: "rgba(196, 181, 253, 0.42)",
+      motif: `<ellipse cx="260" cy="240" rx="420" ry="155" fill="none" stroke="#C4B5FD" stroke-opacity="0.38" stroke-width="1.5"/><ellipse cx="260" cy="240" rx="300" ry="110" fill="none" stroke="#DDD6FE" stroke-opacity="0.26" stroke-width="1.1" stroke-dasharray="7 5"/><circle cx="602" cy="148" r="14" fill="#1F1933" stroke="#C4B5FD" stroke-opacity="0.65" stroke-width="1.4"/><circle cx="598" cy="144" r="3" fill="#F5F3FF"/>`,
+    },
+    {
+      id: "b30",
+      name: "Sandstone Dune",
+      category: "Atmospheric",
+      theme: "dark",
+      description: "Sculpted nocturnal desert dune ridges lit by pale moonlight silver.",
+      bgA: "#171412",
+      bgB: "#221C18",
+      bgC: "#090807",
+      accent: "#D6C7B2",
+      accentRgba: "rgba(214, 199, 178, 0.36)",
+      motif: `<path d="M0,195 Q240,120 490,185 T960,155 L960,300 L0,300 Z" fill="#2A221C" fill-opacity="0.72"/><path d="M0,235 Q280,175 560,228 T960,205 L960,300 L0,300 Z" fill="#15110E" fill-opacity="0.9"/><path d="M0,195 Q240,120 490,185 T960,155" fill="none" stroke="#E5DAC8" stroke-opacity="0.36" stroke-width="1.4"/><circle cx="780" cy="68" r="16" fill="#E5DAC8" fill-opacity="0.75"/>`,
+    },
+  ];
+
+  return seeds.map((s) => {
+    const svg = svgDataUrl(`
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="bg_${s.id}" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="${s.bgA}"/>
+      <stop offset="52%" stop-color="${s.bgB}"/>
+      <stop offset="100%" stop-color="${s.bgC}"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="300" fill="url(#bg_${s.id})"/>
+  ${s.motif}
+</svg>`);
+    const isLight = s.theme === "light";
+    return {
+      id: s.id,
+      name: s.name,
+      legacyName: s.name,
+      category: s.category,
+      theme: s.theme,
+      description: s.description,
+      artworkDataUrl: svg,
+      gradient: `url("${svg}"), linear-gradient(135deg, ${s.bgA} 0%, ${s.bgB} 52%, ${s.bgC} 100%)`,
+      accentLine: s.accentRgba,
+      safeZoneScrim: isLight
+        ? "linear-gradient(180deg, rgba(12, 16, 24, 0.16) 0%, rgba(12, 16, 24, 0.74) 100%)"
+        : "linear-gradient(180deg, rgba(7, 8, 12, 0.12) 0%, rgba(7, 8, 12, 0.66) 100%)",
+      badgeBg: isLight ? "rgba(12, 16, 24, 0.84)" : "rgba(10, 13, 20, 0.82)",
+      badgeText: "#E8EDF2",
+    };
+  });
+}
 
 export const BANNER_IDS = new Set(BANNER_PRESETS.map((b) => b.id));
 

@@ -132,7 +132,7 @@ export default function AvatarStudio({
         <div>
           <h2>Choose your avatar</h2>
           <p className="x1-caption">
-            50 original Strategic Souls emblems · 5 collections · switch anytime
+            60 original Strategic Souls emblems · 6 collections · switch anytime
           </p>
         </div>
         <button

@@ -1,6 +1,11 @@
 import { getAuthenticatedUser } from "../../../backend/auth/session";
 import { assertAdultConsent, body, HttpError, protectMutation } from "../../../backend/middleware/security";
-import { notificationHref, notificationTarget } from "../../../backend/services/community/notification-target";
+import {
+  notificationHref,
+  notificationLabel,
+  notificationTarget,
+  type NoticeTarget,
+} from "../../../backend/services/community/notification-target";
 import { listWebSouls } from "../../../backend/services/community/research-network";
 import { account, database, rate } from "../../../database/queries/repository";
 
@@ -18,8 +23,12 @@ async function handle(request: Request) {
     if (request.method === "GET") {
       const rows = await db.prepare(`SELECT id,kind,created_at createdAt,read_at readAt
         FROM x1_visible_notices WHERE subject=? ORDER BY created_at DESC,id DESC LIMIT 40`)
-        .bind(user.userId).all();
-      return Response.json({ notifications: rows.results }, { headers });
+        .bind(user.userId).all<{ id: string; kind: string; createdAt: string; readAt: string | null }>();
+      const notifications = (rows.results ?? []).map((row) => ({
+        ...row,
+        label: notificationLabel(row.kind),
+      }));
+      return Response.json({ notifications }, { headers });
     }
     protectMutation(request, 2048);
     const { id } = await body(request, 2048);
@@ -28,6 +37,7 @@ async function handle(request: Request) {
       .bind(id, user.userId).first<{ kind: string; target_id: string; event_key: string }>();
     if (!notice) throw new HttpError(404, "Notification unavailable.");
     const target = notificationTarget(notice.kind, notice.target_id, notice.event_key);
+    let resolvedTarget: NoticeTarget | null = target;
     let authorized = !!target;
     if (target?.kind === "chat") {
       authorized = !!await db.prepare(`SELECT 1 FROM x2_conversations c WHERE c.id=? AND (c.first_subject=? OR c.second_subject=?)
@@ -41,8 +51,18 @@ async function handle(request: Request) {
         SELECT 1 FROM x2_blocks b WHERE (b.subject=? AND b.target=p.subject) OR (b.subject=p.subject AND b.target=?))`)
         .bind(target.id, user.userId, user.userId).first();
     } else if (target?.kind === "room") {
-      authorized = !!await db.prepare("SELECT 1 FROM x1_memberships WHERE group_id=? AND subject=?")
+      const isMember = !!await db.prepare("SELECT 1 FROM x1_memberships WHERE group_id=? AND subject=?")
         .bind(target.id, user.userId).first();
+      if (isMember) {
+        authorized = true;
+      } else if (notice.kind === "JOIN_DECISION" || notice.kind === "ROOM_INVITE") {
+        // Non-member recipients of a join decision or room invite can open the Rooms tab
+        // safely without being granted access to private room messages.
+        authorized = true;
+        resolvedTarget = { kind: "rooms" };
+      } else {
+        authorized = false;
+      }
     } else if (target?.kind === "scan") {
       authorized = !!await db.prepare("SELECT 1 FROM x1_scans WHERE id=? AND subject=?").bind(target.id, user.userId).first();
     } else if (target?.kind === "alert") {
@@ -56,7 +76,7 @@ async function handle(request: Request) {
       db.prepare("SELECT count(*) n FROM x1_visible_notices WHERE subject=? AND read_at IS NULL").bind(user.userId),
     ]);
     const unread = (remaining.results[0] as { n?: number } | undefined)?.n ?? 0;
-    return Response.json({ href: authorized && target ? notificationHref(target) : null, unread }, { headers });
+    return Response.json({ href: authorized && resolvedTarget ? notificationHref(resolvedTarget) : null, unread }, { headers });
   } catch (error) {
     return Response.json({ error: error instanceof HttpError ? error.message : "Notifications are temporarily unavailable." },
       { status: error instanceof HttpError ? error.status : 503, headers });

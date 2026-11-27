@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-hidden="true">
+  <defs>
+    <radialGradient id="bg_f03" cx="30%" cy="25%" r="78%">
+      <stop offset="0%" stop-color="#242933"/>
+      <stop offset="100%" stop-color="#07080A"/>
+    </radialGradient>
+    <clipPath id="clip_f03"><circle cx="64" cy="64" r="60"/></clipPath>
+  </defs>
+  <circle cx="64" cy="64" r="61" fill="url(#bg_f03)"/>
+  <g clip-path="url(#clip_f03)">
+    <rect x="36" y="30" width="22" height="72" rx="4" fill="#141820" stroke="#E8EDF2" stroke-opacity="0.72" stroke-width="1.6"/>
+    <rect x="70" y="44" width="22" height="58" rx="4" fill="#101319" stroke="#94D0FF" stroke-opacity="0.58" stroke-width="1.5"/>
+    <line x1="26" y1="102" x2="102" y2="102" stroke="#CAD3DC" stroke-opacity="0.35" stroke-width="1.2"/>
+  </g>
+  <circle cx="64" cy="64" r="60" fill="none" stroke="#CAD3DC" stroke-opacity="0.26" stroke-width="2"/>
+</svg>

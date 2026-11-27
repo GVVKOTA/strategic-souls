@@ -3,7 +3,8 @@ export type AvatarCollectionId =
   | "markets"
   | "nature"
   | "geometry"
-  | "personas";
+  | "personas"
+  | "minimal";
 
 export type AvatarPreset = {
   readonly id: string;
@@ -25,6 +26,7 @@ export const AVATAR_COLLECTIONS: readonly {
   { id: "nature", label: "Nature" },
   { id: "geometry", label: "Geometry" },
   { id: "personas", label: "Personas" },
+  { id: "minimal", label: "Minimalist" },
 ]);
 
 export const AVATAR_CATALOG: readonly AvatarPreset[] = Object.freeze([
@@ -87,6 +89,18 @@ export const AVATAR_CATALOG: readonly AvatarPreset[] = Object.freeze([
   { id: "e08", code: "E08", name: "Guardian", collection: "personas", collectionLabel: "Human Archetypes", assetPath: "/avatars/e08.svg", description: "Sculpted sentinel helm with vertical crest and brushed metallic shoulders." },
   { id: "e09", code: "E09", name: "Pioneer", collection: "personas", collectionLabel: "Human Archetypes", assetPath: "/avatars/e09.svg", description: "Forward-looking pioneer figure framed by an amber rising-horizon arc." },
   { id: "e10", code: "E10", name: "Creator", collection: "personas", collectionLabel: "Human Archetypes", assetPath: "/avatars/e10.svg", description: "Sculptural artisan bust haloed by a violet-silver orbital arc." },
+
+  // Collection F: Minimalist & Atelier (10)
+  { id: "f01", code: "F01", name: "Horizon Line", collection: "minimal", collectionLabel: "Minimalist & Atelier", assetPath: "/avatars/f01.svg", description: "Single luminous horizon bisected by a crisp vertical meridian." },
+  { id: "f02", code: "F02", name: "Zenith Dot", collection: "minimal", collectionLabel: "Minimalist & Atelier", assetPath: "/avatars/f02.svg", description: "Restrained silver focal point balanced within an asymmetric hairline ring." },
+  { id: "f03", code: "F03", name: "Twin Monolith", collection: "minimal", collectionLabel: "Minimalist & Atelier", assetPath: "/avatars/f03.svg", description: "Paired obsidian architectural slabs edged with brushed silver light." },
+  { id: "f04", code: "F04", name: "Lavender Halo", collection: "minimal", collectionLabel: "Minimalist & Atelier", assetPath: "/avatars/f04.svg", description: "Soft lavender luminous eclipse ring centered on matte graphite." },
+  { id: "f05", code: "F05", name: "Emerald Pulse", collection: "minimal", collectionLabel: "Minimalist & Atelier", assetPath: "/avatars/f05.svg", description: "Minimalist emerald telemetry line crossing a quiet obsidian plane." },
+  { id: "f06", code: "F06", name: "Meridian Arc", collection: "minimal", collectionLabel: "Minimalist & Atelier", assetPath: "/avatars/f06.svg", description: "Paired sweeping quarter-arcs framing an open silver center." },
+  { id: "f07", code: "F07", name: "Prism Core", collection: "minimal", collectionLabel: "Minimalist & Atelier", assetPath: "/avatars/f07.svg", description: "Pure triangular aperture revealing an ice-blue inner facet." },
+  { id: "f08", code: "F08", name: "Obsidian Wave", collection: "minimal", collectionLabel: "Minimalist & Atelier", assetPath: "/avatars/f08.svg", description: "Three parallel matte wave ribbons curving smoothly in monochrome silver." },
+  { id: "f09", code: "F09", name: "Signal Node", collection: "minimal", collectionLabel: "Minimalist & Atelier", assetPath: "/avatars/f09.svg", description: "Three minimal connected research nodes along an ascending diagonal." },
+  { id: "f10", code: "F10", name: "Silver Crest", collection: "minimal", collectionLabel: "Minimalist & Atelier", assetPath: "/avatars/f10.svg", description: "Fine minimalist concentric shield mark with a calm luminous apex." },
 ]);
 
 export const DEFAULT_AVATAR_ID = "a01";

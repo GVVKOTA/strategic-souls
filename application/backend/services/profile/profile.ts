@@ -493,7 +493,7 @@ export async function getSessionProfileMeta(subject: string): Promise<{
       .catch(() => null),
     db
       .prepare(
-        "SELECT count(*) AS count FROM x2_notifications WHERE subject = ? AND read_at IS NULL",
+        "SELECT count(*) AS count FROM x1_visible_notices WHERE subject = ? AND read_at IS NULL",
       )
       .bind(subject)
       .first<{ count: number }>()
@@ -571,7 +571,7 @@ export async function getPrivateProfile(user: {
         .catch(() => null),
       db
         .prepare(
-          "SELECT id, kind, target_id AS targetId, created_at AS createdAt, read_at AS readAt FROM x2_notifications WHERE subject = ? ORDER BY created_at DESC, id DESC LIMIT 30",
+          "SELECT id, kind, target_id AS targetId, created_at AS createdAt, read_at AS readAt FROM x1_visible_notices WHERE subject = ? ORDER BY created_at DESC, id DESC LIMIT 40",
         )
         .bind(subject)
         .all<{
@@ -679,7 +679,7 @@ export async function mutatePrivateProfile(
     if (!isValidAvatarPresetId(rawId)) {
       throw new HttpError(
         400,
-        "Choose one of the 50 official Strategic Souls avatar presets (a01–e10).",
+        "Choose one of the 60 official Strategic Souls avatar presets (a01–f10).",
       );
     }
 
@@ -747,7 +747,7 @@ export async function mutatePrivateProfile(
     ) {
       throw new HttpError(
         400,
-        "Choose one of the 50 official Strategic Souls avatar presets.",
+        "Choose one of the 60 official Strategic Souls avatar presets.",
       );
     }
 
@@ -842,7 +842,7 @@ export async function mutatePrivateProfile(
           : (() => {
               throw new HttpError(
                 400,
-                "Choose a supported Strategic Souls banner preset (b01–b08).",
+                "Choose a supported Strategic Souls banner preset (b01–b30).",
               );
             })()
         : existingRecord?.bannerPresetId ?? DEFAULT_BANNER_ID;
@@ -1062,12 +1062,18 @@ export async function mutatePrivateProfile(
   }
 
   if (action === "mark-notifications-read") {
-    await db
-      .prepare(
-        "UPDATE x2_notifications SET read_at = COALESCE(read_at, ?) WHERE subject = ?",
-      )
-      .bind(now, subject)
-      .run();
+    await db.batch([
+      db
+        .prepare(
+          "UPDATE x2_notifications SET read_at = COALESCE(read_at, ?) WHERE subject = ?",
+        )
+        .bind(now, subject),
+      db
+        .prepare(
+          "UPDATE x1_account_notices SET read_at = COALESCE(read_at, ?) WHERE subject = ?",
+        )
+        .bind(now, subject),
+    ]);
     return getPrivateProfile(user);
   }
 
