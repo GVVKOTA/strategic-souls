@@ -41,8 +41,13 @@ function checkArtifact(expectedSha) {
   verify(config.vpc_services?.some((entry) => entry.binding === "MARKET_DATA_ADAPTER" && entry.service_id === adapterId),
     "Production private adapter binding is missing or mismatched.");
   verify(config.version_metadata?.binding === "CF_VERSION_METADATA", "Worker version metadata is missing.");
-  verify(config.vars?.INDIA_API_HOST === indiaApiHost && config.vars.ENABLE_PRIVATE_BROKER_DATA === "true",
-    "Required production configuration is missing.");
+  verify(
+    config.vars?.INDIA_API_HOST === indiaApiHost &&
+      config.vars.ENABLE_PRIVATE_BROKER_DATA === "true" &&
+      config.vars.MARKET_DATA_MODE === "private" &&
+      config.vars.ENABLE_PUBLIC_EXCHANGE_QUOTES === "false",
+    "Required production configuration is missing.",
+  );
   const server = dirname(configFile);
   verify(config.main && existsSync(resolve(server, config.main)), "Worker bundle is missing.");
   verify(config.assets?.directory && existsSync(resolve(server, config.assets.directory, "_next", "static")), "The generated static assets are missing.");
@@ -60,6 +65,8 @@ function checkVersion(version) {
   verify(binding("MARKET_DATA_ADAPTER", "vpc_service")?.service_id === adapterId, "Uploaded Worker has a mismatched private adapter binding.");
   verify(binding("INDIA_API_HOST", "plain_text")?.text === indiaApiHost, "Uploaded Worker is missing the Indian API host.");
   verify(binding("ENABLE_PRIVATE_BROKER_DATA", "plain_text")?.text === "true", "Uploaded Worker is missing private market data configuration.");
+  verify(binding("MARKET_DATA_MODE", "plain_text")?.text === "private", "Uploaded Worker must keep MARKET_DATA_MODE=private until broker redistribution is licensed.");
+  verify(binding("ENABLE_PUBLIC_EXCHANGE_QUOTES", "plain_text")?.text === "false", "Uploaded Worker must keep ENABLE_PUBLIC_EXCHANGE_QUOTES=false.");
   verify(binding("CF_VERSION_METADATA", "version_metadata"), "Uploaded Worker is missing version metadata.");
   for (const name of ["X2_OWNER_SUBJECT", "MARKET_ADAPTER_AUTH_TOKEN", "BHARATSTOCK_API_KEY", "INDIA_API_KEY"]) {
     verify(binding(name, "secret_text"), `Uploaded Worker is missing the ${name} binding.`);

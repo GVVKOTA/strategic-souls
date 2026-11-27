@@ -16,6 +16,7 @@ import type {
 } from "./data-types";
 import { aggregateCandles, aggregateReferences, calendarPeriodKey } from "../../engines/chart-analytics";
 import {
+  BHARATSTOCK_INDEX_SYMBOLS,
   EMPTY_HEALTH,
   PROVIDERS,
   ProviderFailure,
@@ -454,20 +455,45 @@ export async function configureProvider(
     if ((config?.provider === "INDIANAPI" || config?.provider === "BHARATSTOCK") && input.useNiftyUniverse === true) {
       const snapshot = await niftyUniverse();
       if (!snapshot) throw new HttpError(409, "Import the licensed Nifty 500 snapshot before mapping it.");
+      const equityInstruments = snapshot.constituents.map((row) => ({
+        id: row.id,
+        name: row.name,
+        symbol: row.id.slice(4),
+        providerSymbol: row.id.slice(4),
+        market: "NSE",
+        mic: "XNSE",
+        type: "EQUITY",
+        currency: "INR",
+        unit: "INR per share",
+        timezone: "Asia/Kolkata",
+      }));
+      let extraInstruments: unknown[] = [];
+      if (config.provider === "BHARATSTOCK") {
+        if (input.includeBharatStockIndices === true) {
+          extraInstruments = Array.from(BHARATSTOCK_INDEX_SYMBOLS.entries(), ([id, entry]) => ({
+            id,
+            name: entry.name,
+            symbol: entry.symbol,
+            providerSymbol: entry.symbol,
+            market: "NSE",
+            mic: "XNSE",
+            type: "INDEX",
+            currency: "INR",
+            unit: "pts",
+            timezone: "Asia/Kolkata",
+          }));
+        } else if (Array.isArray(config.instruments)) {
+          const seen = new Set(equityInstruments.map((row) => row.id));
+          extraInstruments = config.instruments.filter((row): row is Record<string, unknown> => {
+            if (!row || typeof row !== "object") return false;
+            const rec = row as Record<string, unknown>;
+            return rec.type === "INDEX" && typeof rec.id === "string" && !seen.has(rec.id) && !!seen.add(rec.id);
+          });
+        }
+      }
       next = validateConfig({
         ...config,
-        instruments: snapshot.constituents.map((row) => ({
-          id: row.id,
-          name: row.name,
-          symbol: row.id.slice(4),
-          providerSymbol: row.id.slice(4),
-          market: "NSE",
-          mic: "XNSE",
-          type: "EQUITY",
-          currency: "INR",
-          unit: "INR per share",
-          timezone: "Asia/Kolkata",
-        })),
+        instruments: [...equityInstruments, ...extraInstruments],
       });
       next.constituentGrant = { version: snapshot.version, expiresAt: snapshot.rightsExpiresAt };
     } else {
@@ -887,6 +913,25 @@ async function sourceResearch(
       ],
     };
   }
+  if (requireDisplay && subject) {
+    const researchGrants = await sharedHistoryGrants(nowMs, "research");
+    const derivedGrant = researchGrants.find((g) => g.instruments.some((i) => i.id === id));
+    if (derivedGrant) {
+      return {
+        ...result,
+        provider: SHARED_HISTORY_LABEL,
+        sourceUrl: derivedGrant.sharedHistory.attributionUrl,
+        attribution: {
+          label: derivedGrant.sharedHistory.attribution,
+          url: derivedGrant.sharedHistory.attributionUrl,
+        },
+        limitations: [
+          "Shared daily history is licensed for derived Soul Scans only; raw price charts require a display and redistribution licence.",
+          "No price, performance or live status is inferred from the instrument identity.",
+        ],
+      };
+    }
+  }
   const owner = isDataOwner(subject);
   const configs = (await providerConfigs()).filter(
     (c) =>
@@ -1205,13 +1250,19 @@ export async function currentDisplayRights(
     };
   if (
     provider === PRIVATE_EXCHANGE_FEED_LABEL ||
-    provider === SHARED_EXCHANGE_FEED_LABEL ||
     provider === "Angel One SmartAPI (Private Owner)"
   ) {
     const cfg = resolveGatewayConfig(environment());
-    const active =
-      cfg.flags.enablePrivateBrokerData ||
-      (cfg.flags.mode === "public_licensed" && cfg.flags.enablePublicExchangeQuotes);
+    const active = cfg.flags.enablePrivateBrokerData;
+    return {
+      displayAllowed: active,
+      derivedDisplayAllowed: active,
+      rightsExpiresAt: null,
+    };
+  }
+  if (provider === SHARED_EXCHANGE_FEED_LABEL) {
+    const cfg = resolveGatewayConfig(environment());
+    const active = cfg.flags.mode === "public_licensed" && cfg.flags.enablePublicExchangeQuotes;
     return {
       displayAllowed: active,
       derivedDisplayAllowed: active,

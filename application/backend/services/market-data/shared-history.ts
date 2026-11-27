@@ -200,7 +200,8 @@ export async function sharedHistoryGrants(
     .filter((config) => {
       if (purpose === "ingestion") return true;
       if (purpose === "dashboard") {
-        return config.provider === "BHARATSTOCK" && config.instruments.some((inst) => inst.type === "INDEX");
+        return ["BHARATSTOCK", "EODHD", "TRUEDATA"].includes(config.provider) &&
+          config.instruments.some((inst) => inst.type === "INDEX" || inst.type === "FUTURE");
       }
       // Research and equity display exclude index-only BharatStock dashboard configs.
       if (config.provider === "BHARATSTOCK") {
@@ -887,7 +888,7 @@ export async function refreshSharedHistory(fetchHistory = providerHistory) {
   if (!grants.length) return;
   const first = Math.trunc(now / (2 * MINUTE)) % grants.length;
   const stopAt = now + 25_000;
-  for (let count = 0; count < 6 && Date.now() < stopAt; count++) {
+  for (let count = 0; count < 12 && Date.now() < stopAt; count++) {
     let task: Task | null = null;
     for (let offset = 0; offset < grants.length; offset++) {
       const config = grants[(first + count + offset) % grants.length];

@@ -106,6 +106,7 @@ export default function DataControl({
     [mapping, setMapping] = useState(mappingTemplate),
     [sharedGrant, setSharedGrant] = useState(""),
     [useNiftyUniverse, setUseNiftyUniverse] = useState(false),
+    [includeBharatStockIndices, setIncludeBharatStockIndices] = useState(false),
     [universeFile, setUniverseFile] = useState<File | null>(null),
     [universeImportBusy, setUniverseImportBusy] = useState(false),
     [universeStatus, setUniverseStatus] = useState(""),
@@ -223,6 +224,7 @@ export default function DataControl({
       setMapping(c ? JSON.stringify(c.instruments, null, 2) : mappingTemplate);
       setSharedGrant(c?.sharedHistory ? JSON.stringify(c.sharedHistory, null, 2) : "");
       setUseNiftyUniverse(false);
+      setIncludeBharatStockIndices(false);
       setContract(c?.rights.contractReference ?? "");
       setExpiry(c?.rights.expiresAt.slice(0, 10) ?? "");
       setPriority(c?.priority ?? 1);
@@ -284,6 +286,9 @@ export default function DataControl({
         payload = {
           op,
           ...(useNiftyUniverse ? { useNiftyUniverse: true } : {}),
+          ...(selected === "BHARATSTOCK" && useNiftyUniverse && includeBharatStockIndices
+            ? { includeBharatStockIndices: true }
+            : {}),
           config: {
             provider: selected,
             version: current?.config?.version ?? 0,
@@ -459,6 +464,38 @@ export default function DataControl({
               <code>analysis</code>, <code>storage</code>, <code>derivedDisplay</code>, and{" "}
               <code>verified</code>.
             </p>
+            <button
+              type="button"
+              onClick={() => {
+                if (sharedGrant.trim()) return;
+                edit();
+                setSharedGrant(
+                  JSON.stringify(
+                    {
+                      intervals: ["1d"],
+                      lagMinutes: 30,
+                      retentionHours: 48,
+                      dailyLookbackDays: 400,
+                      dailyRefreshMinutes: 720,
+                      intradayRefreshMinutes: 120,
+                      attribution: "REPLACE_WITH_ACTUAL_ATTRIBUTION",
+                      attributionUrl: "https://REPLACE_WITH_ACTUAL_DOCS_URL",
+                      creditWindow: {
+                        startsAt: "REPLACE_WITH_ACTUAL_ISO_START",
+                        endsAt: "REPLACE_WITH_ACTUAL_ISO_END",
+                        availableCredits: 1,
+                        callsPerMinute: 1,
+                      },
+                    },
+                    null,
+                    2,
+                  ),
+                );
+              }}
+              disabled={!!sharedGrant.trim()}
+            >
+              Insert schema template
+            </button>
           </details>
           <label>
             Implemented provider
@@ -475,17 +512,33 @@ export default function DataControl({
             </select>
           </label>
           {(selected === "INDIANAPI" || selected === "BHARATSTOCK") && (
-            <label className="x2-checkbox">
-              <input
-                type="checkbox"
-                checked={useNiftyUniverse}
-                onChange={(event) => {
-                  edit();
-                  setUseNiftyUniverse(event.target.checked);
-                }}
-              />
-              Map the current licensed Nifty 500 snapshot as NSE equities
-            </label>
+            <>
+              <label className="x2-checkbox">
+                <input
+                  type="checkbox"
+                  checked={useNiftyUniverse}
+                  onChange={(event) => {
+                    edit();
+                    setUseNiftyUniverse(event.target.checked);
+                    if (!event.target.checked) setIncludeBharatStockIndices(false);
+                  }}
+                />
+                Map the current licensed Nifty 500 snapshot as NSE equities
+              </label>
+              {selected === "BHARATSTOCK" && useNiftyUniverse && (
+                <label className="x2-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={includeBharatStockIndices}
+                    onChange={(event) => {
+                      edit();
+                      setIncludeBharatStockIndices(event.target.checked);
+                    }}
+                  />
+                  Also map BharatStock documented NSE indices (NIFTY 50, BANK NIFTY, NIFTY MIDCAP 100)
+                </label>
+              )}
+            </>
           )}
           {state.sharedIngestion && state.sharedIngestion.length > 0 && (
             <div className="x2-provider-status" aria-label="Shared ingestion progress">

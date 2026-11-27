@@ -23,8 +23,8 @@ async function handle(request: Request) {
         );
       return Response.json(await providerSettings(user.userId), { headers });
     }
-    protectMutation(request, 32768);
-    const input = await body(request, 32768);
+    protectMutation(request, 262_144);
+    const input = await body(request, 262_144);
     if (input.op === "refresh-history") {
       requireDataOwner(user.userId);
       await rate(user.userId + ":shared-history-refresh", 4, 60_000);

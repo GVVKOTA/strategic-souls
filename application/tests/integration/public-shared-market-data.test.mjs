@@ -1177,3 +1177,223 @@ test("Shared quote, sector-quotes, release & dashboard cards honor display+redis
   const tooManyRes = await quoteRoute.GET(new Request(`https://site.invalid/api/market/quote?scope=shared&ids=${tooManyIds}`));
   assert.equal(tooManyRes.status, 400);
 });
+
+test("Hardened provider config limits, BharatStock index+Nifty mapping, /api/markets/public rights gating, and private broker isolation", async () => {
+  const h = createTestHarness();
+  const dataService = await h.load("backend/services/market-data/data-service.ts");
+  const nifty = await h.load("backend/services/market-data/nifty-500.ts");
+  const nineCard = await h.load("backend/services/market-data/nine-card-markets.ts");
+  const providersRoute = await h.load("app/api/x2/providers/route.ts");
+  const publicRoute = await h.load("app/api/markets/public/route.ts");
+
+  // 1. vite.config.ts pins safe private broker defaults
+  const viteCfg = readFileSync(resolve("vite.config.ts"), "utf8");
+  assert.match(viteCfg, /ENABLE_PRIVATE_BROKER_DATA:\s*"true"/);
+  assert.match(viteCfg, /ENABLE_PUBLIC_EXCHANGE_QUOTES:\s*"false"/);
+  assert.match(viteCfg, /MARKET_DATA_MODE:\s*"private"/);
+  assert.match(viteCfg, /INDIA_API_HOST:\s*"stock\.indianapi\.in"/);
+
+  // 2. currentDisplayRights separates PRIVATE_EXCHANGE_FEED_LABEL from SHARED_EXCHANGE_FEED_LABEL
+  h.env.ENABLE_PRIVATE_BROKER_DATA = "true";
+  h.env.MARKET_DATA_MODE = "private";
+  h.env.ENABLE_PUBLIC_EXCHANGE_QUOTES = "false";
+  assert.equal((await dataService.currentDisplayRights("NSE:SBIN", dataService.PRIVATE_EXCHANGE_FEED_LABEL)).displayAllowed, true);
+  assert.equal((await dataService.currentDisplayRights("NSE:SBIN", dataService.SHARED_EXCHANGE_FEED_LABEL)).displayAllowed, false);
+
+  // 3. /api/markets/public fails closed when unconfigured
+  const publicBefore = await publicRoute.GET(new Request("https://site.invalid/api/markets/public?id=NSE:NIFTY"));
+  assert.equal(publicBefore.status, 200);
+  const publicBeforeBody = await publicBefore.json();
+  assert.equal(publicBeforeBody.asset.state, "UNAVAILABLE");
+  assert.equal(publicBeforeBody.asset.candles.length, 0);
+
+  const badIdRes = await publicRoute.GET(new Request("https://site.invalid/api/markets/public?id=NSE:BAD$ID"));
+  assert.equal(badIdRes.status, 400);
+
+  // 4. Owner imports Nifty 501 and configures BharatStock via POST /api/x2/providers with >32KB payload + includeBharatStockIndices
+  h.setUser({ userId: "owner" });
+  const constituents = makeNifty501Fixture();
+  await nifty.importNiftyUniverse({
+    effectiveDate: "2026-11-23",
+    expectedCount: 501,
+    provenance: "Authorized NSE Nifty 500 delivery fixture",
+    rightsConfirmed: true,
+    rightsExpiresAt: "2027-06-30T23:59:59.000Z",
+    constituents,
+  });
+
+  const baseConfig = {
+    provider: "BHARATSTOCK",
+    enabled: true,
+    priority: 1,
+    version: 0,
+    dailyCallLimit: 5000,
+    lastWrite: randomUUID(),
+    datasets: ["candles"],
+    instruments: constituents.map((c) => ({
+      id: c.id,
+      name: c.name,
+      symbol: c.id.slice(4),
+      providerSymbol: c.id.slice(4),
+      market: "NSE",
+      mic: "XNSE",
+      type: "EQUITY",
+      currency: "INR",
+      unit: "INR per share",
+      timezone: "Asia/Kolkata",
+    })),
+    rights: {
+      display: false,
+      analysis: true,
+      storage: true,
+      redistribution: false,
+      derivedDisplay: true,
+      verified: true,
+      cacheSeconds: 0,
+      contractReference: "BHARATSTOCK-DERIVED-ONLY-TEST",
+      expiresAt: "2027-06-30T23:59:59.000Z",
+    },
+    sharedHistory: {
+      intervals: ["1d"],
+      lagMinutes: 30,
+      retentionHours: 48,
+      dailyLookbackDays: 400,
+      dailyRefreshMinutes: 720,
+      intradayRefreshMinutes: 120,
+      attribution: "BharatStock EOD Feed",
+      attributionUrl: "https://bharatstockapi.com/reference",
+      creditWindow: {
+        startsAt: "2026-11-01T00:00:00.000Z",
+        endsAt: "2026-12-01T00:00:00.000Z",
+        availableCredits: 5000,
+        callsPerMinute: 120,
+      },
+    },
+  };
+  const payloadStr = JSON.stringify({
+    op: "configure",
+    useNiftyUniverse: true,
+    includeBharatStockIndices: true,
+    config: baseConfig,
+  });
+  assert.ok(Buffer.byteLength(payloadStr, "utf8") > 32_768, "Fixture payload must exceed old 32KB limit");
+
+  // Cross-origin POST is rejected (403); non-owner is rejected (404); oversized >256KB is rejected (413)
+  const crossOrigin = await providersRoute.POST(
+    new Request("https://site.invalid/api/x2/providers", {
+      method: "POST",
+      headers: { origin: "https://evil.invalid", "content-type": "application/json" },
+      body: payloadStr,
+    }),
+  );
+  assert.equal(crossOrigin.status, 403);
+
+  h.setUser({ userId: "alice" });
+  const nonOwnerPost = await providersRoute.POST(
+    new Request("https://site.invalid/api/x2/providers", {
+      method: "POST",
+      headers: { origin: "https://site.invalid", "content-type": "application/json" },
+      body: payloadStr,
+    }),
+  );
+  assert.equal(nonOwnerPost.status, 404);
+
+  h.setUser({ userId: "owner" });
+  const oversized = await providersRoute.POST(
+    new Request("https://site.invalid/api/x2/providers", {
+      method: "POST",
+      headers: { origin: "https://site.invalid", "content-type": "application/json", "content-length": "300000" },
+      body: JSON.stringify({ op: "configure" }),
+    }),
+  );
+  assert.equal(oversized.status, 413);
+
+  const saveRes = await providersRoute.POST(
+    new Request("https://site.invalid/api/x2/providers", {
+      method: "POST",
+      headers: { origin: "https://site.invalid", "content-type": "application/json" },
+      body: payloadStr,
+    }),
+  );
+  assert.equal(saveRes.status, 200);
+  const savedSettings = await saveRes.json();
+  const bs = savedSettings.providers.find((p) => p.id === "BHARATSTOCK");
+  assert.equal(bs.config.instruments.length, 504, "Should include 501 Nifty equities + 3 BharatStock indices");
+
+  // Seed snapshots for NSE:NIFTY and NSE:RELIANCE under version 1 (DERIVED_ONLY)
+  const dates = makeWeekdayDates(15, "2026-11-25");
+  const expiresAt = NOW + 48 * 3_600_000;
+  const insertSnap = h.sql.prepare(
+    `INSERT INTO x8_shared_history_snapshot
+      (provider,config_version,instrument_id,interval,received_at,expires_at,first_event,last_event,bar_count,last_close,prior_close,prior_event,last_volume,bars)
+     VALUES ('BHARATSTOCK',?,?,'1d',?,?,?,?,?,?,?,?,?,?)`,
+  );
+  function seedSample(ver) {
+    for (const row of [{ id: "NSE:NIFTY", base: 24200, step: 45 }, { id: "NSE:RELIANCE", base: 1400, step: 5 }]) {
+      const bars = dates.map((d, idx) => {
+        const c = row.base + idx * row.step;
+        return {
+          date: d, open: c - 2, high: c + 3, low: c - 3, close: c, adjustedClose: c,
+          volume: 1000, openInterest: null, knownAt: new FixedClock().toISOString(),
+          adjustment: "RAW_OHLC_ADJUSTED_CLOSE", provider: "BharatStock EOD Feed",
+        };
+      });
+      const last = bars.at(-1), prior = bars.at(-2);
+      insertSnap.run(ver, row.id, NOW - 60_000, expiresAt, bars[0].date, last.date, bars.length, last.close, prior.close, prior.date, last.volume, JSON.stringify(bars));
+    }
+  }
+  seedSample(1);
+
+  // DERIVED_ONLY: /api/markets/public stays UNAVAILABLE; assetResearch explains derived-only licence without raw prices
+  const publicDerived = await (await publicRoute.GET(new Request("https://site.invalid/api/markets/public?id=NSE:NIFTY"))).json();
+  assert.equal(publicDerived.asset.state, "UNAVAILABLE");
+  assert.equal(publicDerived.asset.candles.length, 0);
+
+  const memberResearchDerived = await dataService.assetResearch("NSE:RELIANCE", "alice", "1d");
+  assert.equal(memberResearchDerived.candles.length, 0);
+  assert.match(memberResearchDerived.limitations[0], /derived Soul Scans only/i);
+
+  // Upgrade to display + redistribution (version 2) with cacheSeconds: 0 -> private, no-store on /api/markets/public
+  await dataService.configureProvider("owner", {
+    useNiftyUniverse: true,
+    includeBharatStockIndices: true,
+    config: {
+      ...baseConfig,
+      version: 1,
+      lastWrite: randomUUID(),
+      rights: { ...baseConfig.rights, display: true, redistribution: true, cacheSeconds: 0 },
+    },
+  });
+  seedSample(2);
+
+  const pubDisplayNoCache = await publicRoute.GET(new Request("https://site.invalid/api/markets/public?id=NSE:NIFTY"));
+  assert.equal(pubDisplayNoCache.status, 200);
+  assert.match(pubDisplayNoCache.headers.get("Cache-Control"), /private, no-store/);
+  const pubDisplayBody = await pubDisplayNoCache.json();
+  assert.equal(pubDisplayBody.asset.state, "PUBLISHED_EOD");
+  assert.equal(pubDisplayBody.asset.candles.length, 15);
+  assert.equal(pubDisplayBody.asset.attribution.label, "BharatStock EOD Feed");
+  assert.equal(pubDisplayBody.asset.attribution.url, "https://bharatstockapi.com/reference");
+  assert.equal(pubDisplayBody.asset.capabilities.chart, true);
+
+  // Dashboard overview serves NSE:NIFTY when DISPLAY_AND_DERIVED
+  const guestOverview = await nineCard.getMarketOverviewPayload(null);
+  const niftyTile = guestOverview.cards.find((c) => c.canonicalId === "NSE:NIFTY");
+  assert.ok(niftyTile && niftyTile.value > 0 && niftyTile.redistributable === true);
+  assert.equal(niftyTile.provider, "BharatStock EOD Feed");
+
+  // Upgrade with cacheSeconds: 300 -> bounded public cache header
+  await dataService.configureProvider("owner", {
+    useNiftyUniverse: true,
+    includeBharatStockIndices: true,
+    config: {
+      ...baseConfig,
+      version: 2,
+      lastWrite: randomUUID(),
+      rights: { ...baseConfig.rights, display: true, redistribution: true, cacheSeconds: 300 },
+    },
+  });
+  seedSample(3);
+  const pubCached = await publicRoute.GET(new Request("https://site.invalid/api/markets/public?id=NSE:NIFTY"));
+  assert.equal(pubCached.headers.get("Cache-Control"), "public, max-age=60, stale-while-revalidate=120");
+});

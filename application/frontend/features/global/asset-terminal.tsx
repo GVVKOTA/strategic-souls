@@ -822,7 +822,7 @@ export default function AssetTerminal({
           <div className="ss-v31-info-grid">
             <div>
               <span>Source</span>
-              <strong>{sanitizeProviderLabel(asset?.provider)}</strong>
+              <strong>{asset?.attribution?.label || sanitizeProviderLabel(asset?.provider)}</strong>
             </div>
             <div>
               <span>Instrument ID</span>
@@ -841,14 +841,16 @@ export default function AssetTerminal({
               </strong>
             </div>
           </div>
-          {asset?.sourceUrl && (
+          {(asset?.attribution?.url || asset?.sourceUrl) && (
             <a
-              href={asset.sourceUrl}
+              href={asset?.attribution?.url || asset?.sourceUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="ss-v31-source-anchor"
             >
-              Official source documentation
+              {asset?.attribution?.label
+                ? `${asset.attribution.label} documentation`
+                : "Official source documentation"}
             </a>
           )}
           <p className="x1-caption" style={{ margin: "6px 0 0" }}>
