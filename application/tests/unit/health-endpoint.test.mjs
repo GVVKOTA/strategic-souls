@@ -68,4 +68,97 @@ test("/api/health route enforces private no-store and nosniff headers", () => {
   const routeSource = readFileSync("app/api/health/route.ts", "utf8");
   assert.match(routeSource, /"Cache-Control":\s*"private, no-store"/);
   assert.match(routeSource, /"X-Content-Type-Options":\s*"nosniff"/);
+  assert.match(routeSource, /includeHeartbeats:\s*true/);
+});
+
+test("X3-101: health ready mode reports fresh and stale cron heartbeats without crashing if table missing", async () => {
+  const now = new Date("2026-11-28T06:00:00.000Z");
+  const fresh = await evaluateHealthReadiness({
+    mode: "ready",
+    includeHeartbeats: true,
+    now,
+    db: {
+      prepare(sql) {
+        if (sql === "SELECT 1 AS ok") return { first: async () => ({ ok: 1 }) };
+        return {
+          first: async () => null,
+          all: async () => ({
+            results: [
+              {
+                job_key: "soul_memory_ist_midnight_reset",
+                last_started_at: "2026-11-27T18:30:05.000Z",
+                last_succeeded_at: "2026-11-27T18:30:05.000Z",
+                last_status: "OK",
+              },
+              {
+                job_key: "market_scan_worker",
+                last_started_at: "2026-11-28T05:50:00.000Z",
+                last_succeeded_at: "2026-11-28T05:50:00.000Z",
+                last_status: "OK",
+              },
+            ],
+          }),
+        };
+      },
+    },
+    buildCommit: "4c04f31de9fddace1fb316ae09b930e7d81eeefe",
+    workerVersionId: "8ad07157-7969-478a-b9a7-66c4fb1c3393",
+  });
+  assert.equal(fresh.statusCode, 200);
+  assert.equal(fresh.body.checks.heartbeats?.checked, true);
+  assert.equal(fresh.body.checks.heartbeats?.ok, true);
+  assert.equal(fresh.body.checks.heartbeats?.staleCount, 0);
+
+  const stale = await evaluateHealthReadiness({
+    mode: "ready",
+    includeHeartbeats: true,
+    now,
+    db: {
+      prepare(sql) {
+        if (sql === "SELECT 1 AS ok") return { first: async () => ({ ok: 1 }) };
+        return {
+          first: async () => null,
+          all: async () => ({
+            results: [
+              {
+                job_key: "market_scan_worker",
+                last_started_at: "2026-11-28T02:00:00.000Z",
+                last_succeeded_at: "2026-11-28T02:00:00.000Z",
+                last_status: "OK",
+              },
+            ],
+          }),
+        };
+      },
+    },
+    buildCommit: "4c04f31de9fddace1fb316ae09b930e7d81eeefe",
+    workerVersionId: "8ad07157-7969-478a-b9a7-66c4fb1c3393",
+  });
+  assert.equal(stale.statusCode, 200);
+  assert.equal(stale.body.checks.heartbeats?.checked, true);
+  assert.equal(stale.body.checks.heartbeats?.ok, false);
+  assert.equal(stale.body.checks.heartbeats?.staleCount, 1);
+  assert.equal(stale.body.checks.heartbeats?.tasks[0]?.stale, true);
+
+  const missingTable = await evaluateHealthReadiness({
+    mode: "ready",
+    includeHeartbeats: true,
+    now,
+    db: {
+      prepare(sql) {
+        if (sql === "SELECT 1 AS ok") return { first: async () => ({ ok: 1 }) };
+        return {
+          first: async () => null,
+          all: async () => {
+            throw new Error("no such table: x9_system_heartbeats");
+          },
+        };
+      },
+    },
+    buildCommit: null,
+    workerVersionId: null,
+  });
+  assert.equal(missingTable.statusCode, 200);
+  assert.equal(missingTable.body.checks.heartbeats?.checked, false);
+  assert.equal(missingTable.body.checks.heartbeats?.ok, true);
 });

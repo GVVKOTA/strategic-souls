@@ -1,5 +1,6 @@
 "use client";
 
+import "../../community/profile.css";
 import { useState } from "react";
 import { Check, Image as ImageIcon, Plus, X } from "lucide-react";
 import { resolveAvatarPreset } from "../../../../backend/services/profile/avatars";

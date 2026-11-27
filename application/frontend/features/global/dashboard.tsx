@@ -1,4 +1,5 @@
 "use client";
+import "./data.css";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,

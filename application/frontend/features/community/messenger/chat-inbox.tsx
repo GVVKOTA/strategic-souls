@@ -1,4 +1,5 @@
 "use client";
+import "./messenger.css";
 import { useState } from "react";
 import { BellOff, Info, MessageSquarePlus, Search, X } from "lucide-react";
 import AvatarBadge from "../../account/avatar-badge";

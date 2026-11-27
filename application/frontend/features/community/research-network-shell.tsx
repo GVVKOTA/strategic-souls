@@ -1,4 +1,6 @@
 "use client";
+import "./social.css";
+import "./profile.css";
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,

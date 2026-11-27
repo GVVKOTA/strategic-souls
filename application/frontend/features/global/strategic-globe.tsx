@@ -1,4 +1,5 @@
 "use client";
+import "../../components/workspace/globe-visual.css";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,

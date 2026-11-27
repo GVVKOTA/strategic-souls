@@ -1,4 +1,4 @@
-/** Read-only capture -> isolated SQLite recovery. Never writes to hosted storage. */
+/** DEPRECATED (legacy 9-table projection script): Use `wrangler d1 export` + `operations/scripts/verify-logical-backup.mjs` for full-schema (73+ table) X 3.0 backups. Read-only capture -> isolated SQLite recovery. Never writes to hosted storage. */
 import {readFileSync,writeFileSync,existsSync,readdirSync} from 'node:fs';
 import {resolve,join,relative} from 'node:path';
 import {createHash} from 'node:crypto';

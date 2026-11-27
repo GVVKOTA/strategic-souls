@@ -482,6 +482,44 @@ export async function runProductionMonitor({
           });
     }
     checks.push(checkLatencyOutcome(result, config, warnings));
+
+    // 3b. Scheduled Cron Heartbeats (when exposed by X 3.0 /api/health)
+    if (probe.ok && probe.status === 200) {
+      let hbJson = null;
+      try {
+        hbJson = JSON.parse(probe.text);
+      } catch {
+        hbJson = null;
+      }
+      const hb = hbJson?.checks?.heartbeats;
+      if (hb && hb.checked === true) {
+        const staleTasks = Array.isArray(hb.tasks)
+          ? hb.tasks.filter((t) => t.stale === true)
+          : [];
+        const hbOk = hb.ok === true && staleTasks.length === 0;
+        checks.push(
+          makeCheckResult({
+            id: "cron-heartbeats",
+            label: "Scheduled Worker Cron Heartbeats",
+            path: "/api/health",
+            impactedFeature: "SOUL MEMORY IST Midnight Reset & Scan Job Reaper",
+            severity: "high",
+            ok: hbOk,
+            category: hbOk ? "OK" : "HEARTBEAT_STALE",
+            httpStatus: 200,
+            durationMs: probe.durationMs,
+            attempts: probe.attempts,
+            expected: "All recorded Worker cron heartbeats fresh within maxAgeMinutes",
+            observed: hbOk
+              ? `ok (${(hb.tasks ?? []).length} scheduled task(s) fresh)`
+              : `stale heartbeats: ${staleTasks.map((t) => `${t.taskName}(status=${t.lastStatus},ageMin=${t.ageMinutes ?? "n/a"})`).join(", ")}`,
+            troubleshooting: hbOk
+              ? "None required."
+              : "Check Cloudflare Workers Cron Triggers (30 18 * * * and */15 * * * *) and x9_system_heartbeats in D1.",
+          }),
+        );
+      }
+    }
   }
 
   // 4. Official Public Market References

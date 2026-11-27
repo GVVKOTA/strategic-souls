@@ -1,4 +1,5 @@
 "use client";
+import "./profile.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,

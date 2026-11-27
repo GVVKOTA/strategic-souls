@@ -298,3 +298,60 @@ test("dry-run computes actions without issuing any GitHub writes, and GitHub API
     /HTTP 403/,
   );
 });
+
+test("X3-102: monitor detects stale/missed Worker cron heartbeats and recovers when fresh", async () => {
+  const baseFetch = createHealthyFetch();
+  let stale = true;
+  const hbFetch = async (url, init) => {
+    if (new URL(url).pathname === "/api/health") {
+      return jsonResponse({
+        status: "ok",
+        service: "strategic-souls",
+        mode: "ready",
+        checks: {
+          worker: { ok: true },
+          database: { checked: true, ok: true, latencyMs: 3 },
+          heartbeats: {
+            checked: true,
+            ok: !stale,
+            staleCount: stale ? 1 : 0,
+            tasks: [
+              {
+                taskName: "soul_memory_ist_midnight_reset",
+                lastStatus: stale ? "ERROR" : "OK",
+                lastRunAt: "2026-11-26T18:30:05.000Z",
+                lastOkAt: stale ? "2026-11-24T18:30:05.000Z" : "2026-11-26T18:30:05.000Z",
+                ageMinutes: stale ? 2880 : 15,
+                maxAgeMinutes: 1560,
+                stale,
+              },
+            ],
+          },
+        },
+      });
+    }
+    return baseFetch(url, init);
+  };
+
+  const bad = await runProductionMonitor({
+    targetUrl: "https://strategic-souls.vishnukota20071005.workers.dev",
+    fetchImpl: hbFetch,
+    now: new Date("2026-11-26T18:45:00.000Z"),
+    delayFn: async () => {},
+  });
+  assert.equal(bad.ok, false);
+  const hbCheck = bad.checks.find((c) => c.id === "cron-heartbeats");
+  assert.ok(hbCheck);
+  assert.equal(hbCheck.category, "HEARTBEAT_STALE");
+  assert.equal(hbCheck.severity, "high");
+
+  stale = false;
+  const good = await runProductionMonitor({
+    targetUrl: "https://strategic-souls.vishnukota20071005.workers.dev",
+    fetchImpl: hbFetch,
+    now: new Date("2026-11-26T18:45:00.000Z"),
+    delayFn: async () => {},
+  });
+  assert.equal(good.ok, true);
+  assert.equal(good.summary.passed, 7);
+});

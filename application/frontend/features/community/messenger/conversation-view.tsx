@@ -1,4 +1,5 @@
 "use client";
+import "./messenger.css";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Check, MessageSquare, X } from "lucide-react";
 import ChatHeader from "./chat-header";

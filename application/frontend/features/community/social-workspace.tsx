@@ -1,4 +1,5 @@
 "use client";
+import "./social.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Search,

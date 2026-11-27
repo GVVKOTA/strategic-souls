@@ -19,6 +19,7 @@ export async function GET(request: Request): Promise<Response> {
     db: env.DB ?? null,
     buildCommit,
     workerVersionId,
+    includeHeartbeats: true,
   });
 
   return Response.json(result.body, {

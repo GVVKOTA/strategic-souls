@@ -2820,3 +2820,24 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
   display: inline-flex;
   align-items: center;
 }
+
+
+/* ---------- X3-133: Legal Pages Footer & Accessible Link Targets ---------- */
+.legal-page .legal-note {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--x1-text-secondary, #b0b6c2);
+}
+
+.legal-page .legal-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.legal-page .legal-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  font-size: 12.5px;
+}

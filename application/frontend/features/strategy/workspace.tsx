@@ -88,6 +88,7 @@ import {
   type ScanSortKey,
 } from "./scan-helpers";
 import "./research.css";
+import "./scanner-x54.css";
 
 const FormulaLab = lazy(() => import("./formula-lab"));
 const PatternDrawCanvas = lazy(() => import("./draw-canvas"));

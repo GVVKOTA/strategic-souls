@@ -1298,7 +1298,7 @@ export default function X1Workspace() {
           )}
           {!(view === "Community" && mobileChatActive) && (
             <footer className="x1-footer">
-              <span>STRATEGIC SOULS / GLOBAL VERTEX VECTORS</span>
+              <span>STRATEGIC SOULS X 3.0 / GLOBAL VERTEX VECTORS</span>
               <p>
                 Private research and education. Market views are not live order
                 execution or investment advice.
@@ -1308,6 +1308,7 @@ export default function X1Workspace() {
                 <a href="/terms">Terms</a>
                 <a href="/legal/compliance">Compliance</a>
                 <a href="/help">Help</a>
+                <a href="/contact">Contact</a>
                 <button onClick={() => setAbout(true)}>About Strategic Souls</button>
               </div>
             </footer>

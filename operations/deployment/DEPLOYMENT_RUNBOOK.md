@@ -14,7 +14,7 @@ This runbook documents the **exact verified production infrastructure** for **St
 | **Cloudflare Worker Name** | `strategic-souls` (script tag: `b0ad3e732c704e84a7aad4eff2aef4da`) |
 | **Cloudflare D1 Database Name** | `ss` |
 | **Cloudflare D1 Runtime Binding** | `DB` |
-| **Cloudflare D1 Physical UUID** | `1cda2b05-6b99-4d04-896f-b3542ad2ce7f` (applied `database/migrations/0000`–`0020`) |
+| **Cloudflare D1 Physical UUID** | `1cda2b05-6b99-4d04-896f-b3542ad2ce7f` (live `0000`–`0020`; additive `0021_x3_soul_memory_and_repro.sql` staged for X 3.0) |
 | **Cloudflare VPC Binding** | `MARKET_DATA_ADAPTER` (`01a2095b-f466-7c90-a813-4fad03735504`) |
 | **Cloudflare Workers Builds Trigger** | `0727e904-48ad-4e75-9b26-1d2123ec5063` (GitHub `GVVKOTA/strategic-souls`, branch `main`) |
 | **Workers Builds Configuration** | Updated to `root_directory: "/application"`, `build_command: "pnpm run build"`, `deploy_command: "node ../operations/scripts/check-production-release.mjs stage"` |
@@ -106,15 +106,19 @@ Production secrets are stored **only** in Cloudflare Worker Secrets (`Workers & 
 | --- | --- | --- |
 | `X2_OWNER_SUBJECT` | Verified owner account ID authorizing owner-only Data Connections | Optional (fail-closed if unset) |
 | `MARKET_ADAPTER_AUTH_TOKEN` | Owner-only VPC adapter credential | Required in production |
+| `MARKET_DATA_API_KEY` | Universal X 3.0 provider-neutral commercial market-data API key | Recommended for universal gateway (falls back cleanly to provider-specific keys) |
 | `BHARATSTOCK_API_KEY` | Encrypted BharatStock credential | Preserved by the release gate |
 | `INDIA_API_KEY` | Encrypted Indian API credential | Preserved by the release gate |
 | `X2_EODHD_API_TOKEN` | Licensed EODHD market-data API token | Optional (keyless fallback active) |
 | `X2_TRUEDATA_BEARER_TOKEN` | Licensed TrueData historical bearer token | Optional (keyless fallback active) |
+| `RESEND_API_KEY` | Outbound transactional email delivery (password reset & email verification) | Required to enable live email delivery (or use `SS_EMAIL_WEBHOOK_URL`) |
+| `SS_EMAIL_WEBHOOK_URL` | Alternative HTTPS webhook transport for transactional auth emails | Optional alternative to `RESEND_API_KEY` |
 
 - Never commit secret values, never store them in D1 tables, and never paste them in chat or PRs.
 - Authentication uses first-party Cloudflare D1 email/password accounts only; Google OAuth routes and secrets are retired.
 - `INDIA_API_HOST=stock.indianapi.in` is a server variable tracked in `vite.config.ts`.
-- Cloudflare Worker observability `redact_query_string` should remain enabled (`true`) so URL query parameters are not logged in plaintext.
+- Cloudflare Worker observability `redact_query_string` MUST remain enabled (`true`, enforced in `vite.config.ts`) so URL query parameters (such as password reset links) are never logged in plaintext.
+- Scheduled Cron Triggers (`30 18 * * *` for 00:00 IST SOUL MEMORY reset + `*/15 * * * *` for scan job reaper & reference cache refresh) record heartbeats in `x9_system_heartbeats`, surfaced by `/api/health` and checked by `operations/monitoring/monitor.mjs`.
 
 ---
 
@@ -122,13 +126,13 @@ Production secrets are stored **only** in Cloudflare Worker Secrets (`Workers & 
 
 ### Worker Code Rollback (Zero Data Loss, < 1 Minute)
 If a new release introduces any regression:
-1. **Cloudflare Dashboard:** Go to **Workers & Pages -> `strategic-souls` -> Deployments**, select the previous known-good version (e.g., Version #4 `87d2108e-eb02-49c9-a361-3b6eb6fceb3c`), and click **Rollback to this version**.
+1. **Cloudflare Dashboard:** Go to **Workers & Pages -> `strategic-souls` -> Deployments**, select the previous known-good version (e.g., Version #60 `c40e4906-23d7-4924-bfe3-69c5ec95159f`, or Version #45 `c14d457e-c3b7-4389-a106-91d936759d5c`), and click **Rollback to this version**.
 2. **Or via Wrangler CLI:**
    ```powershell
    npx wrangler rollback --name strategic-souls
    ```
-3. Immediately re-run the Section 4 smoke checks. **Never reset or drop D1 during a Worker rollback.**
+3. Immediately re-run the Section 4 smoke checks. **Never reset or drop D1 during a Worker rollback.** Additive X 3.0 tables (`0021_x3_soul_memory_and_repro.sql`) are strictly backward-compatible with previous Worker versions (rolling back code safely ignores the new `x9_*` tables without breaking older queries).
 
 ### D1 Database Backup & Recovery
-- **Cloudflare Time Travel:** Cloudflare D1 (`ss`, UUID `1cda2b05-6b99-4d04-896f-b3542ad2ce7f`) supports point-in-time Time Travel bookmarks (`npx --prefix application wrangler d1 time-travel info ss` / `restore`). Record a bookmark before any future approved additive migration (`0021+`).
-- **Logical Export Backup:** Before any future approved schema migration, export an encrypted/private local backup via `npx --prefix application wrangler d1 export ss --remote --output <private-untracked-path>.sql` (kept strictly outside Git) and verify logical restore compatibility using `node operations/scripts/verify-logical-backup.mjs <private-untracked-dir>`.
+- **Cloudflare Time Travel:** Cloudflare D1 (`ss`, UUID `1cda2b05-6b99-4d04-896f-b3542ad2ce7f`) supports point-in-time Time Travel bookmarks (`npx --prefix application wrangler d1 time-travel info ss` / `restore`). Record a bookmark before applying `0021_x3_soul_memory_and_repro.sql` or any future additive migration.
+- **Logical Export Backup & Full-Schema Restore Verification:** Before any migration, export a full SQL backup strictly outside Git (`npx --prefix application wrangler d1 export ss --remote --output <private-untracked-path>.sql`) and verify all 73+ schema tables, indexes, triggers, foreign keys, and immutability rules using `node operations/scripts/verify-logical-backup.mjs <private-untracked-path>.sql <private-untracked-restore-dir>`.

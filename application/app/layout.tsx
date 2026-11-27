@@ -1,17 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import "../frontend/styles/globals.css";
 import "../frontend/styles/x1.css";
-import "../frontend/components/workspace/globe-visual.css";
 import "../frontend/components/workspace/motion.css";
-import "../frontend/features/community/social.css";
-import "../frontend/features/global/data.css";
-import "../frontend/features/strategy/research.css";
 import "../frontend/styles/x2.css";
 import "../frontend/features/account/account.css";
 import "../frontend/styles/x51.css";
-import "../frontend/features/strategy/scanner-x54.css";
-import "../frontend/features/community/profile.css";
-import "../frontend/features/community/messenger/messenger.css";
 import "../frontend/styles/ss-v3.css";
 export const viewport: Viewport = {
   themeColor: "#070809",

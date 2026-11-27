@@ -11,6 +11,7 @@ const pages: Record<string, string> = {
   trust: "privacy",
   terms: "terms",
   help: "contact",
+  contact: "contact",
 };
 
 export const dynamic = "force-dynamic";
@@ -48,17 +49,16 @@ export default async function ProductPage({
         <Link className="legal-brand" href="/">
           ← Strategic Souls
         </Link>
-        <div className="eyebrow">STRATEGIC SOULS · PRIVATE RESEARCH WORKSPACE</div>
+        <div className="eyebrow">STRATEGIC SOULS X 3.0 · RESEARCH WORKSPACE</div>
         <h1>Sign in to your research workspace.</h1>
         <p className="legal-intro">
           Sign in or create an account to save watchlists, manual portfolios,
-          Soul Scans, chart layouts, and private Community research in
-          Cloudflare D1.
+          Soul Scans, chart layouts, and Community research.
         </p>
         <AuthPanel returnTo={returnTo} />
         <p className="legal-note">
-          Global Vertex Vectors · Research and education only. Sessions use
-          HttpOnly cookies stored as SHA-256 hashes on Cloudflare Workers.
+          Global Vertex Vectors · Educational research only (18+). Sessions use
+          secure HttpOnly cookies.
         </p>
       </main>
     );
@@ -72,7 +72,7 @@ export default async function ProductPage({
       <Link className="legal-brand" href="/">
         ◌ STRATEGIC SOULS <span>BY GVV</span>
       </Link>
-      <div className="eyebrow">STRATEGIC SOULS · RESEARCH</div>
+      <div className="eyebrow">STRATEGIC SOULS X 3.0 · INFORMATION</div>
       <h1>{d.title}</h1>
       <p className="legal-intro">{d.intro}</p>
       {d.sections.map((s) => (
@@ -100,11 +100,12 @@ export default async function ProductPage({
         <Link href="/legal/compliance">Compliance</Link>
       </nav>
       <Link className="primary" href="/workspace">
-        Open private workspace ↗
+        Open workspace ↗
       </Link>
       <p className="legal-note">
-        Draft policies await qualified review. No broker execution or payment
-        activation.
+        Strategic Souls X 3.0 · Global Vertex Vectors · Educational research
+        only (18+). No investment advice, brokerage execution, or active
+        billing. Formal legal counsel review remains pending.
       </p>
     </main>
   );
