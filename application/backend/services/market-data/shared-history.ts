@@ -29,6 +29,10 @@ import { intradayBarCloseMs } from "./candle-sessions";
 import { OFFICIAL_FX_PAIRS } from "./market-data";
 import { niftyUniverse } from "./nifty-500";
 import { matchesScanMarketPreset, type ScanUniversePreset } from "../research/research";
+import {
+  aggregateIntradayCandles,
+  resolveNativeInterval,
+} from "./timeframes";
 
 import { SHARED_HISTORY_LABEL } from "./data-types";
 export { SHARED_HISTORY_LABEL } from "./data-types";
@@ -138,7 +142,7 @@ export async function hasLegacySharedCommercialConfig(now = Date.now()): Promise
   }
 }
 export const nativeInterval = (interval: Interval): NativeHistoryInterval =>
-  interval === "30m" || interval === "1h" ? interval : "1d";
+  resolveNativeInterval(interval);
 
 /**
  * Derived-only shared rights permit server-side ingestion, caching, analysis, and returning
@@ -382,6 +386,14 @@ export async function readSharedHistoryBatch(
       const row = byId.get(instrument.id);
       if (!row) continue;
       const state = dataState(instrument, resolution, row.last_event, cutoff, config.sharedHistory.lagMinutes);
+      const rawCandles =
+        config.provider === "INDIANAPI"
+          ? []
+          : (JSON.parse(row.bars) as Candle[]);
+      const candles =
+        interval === "3h" || interval === "6h"
+          ? aggregateIntradayCandles(rawCandles, interval, instrument.market, cutoff).bars
+          : rawCandles;
       result.set(id, {
         config,
         instrument,
@@ -389,7 +401,7 @@ export async function readSharedHistoryBatch(
         interval: resolution,
         ...(config.provider === "INDIANAPI"
           ? { prices: JSON.parse(row.bars) as IndianDailyPrice[], candles: [] }
-          : { candles: JSON.parse(row.bars) as Candle[] }),
+          : { candles }),
         state,
       });
     }
@@ -714,7 +726,11 @@ export async function sharedUniverseReadiness(now = Date.now()): Promise<SharedU
         intervalSet.add("1mo");
       }
       if (config.sharedHistory.intervals.includes("30m")) intervalSet.add("30m");
-      if (config.sharedHistory.intervals.includes("1h")) intervalSet.add("1h");
+      if (config.sharedHistory.intervals.includes("1h")) {
+        intervalSet.add("1h");
+        intervalSet.add("3h");
+        intervalSet.add("6h");
+      }
 
       const sampleInst = equityInstruments[0] ?? config.instruments[0];
       const expectedDay = sampleInst ? expectedDailyDate(sampleInst, now, config.sharedHistory.lagMinutes) : null;

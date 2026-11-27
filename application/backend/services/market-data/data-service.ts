@@ -50,6 +50,11 @@ import {
   type SharedGrant,
   type SharedHistory,
 } from "./shared-history";
+import {
+  aggregateIntradayObservations,
+  isIntradayInterval,
+  resolveNativeInterval,
+} from "./timeframes";
 import { getIndianExchangeSession } from "./exchange-calendar";
 import { X2_INSTRUMENTS, registryInstrument } from "./instrument-registry";
 import {
@@ -793,7 +798,7 @@ async function sourceResearch(
   },
 ): Promise<AssetResearch> {
   if (
-    !["30m", "1h", "1d", "1wk", "1mo"].includes(interval) ||
+    !["30m", "1h", "3h", "6h", "1d", "1wk", "1mo"].includes(interval) ||
     typeof id !== "string" ||
     id.length > 80
   )
@@ -804,11 +809,11 @@ async function sourceResearch(
     id.startsWith("TREASURY:") ||
     id.startsWith("UST:")
   ) {
-    if (interval === "30m" || interval === "1h") {
+    if (isIntradayInterval(interval)) {
       return {
         ...result,
         limitations: [
-          `Official daily reference feed does not publish ${interval === "30m" ? "30-minute" : "1-hour"} intraday bars. Never synthesized from daily closes.`,
+          `Official daily reference feed does not publish ${interval} intraday bars. Never synthesized from daily closes.`,
         ],
       };
     }
@@ -1368,7 +1373,7 @@ function completedPublishedPeriods<T extends { date: string }>(
   interval: Interval,
   currentDate: string,
 ) {
-  if (interval === "1d" || interval === "1h" || interval === "30m" || !rows.length) return rows;
+  if ((interval !== "1wk" && interval !== "1mo") || !rows.length) return rows;
   const first = calendarPeriodKey(rows[0].date, interval);
   const current = calendarPeriodKey(currentDate, interval);
   return rows.filter(({ date }) => {
@@ -1396,12 +1401,12 @@ export async function researchUniverse(
     eventCutoff?: string;
   } = {},
 ): Promise<ResearchUniverse> {
-  if (options.interval && !["30m", "1h", "1d", "1wk", "1mo"].includes(options.interval))
+  if (options.interval && !["30m", "1h", "3h", "6h", "1d", "1wk", "1mo"].includes(options.interval))
     throw new HttpError(400, "Use a supported scan interval.");
   const brokerMaxLimit = Math.max(1, Math.min(24, options.limit ?? 24));
   const sharedMaxLimit = Math.max(1, Math.min(100, options.limit ?? 24));
   const interval = options.interval ?? "1d";
-  const isIntraday = interval === "30m" || interval === "1h";
+  const isIntraday = isIntradayInterval(interval);
   const out: ResearchUniverse = {
     datasets: [],
     excluded: [],
@@ -1568,7 +1573,10 @@ export async function researchUniverse(
       const retained = eligibleSharedPeriods(snapshot.prices, mappedInst, interval, cutoffMs);
       const periods = new Map<string, typeof retained[number]>();
       for (const price of retained) {
-        periods.set(interval === "1d" ? price.date : calendarPeriodKey(price.date, interval), price);
+        const key = interval === "1wk" || interval === "1mo"
+          ? calendarPeriodKey(price.date, interval)
+          : price.date;
+        periods.set(key, price);
       }
       if (!periods.size) {
         out.excluded.push({ id, reason: "No complete exchange period in the available price history." });
@@ -1615,19 +1623,29 @@ export async function researchUniverse(
     const a = await sourceResearch(
       id,
       subject,
-      isIntraday ? interval : "1d",
+      isIntraday ? resolveNativeInterval(interval) : "1d",
       false,
       "analysis",
       selected.provider,
       { cutoff: options.eventCutoff ? cutoffMs : undefined, grants: eligibleGrants, stored },
     );
     if (isIntraday) {
-      const observations = completedCommercialIntradayObservations(
+      const nativeIntra = resolveNativeInterval(interval) as "30m" | "1h";
+      const nativeObs = completedCommercialIntradayObservations(
         a.candles,
         mappedInst?.market ?? "GLOBAL",
         options.eventCutoff ?? a.retrievedAt ?? out.asOf,
-        interval,
+        nativeIntra,
       );
+      const observations =
+        interval === "3h" || interval === "6h"
+          ? aggregateIntradayObservations(
+              nativeObs,
+              interval,
+              mappedInst?.market ?? "GLOBAL",
+              cutoffMs,
+            ).bars
+          : nativeObs;
       const latest = observations.at(-1);
       if (
         !a.capabilities.analysis ||
@@ -1638,7 +1656,7 @@ export async function researchUniverse(
         out.excluded.push({
           id,
           reason:
-            `Genuine completed ${interval === "30m" ? "30-minute (30m)" : "1-hour"} candles or analysis rights are unavailable for this instrument.`,
+            `Genuine completed ${interval} candles or analysis rights are unavailable for this instrument.`,
         });
         continue;
       }
@@ -1648,7 +1666,14 @@ export async function researchUniverse(
         currency: a.currency,
         source: a.provider,
         permitted: true,
-        frequency: interval === "30m" ? "INTRADAY_30M" : "INTRADAY_1H",
+        frequency:
+          interval === "30m"
+            ? "INTRADAY_30M"
+            : interval === "3h"
+              ? "INTRADAY_3H"
+              : interval === "6h"
+                ? "INTRADAY_6H"
+                : "INTRADAY_1H",
         maxAgeMs: brokerScanFreshnessMs(interval),
         observations,
       });
@@ -1671,7 +1696,11 @@ export async function researchUniverse(
         periodPolicy:
           interval === "30m"
             ? "COMPLETED_30M_SESSION_BARS_WITH_TERMINAL_CLOSE"
-            : "COMPLETED_1H_SESSION_BARS_WITH_TERMINAL_CLOSE",
+            : interval === "3h"
+              ? "SESSION_ANCHORED_3H_FROM_COMPLETED_1H"
+              : interval === "6h"
+                ? "SESSION_ANCHORED_6H_FROM_COMPLETED_1H"
+                : "COMPLETED_1H_SESSION_BARS_WITH_TERMINAL_CLOSE",
       });
       continue;
     }
@@ -1808,7 +1837,9 @@ export async function researchUniverse(
     // Use a unified 120-day (~80 trading bars) floor for daily broker scans so SMA(50) metrics
     // always populate and back-to-back Classic/Advanced formulas share the same owner cache key.
     const days = interval === "1d" ? Math.max(120, rawDays) : rawDays;
-    const reqInterval: CandleInterval = isIntraday ? interval : "1d";
+    const reqInterval: CandleInterval = isIntraday
+      ? (resolveNativeInterval(interval) as CandleInterval)
+      : "1d";
     const source =
       sharedLicensedGatewayAllowed && !ownerFeedAllowed
         ? SHARED_EXCHANGE_FEED_LABEL
@@ -2251,7 +2282,7 @@ export async function saveChartLayout(
     expected < 0 ||
     !payload ||
     !["line", "candles", "ohlc"].includes(payload.mode) ||
-    !["30m", "1h", "1d", "1wk", "1mo"].includes(payload.interval) ||
+    !["30m", "1h", "3h", "6h", "1d", "1wk", "1mo"].includes(payload.interval) ||
     !Array.isArray(payload.indicators) ||
     payload.indicators.length > 10 ||
     payload.indicators.some(

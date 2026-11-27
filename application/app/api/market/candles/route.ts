@@ -47,11 +47,11 @@ export async function GET(request: Request): Promise<Response> {
         "Pass id=NSE:SBIN, id=BSE:SBIN, or id=MCX:GOLD04DEC26FUT.",
       );
     }
-    if (!["1d", "1h", "15m", "5m"].includes(intervalRaw)) {
+    if (!["1d", "1h", "30m", "15m", "5m"].includes(intervalRaw)) {
       throw new MarketGatewayError(
         400,
         "INVALID_SYMBOL",
-        "Unsupported candle interval. Allowed values: 1d, 1h, 15m, 5m.",
+        "Unsupported candle interval. Allowed values: 1d, 1h, 30m, 15m, 5m.",
         "Select a supported interval.",
       );
     }

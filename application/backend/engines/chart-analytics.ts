@@ -209,7 +209,7 @@ export function normalizedComparison(a: Reference[], b: Reference[]) {
 }
 export function calendarPeriodKey(
   date: string,
-  interval: Exclude<Interval, "1d" | "1h" | "30m">,
+  interval: "1wk" | "1mo",
 ) {
   if (interval === "1mo") return date.slice(0, 7);
   const monday = new Date(date);
@@ -221,13 +221,13 @@ export function aggregateReferences(
   rows: Reference[],
   interval: Interval,
 ): Reference[] {
-  if (interval === "1d" || interval === "1h" || interval === "30m") return rows;
+  if (interval !== "1wk" && interval !== "1mo") return rows;
   const groups = new Map<string, Reference>();
   for (const row of rows) groups.set(calendarPeriodKey(row.date, interval), row);
   return [...groups.values()];
 }
 export function aggregateCandles(rows: Candle[], interval: Interval): Candle[] {
-  if (interval === "1d" || interval === "1h" || interval === "30m") return rows;
+  if (interval !== "1wk" && interval !== "1mo") return rows;
   const groups = new Map<string, Candle[]>();
   for (const row of rows) {
     const key = calendarPeriodKey(row.date, interval);

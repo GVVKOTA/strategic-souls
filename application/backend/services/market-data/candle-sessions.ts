@@ -9,6 +9,8 @@ const MINUTE_MS = 60_000;
 const PERIOD_DAYS: Record<Interval, number> = {
   "30m": 1,
   "1h": 1,
+  "3h": 1,
+  "6h": 1,
   "1d": 1,
   "1wk": 7,
   "1mo": 31,

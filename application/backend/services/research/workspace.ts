@@ -35,6 +35,20 @@ import {
   reserveScanSlot,
   type ScanQuotaTier,
 } from "./scan-quota";
+import {
+  buildReproducibilityRecord,
+  persistScanLineage,
+  type RerunMode,
+} from "./reproducible-research";
+import {
+  captureFrozenSoulMemory,
+  computeRuleSignature,
+  inferSignalDirection,
+  rankMatchesWithSoulMemory,
+  recordCompletedScanObservations,
+  type ResearchOrigin,
+} from "./soul-memory";
+import { historyWindowForInterval } from "../market-data/timeframes";
 import { parseDiscoverQuery } from "./discover-parser";
 import { CLASSIC_50_PRESETS } from "./classic-presets";
 import {
@@ -1364,17 +1378,84 @@ export async function mutateWorkspace(
               },
             )
           : undefined;
+      const scanOrigin: ResearchOrigin =
+        typeof input.origin === "string" &&
+        ["CLASSIC", "DISCOVER", "BUILD", "DRAW"].includes(input.origin)
+          ? (input.origin as ResearchOrigin)
+          : scanTier === "CLASSIC"
+            ? "CLASSIC"
+            : "BUILD";
+      const asOfMs = Date.parse(asOf) || Date.now();
+      const historyWindow = historyWindowForInterval(definition.interval, asOfMs);
+      const direction = inferSignalDirection(formula);
+      const ruleSignature = await computeRuleSignature(
+        formula,
+        scanOrigin,
+        definition.interval,
+        direction,
+      );
+      const frozenMemory = await captureFrozenSoulMemory(subject, asOfMs);
+      const originalMatches = results.results.filter((r) => r.status === "PASS");
+      const soulMemory = rankMatchesWithSoulMemory({
+        matches: originalMatches,
+        frozen: frozenMemory,
+        ruleSignature,
+        timeframe: definition.interval,
+        direction,
+      });
+      const id = crypto.randomUUID();
+      const rerunOfScanId =
+        typeof input.rerunOfScanId === "string" &&
+        /^[a-zA-Z0-9_-]{8,80}$/.test(input.rerunOfScanId)
+          ? input.rerunOfScanId
+          : null;
+      const rerunMode: RerunMode =
+        input.rerunMode === "RERUN_LATEST" || input.rerunMode === "REPRODUCE_ORIGINAL"
+          ? input.rerunMode
+          : rerunOfScanId
+            ? "RERUN_LATEST"
+            : "ORIGINAL";
+      const retainedDatasets = datasets.filter(
+        (dataset) => !isSharedExchangeDataset(dataset),
+      );
+      const reproducibility = await buildReproducibilityRecord({
+        scanId: id,
+        rerunOfScanId,
+        rerunMode,
+        formulaVersion: String(results.version),
+        formula,
+        universeVersion: definition.universePreset ?? definition.universe,
+        memberIds: datasets.map((d) => d.instrumentId),
+        timeframe: definition.interval,
+        cutoffIso: asOf,
+        dataFreshness: data.source,
+        rightsMode:
+          definition.universePreset === "CUSTOM_CSV"
+            ? "CUSTOM_CSV"
+            : definition.universe === "ECB_DAILY"
+              ? "OFFICIAL_REFERENCE"
+              : retainedDatasets.length > 0
+                ? "DISPLAY_AND_DERIVED"
+                : "DERIVED_ONLY",
+        rawCandlesRetained: retainedDatasets.length > 0,
+        soulMemoryDay: frozenMemory.istDay,
+        soulMemoryVersion: frozenMemory.stateVersion,
+        createdAt: asOf,
+      });
       const payload = {
         scanTier,
-        origin:
-          typeof input.origin === "string" &&
-          ["CLASSIC", "DISCOVER", "BUILD", "DRAW"].includes(input.origin)
-            ? input.origin
-            : scanTier === "CLASSIC"
-              ? "CLASSIC"
-              : "BUILD",
+        origin: scanOrigin,
         research: definition,
         description: definition.description,
+        historyWindow: {
+          interval: historyWindow.interval,
+          nativeInterval: historyWindow.nativeInterval,
+          startIso: historyWindow.startIso,
+          cutoffIso: historyWindow.cutoffIso,
+          policyLabel: historyWindow.policyLabel,
+        },
+        reproducibility,
+        soulMemory,
         preflight: { ...preflight, results: undefined },
         sourceExclusions: data.excluded,
         replay,
@@ -1398,7 +1479,7 @@ export async function mutateWorkspace(
         requestDigest: signature,
         rule,
         results: { ...results, results: archivalScanRows(results.results) },
-        datasets: datasets.filter((dataset) => !isSharedExchangeDataset(dataset)),
+        datasets: retainedDatasets,
         sourceSnapshot: data.asOf,
         ...(traceId ? { traceId } : {}),
         sourceLineage: data.lineage ?? [],
@@ -1408,7 +1489,6 @@ export async function mutateWorkspace(
           : "Historical publication instants are not certified. Known-at is conservatively the retrieval time; this is a current data filter, not a point-in-time historical backtest.",
         billing: { charged: 0 },
       };
-      const id = crypto.randomUUID();
       await persistReservedScan(db, {
         reservationId: reservation.id,
         subject, id, requestKey: requestId, mode, name,
@@ -1416,11 +1496,25 @@ export async function mutateWorkspace(
         digest: await digest(payload),
         completedAt: asOf,
       });
+      await persistScanLineage(subject, reproducibility);
+      await recordCompletedScanObservations({
+        subject,
+        scanId: id,
+        requestDigest: signature,
+        formula,
+        origin: scanOrigin,
+        timeframe: definition.interval,
+        cutoffIso: asOf,
+        dataVersion: reproducibility.universeVersion,
+        matches: originalMatches,
+      });
       const projection = await projectResearchSnapshot(payload, false);
       return {
         id,
         results: projection.payload.results,
         redaction: projection.redaction,
+        soulMemory,
+        reproducibility,
         ...(soulGenome ? { soulGenome } : {}),
         scanQuota: await getScanQuotaSummary(db, subject).catch(() => null),
       };

@@ -221,6 +221,9 @@ export async function projectResearchSnapshot(
     "sourceSnapshot",
     "source",
     "knownAtPolicy",
+    "historyWindow",
+    "reproducibility",
+    "soulMemory",
     "billing",
   ])
     if (key in payload) projected[key] = payload[key];

@@ -27,6 +27,8 @@ import {
   marketScanStatus,
   submitMarketScan,
 } from "../../../../backend/services/research/market-scan-jobs";
+import { captureFrozenSoulMemory } from "../../../../backend/services/research/soul-memory";
+import { getScanLineage } from "../../../../backend/services/research/reproducible-research";
 import { mutateWorkspace } from "../../../../backend/services/research/workspace";
 
 export const dynamic = "force-dynamic";
@@ -77,11 +79,55 @@ async function handle(request: Request): Promise<Response> {
     );
 
     if (request.method === "GET") {
-      const jobId = new URL(request.url).searchParams.get("jobId");
+      const searchParams = new URL(request.url).searchParams;
+      const jobId = searchParams.get("jobId");
       if (jobId) {
         return Response.json(await marketScanStatus(user.userId, jobId, true), { headers });
       }
-      return Response.json({ jobs: await listActiveMarketScans(user.userId) }, { headers });
+      const lineageScanId = searchParams.get("lineage");
+      if (lineageScanId && /^[a-zA-Z0-9_-]{8,80}$/.test(lineageScanId)) {
+        return Response.json(await getScanLineage(user.userId, lineageScanId), { headers });
+      }
+      if (searchParams.get("soulMemory") === "1") {
+        const mem = await captureFrozenSoulMemory(user.userId, Date.now());
+        return Response.json(
+          {
+            soulMemory: {
+              version: mem.scoreVersion,
+              istDay: mem.istDay,
+              stateVersion: mem.stateVersion,
+              status: mem.status,
+              scansAnalyzed: mem.scansAnalyzed,
+              distinctSignals: mem.distinctSignals,
+              evaluatedOutcomes: mem.evaluatedOutcomes,
+              asOfCutoff: mem.asOfCutoff,
+              resetsAtUtc: mem.resetsAtUtc,
+            },
+          },
+          { headers },
+        );
+      }
+      const [jobs, mem] = await Promise.all([
+        listActiveMarketScans(user.userId),
+        captureFrozenSoulMemory(user.userId, Date.now()),
+      ]);
+      return Response.json(
+        {
+          jobs,
+          soulMemory: {
+            version: mem.scoreVersion,
+            istDay: mem.istDay,
+            stateVersion: mem.stateVersion,
+            status: mem.status,
+            scansAnalyzed: mem.scansAnalyzed,
+            distinctSignals: mem.distinctSignals,
+            evaluatedOutcomes: mem.evaluatedOutcomes,
+            asOfCutoff: mem.asOfCutoff,
+            resetsAtUtc: mem.resetsAtUtc,
+          },
+        },
+        { headers },
+      );
     }
 
     protectMutation(request, MAX_SCAN_BODY_BYTES);

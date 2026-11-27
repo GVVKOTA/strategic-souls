@@ -1,18 +1,63 @@
 import handler from "vinext/server/fetch-handler";
 import { refreshSharedHistory } from "../services/market-data/shared-history";
-import { processMarketScanBatch } from "../services/research/market-scan-jobs";
+import {
+  processMarketScanBatch,
+  reapExpiredScanJobs,
+} from "../services/research/market-scan-jobs";
+import {
+  recordSystemHeartbeat,
+  resetExpiredSoulMemoryDailyState,
+} from "../services/research/soul-memory";
 import { clearExpiredReports } from "../services/market-data/company-reports";
 
 const worker = {
   async scheduled(controller: ScheduledController) {
-    if (controller.cron === "*/2 * * * *") {
-      await refreshSharedHistory();
-      await clearExpiredReports();
+    const startedAt = new Date().toISOString();
+    if (controller.cron === "30 18 * * *") {
+      // 00:00 Asia/Kolkata (IST) daily active SOUL MEMORY reset; preserves GRAVEYARD archive.
+      await resetExpiredSoulMemoryDailyState(Date.now());
       return;
     }
-    const deadline = Date.now() + 25_000;
-    for (let batch = 0; batch < 10 && Date.now() < deadline; batch++) {
-      if (!(await processMarketScanBatch(undefined, 50))) break;
+    if (controller.cron === "*/2 * * * *") {
+      try {
+        await refreshSharedHistory();
+        await clearExpiredReports();
+        await recordSystemHeartbeat("shared_history_refresh", {
+          status: "OK",
+          startedAt,
+          succeededAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        await recordSystemHeartbeat("shared_history_refresh", {
+          status: "ERROR",
+          startedAt,
+          succeededAt: null,
+          detail: { error: err instanceof Error ? err.name : "UnknownError" },
+        });
+      }
+      return;
+    }
+    try {
+      const reaped = await reapExpiredScanJobs(startedAt);
+      const deadline = Date.now() + 25_000;
+      let batchesProcessed = 0;
+      for (let batch = 0; batch < 10 && Date.now() < deadline; batch++) {
+        if (!(await processMarketScanBatch(undefined, 50))) break;
+        batchesProcessed++;
+      }
+      await recordSystemHeartbeat("market_scan_worker", {
+        status: "OK",
+        startedAt,
+        succeededAt: new Date().toISOString(),
+        detail: { batchesProcessed, reaped },
+      });
+    } catch (err) {
+      await recordSystemHeartbeat("market_scan_worker", {
+        status: "ERROR",
+        startedAt,
+        succeededAt: null,
+        detail: { error: err instanceof Error ? err.name : "UnknownError" },
+      });
     }
   },
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext) {

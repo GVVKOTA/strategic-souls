@@ -1,6 +1,6 @@
 /** Versioned data contracts. Missing observations never become zero or synthetic candles. */
 export const SHARED_HISTORY_LABEL = "Licensed exchange history";
-export type Interval = "30m" | "1h" | "1d" | "1wk" | "1mo";
+export type Interval = "30m" | "1h" | "3h" | "6h" | "1d" | "1wk" | "1mo";
 export type ProviderId = "EODHD" | "TRUEDATA" | "INDIANAPI" | "BHARATSTOCK";
 export type Market = "NSE" | "BSE" | "MCX" | "GLOBAL";
 export type Instrument = {

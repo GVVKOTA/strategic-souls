@@ -1,6 +1,7 @@
 import { aggregateCandles, calendarPeriodKey } from "../../../engines/chart-analytics";
 import type { ScanObservation } from "../../../engines/scan";
 import type { Candle, Interval } from "../data-types";
+import { aggregateIntradayObservations } from "../timeframes";
 import {
   getExchangeSessionWindowMinutes,
   getIndianExchangeSession,
@@ -21,6 +22,8 @@ const MINUTE_MS = 60_000;
 const PERIOD_DAYS: Record<Interval, number> = {
   "30m": 1,
   "1h": 1,
+  "3h": 1,
+  "6h": 1,
   "1d": 1,
   "1wk": 7,
   "1mo": 31,
@@ -63,14 +66,15 @@ export function brokerScanLookbackDays(interval: Interval, minimumBars?: number)
     const calendarDays = Math.ceil(tradingDays * 1.65) + 4;
     return Math.min(MAX_30M_CANDLE_DAYS, Math.max(10, calendarDays));
   }
-  if (interval === "1h") {
-    const reqBars = minimumBars === undefined ? 120 : minimumBars;
-    // NSE/BSE produces 7 hourly bars per trading day (6 full 60m + 15m terminal 15:15-15:30 IST).
-    // Reserve buffer for indicator warm-up, weekends, and Indian exchange holidays, capped by provider 1h limit.
-    const targetBars = reqBars + Math.max(12, Math.ceil(reqBars * 0.15));
-    const tradingDays = Math.ceil(targetBars / 6);
+  if (interval === "1h" || interval === "3h" || interval === "6h") {
+    const reqBars = minimumBars === undefined ? (interval === "1h" ? 120 : 60) : minimumBars;
+    const multiplier = interval === "3h" ? 3 : interval === "6h" ? 6 : 1;
+    // NSE/BSE produces 6 full hourly bars per regular session (09:15–15:15) + 15m terminal bar.
+    const targetHours = reqBars * multiplier + Math.max(12, Math.ceil(reqBars * multiplier * 0.15));
+    const tradingDays = Math.ceil(targetHours / 6);
     const calendarDays = Math.ceil(tradingDays * 1.65) + 4;
-    return Math.min(MAX_HOURLY_CANDLE_DAYS, Math.max(14, calendarDays));
+    const minWindow = interval === "6h" ? 62 : interval === "3h" ? 32 : 14;
+    return Math.min(MAX_HOURLY_CANDLE_DAYS, Math.max(minWindow, calendarDays));
   }
   if (minimumBars === undefined) return 180;
   // Allow indicator warm-up and fewer than five sessions per week around holidays.
@@ -178,23 +182,24 @@ export function completedBrokerObservations(
   if (!Number.isFinite(retrievalMs)) return [];
   const exchange = series.instrument.exchange;
 
-  // Genuine 30m or 1h candles — NEVER synthesized from daily bars or interpolated.
-  if (interval === "1h" || interval === "30m") {
-    if (series.interval !== interval) return [];
+  // Genuine 30m, 1h, or session-anchored 3h/6h derived from native 1h candles — NEVER synthesized from daily bars.
+  if (interval === "1h" || interval === "30m" || interval === "3h" || interval === "6h") {
+    const expectedSeriesInterval = interval === "30m" ? "30m" : "1h";
+    if (series.interval !== expectedSeriesInterval) return [];
     const byTs = new Map<number, (typeof series.candles)[number]>();
     const duplicates = new Set<number>();
     for (const candle of series.candles) {
       if (!validOhlcv(candle)) continue;
       const startMs = Date.parse(candle.timestampUTC);
       if (!Number.isFinite(startMs) || startMs > retrievalMs) continue;
-      const closeMs = intradayBarCloseMs(exchange, startMs, interval);
+      const closeMs = intradayBarCloseMs(exchange, startMs, expectedSeriesInterval);
       // Exclude out-of-session stray bars and developing current intraday bar.
       if (closeMs === null || closeMs > retrievalMs) continue;
       if (byTs.has(startMs)) duplicates.add(startMs);
       byTs.set(startMs, candle);
     }
     for (const ts of duplicates) byTs.delete(ts);
-    return [...byTs.entries()]
+    const nativeObs: ScanObservation[] = [...byTs.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([, c]) => ({
         eventAt: c.timestampUTC,
@@ -206,6 +211,10 @@ export function completedBrokerObservations(
         volume: c.volume,
         fields: { openinterest: c.openInterest },
       }));
+    if (interval === "3h" || interval === "6h") {
+      return aggregateIntradayObservations(nativeObs, interval, exchange, retrievalMs).bars;
+    }
+    return nativeObs;
   }
 
   if (series.interval !== "1d") return [];

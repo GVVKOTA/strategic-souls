@@ -31,6 +31,10 @@ import {
   sharedUniverseReadiness,
 } from "../market-data/shared-history";
 import {
+  historyWindowForInterval,
+  isIntradayInterval,
+} from "../market-data/timeframes";
+import {
   isScanUniversePreset,
   scanUniverseForPreset,
   validateResearch,
@@ -43,17 +47,32 @@ import {
   reserveScanSlot,
   type ScanQuotaTier,
 } from "./scan-quota";
+import {
+  buildReproducibilityRecord,
+  persistScanLineage,
+  type RerunMode,
+} from "./reproducible-research";
+import {
+  captureFrozenSoulMemory,
+  computeRuleSignature,
+  inferSignalDirection,
+  rankMatchesWithSoulMemory,
+  recordCompletedScanObservations,
+} from "./soul-memory";
 
 const DEFAULT_BATCH_SIZE = 50;
 const JOB_MS = 4 * 60 * 60_000;
 const WORKER_LEASE_MS = 60_000;
 const MAX_ATTEMPTS = 3;
+const MAX_ACTIVE_JOBS_PER_USER = 3;
 
 type Input = {
   definition: ResearchDefinition;
   origin: "CLASSIC" | "BUILD" | "DISCOVER" | "DRAW";
   draw?: { points: DrawPoint[]; windowBars: number; minPatternFit: number };
   referenceSnapshot?: ResearchUniverse;
+  rerunOfScanId?: string;
+  rerunMode?: RerunMode;
 };
 type State = "QUEUED" | "RUNNING" | "COMPLETE" | "PARTIAL" | "FAILED" | "CANCELLED";
 type Job = {
@@ -124,15 +143,25 @@ async function jobStatus(job: Job) {
           : "WITHHELD";
     }
   }
+  const processed = Math.max(0, coverage.selected - coverage.deferred);
+  const unavailable = coverage.insufficient + coverage.deniedOrFailed;
   return {
     jobId: job.id,
     state: job.state,
     universeVersion: job.universe_version,
+    cutoff: job.cutoff,
     redactionMode,
     progress: coverage.selected > 0
-      ? Math.round(((coverage.selected - coverage.deferred) * 100) / coverage.selected)
+      ? Math.round((processed * 100) / coverage.selected)
       : 100,
-    coverage: { ...counts, ...(derivedVisible ? { matched, unmatched } : {}) },
+    coverage: {
+      ...counts,
+      requested: coverage.selected,
+      eligible: coverage.evaluated,
+      processed,
+      unavailable,
+      ...(derivedVisible ? { matched, unmatched, nonmatched: unmatched } : {}),
+    },
     ...(job.scan_id ? { id: job.scan_id } : {}),
   };
 }
@@ -180,13 +209,27 @@ function parseInput(raw: Record<string, unknown>): Input {
     }
     const definition = validateResearch(definitionInput);
     compileFormula(definition.formula);
+    const rerunOfScanId =
+      typeof raw.rerunOfScanId === "string" && /^[a-zA-Z0-9_-]{8,80}$/.test(raw.rerunOfScanId)
+        ? raw.rerunOfScanId
+        : undefined;
+    const rerunMode: RerunMode | undefined =
+      raw.rerunMode === "RERUN_LATEST" || raw.rerunMode === "REPRODUCE_ORIGINAL"
+        ? raw.rerunMode
+        : rerunOfScanId
+          ? "RERUN_LATEST"
+          : undefined;
     const origin =
       definition.mode === "SIMPLE"
         ? "CLASSIC"
         : raw.origin === "DISCOVER"
           ? "DISCOVER"
           : "BUILD";
-    return { definition, origin };
+    return {
+      definition,
+      origin,
+      ...(rerunOfScanId ? { rerunOfScanId, rerunMode } : {}),
+    };
   } catch (err) {
     throw new HttpError(400, (err as Error).message);
   }
@@ -234,7 +277,9 @@ async function resolveScope(subject: string, definition: ResearchDefinition) {
   if (!members.length) {
     throw new ScanActionError(
       422,
-      "No eligible instruments are mapped to this scope. Your scan quota was not charged.",
+      preset === "MY_WATCHLIST"
+        ? "Your selected watchlist is empty. Add at least one instrument before scanning. Your scan quota was not charged."
+        : "No eligible instruments are mapped to this scope. Your scan quota was not charged.",
       "MISSING_PERMISSION",
       false,
     );
@@ -276,12 +321,26 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
   const existing = await prior();
   if (existing) return confirm(existing);
 
+  const activeCountRow = await db
+    .prepare(
+      `SELECT count(*) AS n FROM x78_market_scan_jobs
+       WHERE subject=? AND state IN ('QUEUED','RUNNING') AND deadline>?`,
+    )
+    .bind(subject, new Date().toISOString())
+    .first<{ n: number }>();
+  if (Number(activeCountRow?.n ?? 0) >= MAX_ACTIVE_JOBS_PER_USER) {
+    throw new HttpError(
+      429,
+      `You already have ${MAX_ACTIVE_JOBS_PER_USER} active market scans in progress. Wait for one to finish or cancel an active scan before starting another.`,
+    );
+  }
+
   const scope = await resolveScope(subject, input.definition);
-  const isIntraday = input.definition.interval === "30m" || input.definition.interval === "1h";
+  const isIntraday = isIntradayInterval(input.definition.interval);
   if (scope.defaultMarket && isIntraday) {
     throw new ScanActionError(
       422,
-      "The shared Nifty 500 feed supplies completed daily bars only. Choose Daily, Weekly, or Monthly. Your scan quota was not charged.",
+      "The shared Nifty 500 feed supplies completed daily (24H) bars only. Choose 24H (Daily) or connect an intraday-licensed feed. Your scan quota was not charged.",
       "INTRADAY_NOT_SUPPORTED",
       false,
     );
@@ -296,7 +355,7 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
     if (isIntraday && readiness.eligibleIntervals.length > 0 && !readiness.eligibleIntervals.includes(input.definition.interval)) {
       throw new ScanActionError(
         422,
-        "Intraday candles are not supported by the active shared market-data feed. Choose Daily, Weekly, or Monthly. Your scan quota was not charged.",
+        `Intraday ${input.definition.interval} candles are not supported by the active shared market-data feed. Choose 24H (Daily). Your scan quota was not charged.`,
         "INTRADAY_NOT_SUPPORTED",
         false,
       );
@@ -595,6 +654,47 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
       .slice(0, 12),
     excluded: [],
   };
+  const cutoffMs = Date.parse(job.cutoff) || Date.now();
+  const historyWindow = historyWindowForInterval(definition.interval, cutoffMs);
+  const direction = inferSignalDirection(formula);
+  const ruleSignature = await computeRuleSignature(
+    formula,
+    input.origin,
+    definition.interval,
+    direction,
+  );
+  const frozenMemory = await captureFrozenSoulMemory(job.subject, cutoffMs);
+  const originalMatches = results.results.filter((r) => r.status === "PASS");
+  const soulMemory = rankMatchesWithSoulMemory({
+    matches: originalMatches,
+    frozen: frozenMemory,
+    ruleSignature,
+    timeframe: definition.interval,
+    direction,
+  });
+  const lineageEntries = batches.flatMap((batch) => batch.lineage);
+  const derivedOnlyRun = lineageEntries.some(
+    (entry) => entry.derivedDisplayAllowed && !entry.displayAllowed,
+  );
+  const reproducibility = id
+    ? await buildReproducibilityRecord({
+        scanId: id,
+        rerunOfScanId: input.rerunOfScanId ?? null,
+        rerunMode: input.rerunMode ?? "ORIGINAL",
+        formulaVersion: String(results.version),
+        formula,
+        universeVersion: job.universe_version,
+        memberIds: ids,
+        timeframe: definition.interval,
+        cutoffIso: job.cutoff,
+        dataFreshness: state === "COMPLETE" ? "COMPLETED_BARS" : state,
+        rightsMode: derivedOnlyRun ? "DERIVED_ONLY" : "DISPLAY_AND_DERIVED",
+        rawCandlesRetained: false,
+        soulMemoryDay: frozenMemory.istDay,
+        soulMemoryVersion: frozenMemory.stateVersion,
+        createdAt: now,
+      })
+    : null;
   const payload = {
     scanTier: input.origin === "CLASSIC" ? "CLASSIC" : "ADVANCED",
     origin: input.origin,
@@ -604,11 +704,27 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
     universeVersion: job.universe_version,
     runState: state,
     completedAt: now,
+    historyWindow: {
+      interval: historyWindow.interval,
+      nativeInterval: historyWindow.nativeInterval,
+      startIso: historyWindow.startIso,
+      cutoffIso: historyWindow.cutoffIso,
+      policyLabel: historyWindow.policyLabel,
+    },
+    ...(reproducibility ? { reproducibility } : {}),
+    soulMemory,
     results: { ...results, results: archivalScanRows(results.results) },
-    coverage,
+    coverage: {
+      ...coverage,
+      requested: coverage.selected,
+      eligible: coverage.evaluated,
+      processed: coverage.selected - coverage.deferred,
+      nonmatched: coverage.unmatched,
+      unavailable: coverage.insufficient + coverage.deniedOrFailed,
+    },
     sourceSnapshot: job.cutoff,
     source: "Shared licensed market history",
-    sourceLineage: batches.flatMap((batch) => batch.lineage),
+    sourceLineage: lineageEntries,
     knownAtPolicy: "Completed observations whose event and availability times are at or before scan acceptance.",
     ...(input.draw ? { patternRecipe: input.draw } : {}),
     ...(drawReport ? { drawReport } : {}),
@@ -662,6 +778,24 @@ async function finalize(job: Job, input: Input, ids: string[], now: string) {
       )
       .bind(job.id, job.id),
   ]);
+  if (id && state === "COMPLETE") {
+    if (reproducibility) {
+      await persistScanLineage(job.subject, reproducibility);
+    }
+    await recordCompletedScanObservations({
+      subject: job.subject,
+      scanId: id,
+      requestDigest: job.request_digest,
+      formula,
+      origin: input.origin,
+      timeframe: definition.interval,
+      cutoffIso: job.cutoff,
+      dataVersion: job.universe_version,
+      matches: originalMatches,
+    });
+  } else if (id && reproducibility) {
+    await persistScanLineage(job.subject, reproducibility);
+  }
   console.info({
     event: "market_scan_finished",
     jobId: job.id,
@@ -833,10 +967,62 @@ export async function processMarketScanBatch(
       await failUnusableJob(job);
       return true;
     }
+    // CRITICAL FIX (Contract A): Clear BOTH lease AND lease_until on transient retry so
+    // a single failed batch never stalls the global worker lease for 60 seconds across all accounts.
     await db
-      .prepare(`UPDATE x78_market_scan_jobs SET attempts=attempts+1,lease=NULL,last_batch_at=? WHERE id=? AND lease=?`)
+      .prepare(
+        `UPDATE x78_market_scan_jobs
+         SET state='QUEUED', attempts=attempts+1, lease=NULL, lease_until=NULL, last_batch_at=?
+         WHERE id=? AND lease=?`,
+      )
       .bind(now, job.id, lease)
       .run();
     return true;
   }
+}
+
+/**
+ * Reaps any abandoned queued/running jobs whose hard deadline has elapsed so no job
+ * remains spinning permanently and its quota reservation is cleanly released.
+ */
+export async function reapExpiredScanJobs(nowIso = new Date().toISOString()): Promise<number> {
+  const db = database();
+  const expired = await db
+    .prepare(
+      `SELECT id, reservation_id, selected_count
+       FROM x78_market_scan_jobs
+       WHERE state IN ('QUEUED','RUNNING') AND deadline <= ? AND (lease_until IS NULL OR lease_until <= ?)
+       LIMIT 25`,
+    )
+    .bind(nowIso, nowIso)
+    .all<{ id: string; reservation_id: string; selected_count: number }>();
+  let reaped = 0;
+  for (const row of expired.results ?? []) {
+    const cov = {
+      ...startingCoverage(row.selected_count),
+      deniedOrFailed: row.selected_count,
+      deferred: 0,
+    };
+    const [upd] = await db.batch([
+      db
+        .prepare(
+          `UPDATE x78_market_scan_jobs
+           SET state='FAILED', coverage=?, lease=NULL, lease_until=NULL, input='{}'
+           WHERE id=? AND state IN ('QUEUED','RUNNING') AND deadline <= ?`,
+        )
+        .bind(JSON.stringify(cov), row.id, nowIso),
+      db
+        .prepare(
+          `UPDATE x51_scan_reservations
+           SET state='FAILED', completed_at=NULL, scan_id=NULL
+           WHERE id=? AND state IN ('RESERVED','RUNNING')`,
+        )
+        .bind(row.reservation_id),
+      db
+        .prepare(`DELETE FROM x78_market_scan_batches WHERE job_id=?`)
+        .bind(row.id),
+    ]);
+    if (upd.meta.changes) reaped++;
+  }
+  return reaped;
 }

@@ -52,8 +52,11 @@ export function validateScanRequestScope(input: Record<string, unknown>) {
     throw new Error("Choose a scan source before continuing.");
   if (input.universe !== scanUniverseForPreset(input.universePreset))
     throw new Error("The selected source and requested dataset do not agree.");
-  if (input.interval !== undefined && !["30m", "1h", "1d", "1wk", "1mo"].includes(String(input.interval)))
-    throw new Error("Choose a supported scan timeframe.");
+  if (input.interval !== undefined) {
+    const normalized = String(input.interval).trim().toLowerCase();
+    if (!["30m", "1h", "3h", "6h", "1d", "24h", "1wk", "1mo"].includes(normalized))
+      throw new Error("Choose a supported scan timeframe.");
+  }
   if (input.universePreset !== "CUSTOM_CSV" && input.customCsv !== undefined)
     throw new Error("Custom bar uploads are not enabled for this scan source.");
   if (input.watchlistId !== undefined && (input.universePreset !== "MY_WATCHLIST" ||
@@ -101,7 +104,7 @@ export type ResearchDefinition = {
   universe: "ECB_DAILY" | "CONNECTED_MARKETS" | "NIFTY_500";
   universePreset?: ScanUniversePreset;
   watchlistId?: string;
-  interval: "30m" | "1h" | "1d" | "1wk" | "1mo";
+  interval: "30m" | "1h" | "3h" | "6h" | "1d" | "1wk" | "1mo";
   partialPolicy: "STRICT" | "ALLOW_UNKNOWN";
   outcome: OutcomeDefinition;
   instrumentIds: string[];
@@ -256,8 +259,9 @@ export function validateResearch(
   if (input.mode !== "SIMPLE" && input.mode !== "ADVANCED")
     throw new Error("Choose Simple or Advanced mode.");
   const formula = compileFormula(String(input.formula ?? "")).formula;
+  const rawInterval = String(input.interval ?? "1d").trim().toLowerCase();
+  const interval = rawInterval === "24h" ? "1d" : rawInterval;
   const universe = input.universe ?? "ECB_DAILY",
-    interval = input.interval ?? "1d",
     partialPolicy = input.partialPolicy ?? "STRICT";
   if (universe !== "ECB_DAILY" && universe !== "CONNECTED_MARKETS" && universe !== "NIFTY_500")
     throw new Error("Choose a supported universe.");
@@ -266,7 +270,7 @@ export function validateResearch(
     throw new Error("Choose a supported scan universe preset.");
   if ((universe === "NIFTY_500") !== (universePreset === "NIFTY_500"))
     throw new Error("The selected source and requested dataset do not agree.");
-  if (!["30m", "1h", "1d", "1wk", "1mo"].includes(String(interval)))
+  if (!["30m", "1h", "3h", "6h", "1d", "1wk", "1mo"].includes(interval))
     throw new Error("Choose a supported timeframe.");
   if (partialPolicy !== "STRICT" && partialPolicy !== "ALLOW_UNKNOWN")
     throw new Error("Choose a partial-data policy.");

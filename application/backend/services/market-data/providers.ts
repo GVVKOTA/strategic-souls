@@ -294,12 +294,20 @@ export function secretFrom(
   provider: ProviderId,
   environment: Record<string, unknown>,
 ): string | null {
-  const value = environment[PROVIDERS[provider].secret];
-  return typeof value === "string" &&
-    value !== "demo" &&
-    /^\S{8,2048}$/.test(value)
-    ? value
-    : null;
+  const valid = (v: unknown): string | null =>
+    typeof v === "string" && v !== "demo" && /^\S{8,2048}$/.test(v) ? v : null;
+  const direct = valid(environment[PROVIDERS[provider].secret]);
+  if (direct) return direct;
+  // Canonical single-secret fallback (Contract C): MARKET_DATA_API_KEY activates the
+  // explicitly targeted MARKET_DATA_PROVIDER without requiring per-module code edits.
+  const targetProvider =
+    typeof environment.MARKET_DATA_PROVIDER === "string"
+      ? environment.MARKET_DATA_PROVIDER.trim().toUpperCase()
+      : "";
+  if (targetProvider === provider) {
+    return valid(environment.MARKET_DATA_API_KEY);
+  }
+  return null;
 }
 export class ProviderFailure extends Error {
   constructor(
