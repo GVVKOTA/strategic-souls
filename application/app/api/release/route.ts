@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
 import { resolveGatewayConfig } from "../../../backend/services/market-data/angelone/gateway";
 import { sharedUniverseReadiness } from "../../../backend/services/market-data/shared-history";
+import { AVATAR_CATALOG } from "../../../backend/services/profile/avatars";
+import { BANNER_PRESETS } from "../../../backend/services/profile/banners";
 import { APP_RELEASE } from "../../../backend/services/release-meta";
 import {
   ADVANCED_ROLLING_LIMIT,
@@ -15,7 +17,8 @@ export async function GET(request: Request) {
   const buildCommit = typeof process === "undefined" ? null : process.env.STRATEGIC_SOULS_BUILD_SHA ?? null;
   const workerVersionId = env.CF_VERSION_METADATA?.id ?? null;
   const intradayIntervalsSupported = (readiness?.eligibleIntervals ?? []).filter(
-    (interval): interval is "30m" | "1h" => interval === "30m" || interval === "1h",
+    (interval): interval is "30m" | "1h" | "3h" | "6h" =>
+      interval === "30m" || interval === "1h" || interval === "3h" || interval === "6h",
   );
   return Response.json(
     {
@@ -36,8 +39,9 @@ export async function GET(request: Request) {
       classicPresets: 50,
       classicDailyLimit: CLASSIC_DAILY_LIMIT,
       advancedRollingLimit: ADVANCED_ROLLING_LIMIT,
-      avatarPresets: 50,
-      profileBannerPresets: 8,
+      activeTimeframes: ["30m", "1h", "3h", "6h", "1d"],
+      avatarPresets: AVATAR_CATALOG.length,
+      profileBannerPresets: BANNER_PRESETS.length,
       portfolioBackdropPresets: 8,
       indianStatesAndUts: 36,
       earthMapBasemap:

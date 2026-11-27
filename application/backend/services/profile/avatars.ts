@@ -140,7 +140,7 @@ export function resolveAvatarPreset(value: unknown): AvatarPreset {
 }
 
 /**
- * Cryptographically secure random selection across all 50 active avatar IDs (a01–e10).
+ * Cryptographically secure random selection across all 60 active avatar IDs (a01–f10).
  * Uses unbiased 32-bit rejection sampling over crypto.getRandomValues(Uint8Array(4)).
  */
 export function pickRandomAvatarId(
