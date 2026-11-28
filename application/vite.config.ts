@@ -33,7 +33,6 @@ const cloudflareWorkerConfig = {
   compatibility_flags: ["nodejs_compat"],
   observability: {
     enabled: true,
-    redact_query_string: true,
     logs: {
       enabled: true,
       invocation_logs: true,

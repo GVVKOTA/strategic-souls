@@ -117,7 +117,7 @@ Production secrets are stored **only** in Cloudflare Worker Secrets (`Workers & 
 - Never commit secret values, never store them in D1 tables, and never paste them in chat or PRs.
 - Authentication uses first-party Cloudflare D1 email/password accounts only; Google OAuth routes and secrets are retired.
 - `INDIA_API_HOST=stock.indianapi.in` is a server variable tracked in `vite.config.ts`.
-- Cloudflare Worker observability `redact_query_string` MUST remain enabled (`true`, enforced in `vite.config.ts`) so URL query parameters (such as password reset links) are never logged in plaintext.
+- App middleware logs `pathname` only (never query strings), `auth-panel.tsx` strips `?reset_token=` on load, and Cloudflare Workers Logs query-string redaction should remain enabled in the Cloudflare Dashboard for `strategic-souls`.
 - Scheduled Cron Triggers (`30 18 * * *` for 00:00 IST SOUL MEMORY reset + `*/15 * * * *` for scan job reaper & reference cache refresh) record heartbeats in `x9_system_heartbeats`, surfaced by `/api/health` and checked by `operations/monitoring/monitor.mjs`.
 
 ---
