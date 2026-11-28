@@ -1066,7 +1066,7 @@ export default function Strategy({
           <FormulaLab notify={notify} />
         </Suspense>
       ) : (
-        <>
+        <div className="ve-strategy-workstation">
           {/* 1. SOUL SCAN BUILDER */}
           <section
             className="ss-v3-strategy-card"
@@ -1098,7 +1098,7 @@ export default function Strategy({
 
             {/* 2. Classic / Advanced */}
             <div
-              className="x52-full-tabs-2"
+              className="ss-v3-seg-row ss-x3-source-grid-2"
               role="group"
               aria-label="Scan mode"
               style={{ marginBottom: 0 }}
@@ -1107,7 +1107,7 @@ export default function Strategy({
                 type="button"
                 aria-pressed={scanTier === "CLASSIC"}
                 className={
-                  "x52-full-tab" + (scanTier === "CLASSIC" ? " is-active" : "")
+                  "ss-v3-seg-btn" + (scanTier === "CLASSIC" ? " is-active" : "")
                 }
                 onClick={() => selectMode("CLASSIC")}
               >
@@ -1117,7 +1117,7 @@ export default function Strategy({
                 type="button"
                 aria-pressed={scanTier === "ADVANCED"}
                 className={
-                  "x52-full-tab" + (scanTier === "ADVANCED" ? " is-active" : "")
+                  "ss-v3-seg-btn" + (scanTier === "ADVANCED" ? " is-active" : "")
                 }
                 onClick={() => selectMode("ADVANCED")}
               >
@@ -1575,6 +1575,7 @@ export default function Strategy({
             )}
           </section>
 
+          <div className="ve-strategy-results-col">
           {/* 2. SCAN RESULTS (Explicit Loading State + Truthful Disjoint Breakdown) */}
           <section
             ref={resultsRef}
@@ -1588,27 +1589,39 @@ export default function Strategy({
               >
                 Scan Results
               </h2>
-              {busy && runningContext ? (
-                <div className="ss-scan-running" data-scan-phase={scanPhase}>
-                  <p className="ss-v3-results-context" role="status" aria-live="polite">
-                    Evaluating {runningContext.name} · {runningContext.sourceLabel} ·{" "}
-                    {runningContext.timeframeLabel}
-                    {activeJob?.coverage && activeJob.coverage.selected > 0
-                      ? ` · ${activeJob.coverage.selected - activeJob.coverage.deferred}/${activeJob.coverage.selected} checked (${Math.round(((activeJob.coverage.selected - activeJob.coverage.deferred) / activeJob.coverage.selected) * 100)}%)`
-                      : "…"}
-                  </p>
-                  {activeJob?.coverage && activeJob.coverage.selected > 0 && (
-                    <div className="ss-x3-progress-wrap">
-                      <progress
-                        className="ss-scan-progress"
-                        aria-label="Checked instruments"
-                        max={activeJob.coverage.selected}
-                        value={activeJob.coverage.selected - activeJob.coverage.deferred}
+              {busy && runningContext ? (() => {
+                const selectedCount = activeJob?.coverage?.selected ?? 0;
+                const checkedCount = selectedCount > 0
+                  ? Math.max(0, selectedCount - (activeJob?.coverage?.deferred ?? 0))
+                  : 0;
+                const realPct = selectedCount > 0 ? Math.round((checkedCount / selectedCount) * 100) : null;
+                return (
+                  <div className="ss-scan-running ve-scan-progress-surface" data-scan-phase={scanPhase}>
+                    <div className="ve-scan-progress-head" role="status" aria-live="polite">
+                      <span>
+                        Evaluating {runningContext.name} · {runningContext.sourceLabel} ·{" "}
+                        {runningContext.timeframeLabel}
+                      </span>
+                      <strong>
+                        {realPct !== null ? `${checkedCount}/${selectedCount} (${realPct}%)` : "Evaluating bars…"}
+                      </strong>
+                    </div>
+                    <div
+                      className="ve-scan-track"
+                      role="progressbar"
+                      aria-label="Checked instruments"
+                      aria-valuemin={0}
+                      aria-valuemax={selectedCount > 0 ? selectedCount : undefined}
+                      aria-valuenow={selectedCount > 0 ? checkedCount : undefined}
+                    >
+                      <div
+                        className={"ve-scan-fill" + (realPct === null ? " is-indeterminate" : "")}
+                        style={realPct !== null ? { width: `${Math.max(4, Math.min(100, realPct))}%` } : undefined}
                       />
                     </div>
-                  )}
-                </div>
-              ) : activeScan ? (
+                  </div>
+                );
+              })() : activeScan ? (
                 <p className="ss-v3-results-context">
                   {activeScan.name} ·{" "}
                   {activeScan.mode === "SIMPLE" ? "Classic" : "Advanced"} ·{" "}
@@ -2243,7 +2256,8 @@ export default function Strategy({
             onPublishScan={(s) => void publishScanToCommunity(s)}
             onOpenReview={setReview}
           />
-        </>
+          </div>
+        </div>
       )}
 
       {/* 50-Formula Picker Modal with Pinned Section First */}

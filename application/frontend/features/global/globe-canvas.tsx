@@ -127,53 +127,68 @@ void main() {
     float oceanMask = smoothstep(0.015, 0.13, daySrgb.b - max(daySrgb.r, daySrgb.g) * 0.96)
       * (1.0 - smoothstep(0.60, 0.82, daySrgb.r));
 
-    // Restrained Blinn-Phong ocean specular glint aligned with solar direction
+    // Restrained dual-lobe Blinn-Phong ocean specular glint aligned with solar direction
     vec3 halfVec = normalize(sunV + vec3(0.0, 0.0, 1.0));
-    float spec = pow(max(0.0, dot(n, halfVec)), 36.0) * oceanMask * smoothstep(0.0, 0.28, sunDot) * 0.28;
+    float ndh = max(0.0, dot(n, halfVec));
+    float specTight = pow(ndh, 52.0) * 0.24;
+    float specBroad = pow(ndh, 14.0) * 0.08;
+    float spec = (specTight + specBroad) * oceanMask * smoothstep(0.0, 0.28, sunDot);
 
-    float viewFill = 0.06 + 0.08 * max(0.0, n.z);
-    vec3 dayLit = naturalDay * (viewFill + 1.12 * diffuse)
-      + vec3(0.22, 0.32, 0.44) * spec
-      + vec3(0.24, 0.10, 0.035) * twilight * (0.35 + 0.65 * naturalDay.r);
+    float viewFill = 0.065 + 0.095 * max(0.0, n.z);
+    vec3 dayLit = naturalDay * (viewFill + 1.14 * diffuse)
+      + vec3(0.28, 0.42, 0.58) * spec
+      + vec3(0.28, 0.11, 0.04) * twilight * (0.35 + 0.65 * naturalDay.r);
 
-    // Night hemisphere: deep navy-charcoal earth silhouette + warm golden NASA Black Marble city lights
-    vec3 nightBase = naturalDay * vec3(0.065, 0.088, 0.145) + vec3(0.004, 0.007, 0.014);
+    // Night hemisphere: deep obsidian-navy earth silhouette + warm golden NASA Black Marble city lights
+    vec3 nightBase = naturalDay * vec3(0.062, 0.088, 0.15) + vec3(0.004, 0.007, 0.015);
     float nightTex = texture2D(uNight, uv).r;
     float nightMask = 1.0 - smoothstep(-0.18, 0.14, sunDot);
-    float cityStrength = pow(max(0.0, nightTex - 0.042), 1.12) * nightMask;
-    vec3 cityLights = vec3(1.0, 0.78, 0.42) * cityStrength * 1.55;
+    float limbFade = smoothstep(0.0, 0.35, max(0.0, n.z));
+    float cityStrength = pow(max(0.0, nightTex - 0.04), 1.1) * nightMask * (0.45 + 0.55 * limbFade);
+    vec3 cityLights = vec3(1.0, 0.79, 0.44) * cityStrength * 1.62;
 
     // Historical translucent cloud layer
     float cloudSample = texture2D(uCloud, uv).r * uCloudReady;
     float cloudAlpha = clamp(pow(cloudSample, 1.48) * 0.56, 0.0, 0.66);
-    vec3 cloudDay = vec3(0.92, 0.95, 1.0) * (0.09 + 0.96 * diffuse)
-      + vec3(0.26, 0.12, 0.05) * twilight * 0.55;
-    vec3 cloudNight = vec3(0.045, 0.062, 0.10);
+    vec3 cloudDay = vec3(0.93, 0.96, 1.0) * (0.09 + 0.96 * diffuse)
+      + vec3(0.28, 0.13, 0.055) * twilight * 0.55;
+    vec3 cloudNight = vec3(0.042, 0.06, 0.102);
     vec3 cloudColor = mix(cloudNight, cloudDay, dayFactor);
 
     vec3 surface = mix(nightBase, dayLit, dayFactor) + cityLights * (1.0 - cloudAlpha * 0.42);
     surface = mix(surface, cloudColor, cloudAlpha);
 
-    // Thin restrained Rayleigh blue atmospheric Fresnel rim
-    float fresnel = pow(1.0 - max(0.0, n.z), 3.4);
-    vec3 atmoColor = mix(vec3(0.07, 0.16, 0.34), vec3(0.26, 0.58, 1.0), clamp(sunDot * 0.72 + 0.55, 0.0, 1.0));
-    vec3 litEarth = surface + atmoColor * fresnel * 0.46;
+    // Cinematic dual-layer Rayleigh atmospheric Fresnel limb with twilight warmth
+    float ndv = max(0.0, n.z);
+    float fresnelOuter = pow(1.0 - ndv, 3.2);
+    float fresnelInner = pow(1.0 - ndv, 1.8) * 0.14;
+    vec3 atmoDay = vec3(0.30, 0.64, 1.0);
+    vec3 atmoNight = vec3(0.06, 0.15, 0.34);
+    vec3 atmoColor = mix(atmoNight, atmoDay, clamp(sunDot * 0.72 + 0.55, 0.0, 1.0))
+      + vec3(0.26, 0.11, 0.04) * twilight * 0.42;
+    vec3 litEarth = surface + atmoColor * (fresnelOuter * 0.56 + fresnelInner);
 
-    vec3 placeholder = vec3(0.025, 0.065, 0.14) * (0.30 + 0.70 * diffuse) + atmoColor * fresnel * 0.36;
+    vec3 placeholder = vec3(0.025, 0.065, 0.14) * (0.30 + 0.70 * diffuse) + atmoColor * fresnelOuter * 0.42;
     vec3 finalLin = mix(placeholder, litEarth, uTextureReady);
 
     // Photographic soft tone-mapping + sRGB gamma encoding
-    vec3 mapped = (finalLin / (finalLin + vec3(0.86))) * 1.40;
+    vec3 mapped = (finalLin / (finalLin + vec3(0.84))) * 1.42;
     vec3 srgb = pow(clamp(mapped, 0.0, 1.0), vec3(1.0 / 2.2));
     gl_FragColor = vec4(srgb, 1.0);
   } else if (uMode > 1.5) {
     if (vPosition.z < uHorizonZ) discard;
     float d = length(gl_PointCoord - vec2(0.5));
     if (d > 0.5 || (uMode > 2.5 && d < 0.30)) discard;
-    float edge = uMode > 2.5
-      ? smoothstep(0.30, 0.35, d) * (1.0 - smoothstep(0.43, 0.5, d))
-      : 1.0 - smoothstep(0.36, 0.5, d);
-    gl_FragColor = vec4(uColor.rgb, uColor.a * edge);
+    if (uMode > 2.5) {
+      float ring = smoothstep(0.30, 0.35, d) * (1.0 - smoothstep(0.43, 0.5, d));
+      gl_FragColor = vec4(uColor.rgb, uColor.a * ring);
+    } else {
+      float core = 1.0 - smoothstep(0.28, 0.38, d);
+      float rim = smoothstep(0.32, 0.40, d) * (1.0 - smoothstep(0.42, 0.50, d));
+      vec3 markerRgb = mix(vec3(0.04, 0.06, 0.09), uColor.rgb, core);
+      float alpha = clamp(core * uColor.a + rim * 0.65, 0.0, 1.0);
+      gl_FragColor = vec4(markerRgb, alpha);
+    }
   } else {
     if (vPosition.z < uHorizonZ * 0.4) discard;
     gl_FragColor = uColor;

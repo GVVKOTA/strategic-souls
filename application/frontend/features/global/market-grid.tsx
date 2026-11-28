@@ -39,6 +39,12 @@ type Props = {
 const GUEST_STORAGE_KEY = "ss-v3-guest-market-grid-v2";
 const OVERVIEW_TIMEOUT_MS = 10_000;
 const PUBLIC_REFERENCE_IDS = ["ECB:USDINR", "ECB:EURINR", "ECB:EURUSD", "UST:10Y"];
+const PUBLIC_REFERENCE_LABELS: Record<string, string> = {
+  "ECB:USDINR": "USD / INR",
+  "ECB:EURINR": "EUR / INR",
+  "ECB:EURUSD": "EUR / USD",
+  "UST:10Y": "US Treasury 10Y",
+};
 
 function guestMarketIds(): string[] {
   try {
@@ -502,16 +508,31 @@ export default function MarketOverviewGrid({
         </div>
       )}
 
-      {!hasExchangePrices && publicReferences.length > 0 && (
+      {!hasExchangePrices && (publicReferences.length > 0 || market === null) && (
         <section className="x11-public-references" aria-labelledby="x11-public-reference-heading">
           <h2 id="x11-public-reference-heading">Public market references</h2>
           <div className="x11-reference-grid">
-            {publicReferences.map((point) => (
-              <button type="button" key={point.id} className="x11-reference-card" onClick={() => onOpenAsset(point.id)}>
-                <span>{point.label}</span>
-                <strong>{number(point.value, point.assetClass === "BOND_YIELD" ? 2 : 4)}{point.assetClass === "BOND_YIELD" ? "%" : ""}</strong>
-                <small>{point.derivation ? "ECB cross-rate" : point.provider} · {point.sourceDate}{point.state === "STALE" ? " · Stale" : ""}</small>
-              </button>
+            {publicReferences.length > 0 ? publicReferences.map((point) => {
+              const refDate = point.sourceDate
+                ? new Intl.DateTimeFormat("en-IN", {
+                    timeZone: "UTC",
+                    day: "numeric",
+                    month: "short",
+                  }).format(new Date(`${point.sourceDate.slice(0, 10)}T00:00:00Z`))
+                : "";
+              return (
+                <button type="button" key={point.id} className="x11-reference-card" onClick={() => onOpenAsset(point.id)}>
+                  <span>{point.label}</span>
+                  <strong>{number(point.value, point.assetClass === "BOND_YIELD" ? 2 : 4)}{point.assetClass === "BOND_YIELD" ? "%" : ""}</strong>
+                  <small>{point.derivation ? "ECB ref" : point.provider} · {refDate || point.sourceDate}{point.state === "STALE" ? " · Stale" : ""}</small>
+                </button>
+              );
+            }) : PUBLIC_REFERENCE_IDS.map((refId) => (
+              <div key={refId} className="x11-reference-card is-loading" aria-busy="true">
+                <span>{PUBLIC_REFERENCE_LABELS[refId] ?? refId}</span>
+                <strong>—</strong>
+                <small>Checking reference…</small>
+              </div>
             ))}
           </div>
         </section>
@@ -560,10 +581,14 @@ export default function MarketOverviewGrid({
             <button
               key={card.canonicalId}
               type="button"
-              className="x51-mcard ss-v3-mcard ss-v31-mcard ss-x3-tilt-card"
+              className={
+                "x51-mcard ss-v3-mcard ss-v31-mcard ss-x3-tilt-card " +
+                (hasValue ? "has-live-value" : "is-unavailable")
+              }
               style={{ "--stagger-i": Math.min(idx, 7) } as React.CSSProperties}
               onPointerMove={(e) => {
                 if (
+                  !hasValue ||
                   e.pointerType !== "mouse" ||
                   typeof window === "undefined" ||
                   window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
@@ -575,8 +600,8 @@ export default function MarketOverviewGrid({
                 if (rect.width <= 0 || rect.height <= 0) return;
                 const nx = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
                 const ny = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
-                e.currentTarget.style.setProperty("--tilt-ry", `${(nx * 2.1).toFixed(2)}deg`);
-                e.currentTarget.style.setProperty("--tilt-rx", `${(-ny * 1.9).toFixed(2)}deg`);
+                e.currentTarget.style.setProperty("--tilt-ry", `${(nx * 1.8).toFixed(2)}deg`);
+                e.currentTarget.style.setProperty("--tilt-rx", `${(-ny * 1.6).toFixed(2)}deg`);
               }}
               onPointerLeave={(e) => {
                 e.currentTarget.style.removeProperty("--tilt-rx");
@@ -609,40 +634,41 @@ export default function MarketOverviewGrid({
                 {formatPriceWithUnit(card)}
               </div>
 
-              <div className="ss-v31-mcard-mid">
-                <span className={`x51-mcard-delta ss-v31-delta ${deltaClass}`}>
-                  {card.percentChange !== null
-                    ? `${card.percentChange > 0 ? "+" : ""}${card.percentChange.toFixed(2)}${card.changeUnit}`
-                    : hasValue
-                      ? "Change —"
-                      : "—"}
-                </span>
-                {card.sparkline && card.sparkline.length >= 2 ? (
-                  <div className="ss-v31-spark-wrap">
-                    <MiniSpark
-                      values={card.sparkline}
-                      windowReturnPct={sparkReturn}
-                    />
+              {hasValue ? (
+                <>
+                  <div className="ss-v31-mcard-mid">
+                    <span className={`x51-mcard-delta ss-v31-delta ${deltaClass}`}>
+                      {card.percentChange !== null
+                        ? `${card.percentChange > 0 ? "+" : ""}${card.percentChange.toFixed(2)}${card.changeUnit}`
+                        : "Change —"}
+                    </span>
+                    {card.sparkline && card.sparkline.length >= 2 ? (
+                      <div className="ss-v31-spark-wrap">
+                        <MiniSpark
+                          values={card.sparkline}
+                          windowReturnPct={sparkReturn}
+                        />
+                      </div>
+                    ) : (
+                      <span className="ss-v31-mcard-time">No sparkline</span>
+                    )}
                   </div>
-                ) : <span className="ss-v31-mcard-time">Chart data unavailable</span>}
-              </div>
 
-              <div className="ss-v31-mcard-foot">
-                <span
-                  className={
-                    "ss-v31-mcard-time" +
-                    (obs.statusKind === "unavailable" ? " is-muted" : "")
-                  }
-                >
-                  {obs.text}
-                </span>
-                {card.sparklinePeriodLabel && card.sparkline && card.sparkline.length >= 2 && (
-                  <span className="ss-v31-spark-period" aria-hidden="true">
-                    {card.sparklinePeriodLabel}
-                  </span>
-                )}
-              </div>
-              {hasValue && card.quality !== "REFERENCE" && <span className="ss-v31-mcard-time">{card.provider}</span>}
+                  <div className="ss-v31-mcard-foot">
+                    <span className="ss-v31-mcard-time">{obs.text}</span>
+                    {card.sparklinePeriodLabel && card.sparkline && card.sparkline.length >= 2 && (
+                      <span className="ss-v31-spark-period" aria-hidden="true">
+                        {card.sparklinePeriodLabel}
+                      </span>
+                    )}
+                  </div>
+                  {card.quality !== "REFERENCE" && (
+                    <span className="ss-v31-mcard-time">{card.provider}</span>
+                  )}
+                </>
+              ) : (
+                <div className="ss-v31-unavail-note">{obs.text}</div>
+              )}
             </button>
           );
         })}

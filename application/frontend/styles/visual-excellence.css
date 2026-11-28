@@ -1,0 +1,1119 @@
+/* ============================================================================
+   STRATEGIC SOULS — PROJECT VISUAL EXCELLENCE (Obsidian Eclipse Design System)
+   Translated from Figma: "Strategic Souls — Visual Excellence" (yo7tHjvtS5wkZM3mQYMIjs)
+
+   NON-NEGOTIABLE INVARIANTS PRESERVED:
+   - Zero edits to the 8 audited X1/X2 palette CSS files.
+   - Canonical text hex tokens untouched (#E8EDF2, #CAD3DC, #B9C3CE, #A7B1BC, #76C0FF, #94D0FF).
+   - Strict section palette scoping:
+       Global    -> Soft white + Emerald Green (#6EE7B7)
+       Strategy  -> Soft white + Strategic Blue (#76C0FF)
+       Community -> Soft white + Soft Lavender (#C4B5FD)
+       Shared    -> Neutral obsidian, slate, and silver
+   - Compositor-only motion (transform / opacity) + strict reduced-motion & minimal-motion support.
+   ============================================================================ */
+
+:root {
+  /* Tonal Obsidian Elevation Ladder (replaces nested visible borders) */
+  --ve-bg: var(--x1-bg);
+  --ve-surface-0: #0b0e12;
+  --ve-surface-1: #0f1318;
+  --ve-surface-2: #151a22;
+  --ve-surface-3: #1c222c;
+
+  /* Quiet Structural Hairlines */
+  --ve-hairline-subtle: rgba(255, 255, 255, 0.055);
+  --ve-hairline-default: rgba(255, 255, 255, 0.085);
+  --ve-hairline-hover: rgba(255, 255, 255, 0.15);
+
+  /* Radii & Spacing Scale */
+  --ve-radius-xs: 6px;
+  --ve-radius-sm: 9px;
+  --ve-radius-md: 12px;
+  --ve-radius-lg: 16px;
+  --ve-radius-pill: 999px;
+
+  /* Intelligent Motion Tokens (Audited 3-Tier System) */
+  --ve-ease-micro: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ve-ease-functional: cubic-bezier(0.16, 1, 0.3, 1);
+  --ve-ease-signature: cubic-bezier(0.22, 1, 0.36, 1);
+  --ve-dur-micro: 130ms;
+  --ve-dur-ui: 190ms;
+  --ve-dur-surface: 260ms;
+  --ve-dur-signature: 560ms;
+
+  /* Depth & Tabular Discipline */
+  --ve-shadow-card: 0 2px 10px rgba(0, 0, 0, 0.26);
+  --ve-shadow-elev: 0 12px 34px rgba(0, 0, 0, 0.44);
+}
+
+/* ============================================================================
+   1. SHELL, SIDEBAR & HEADER POLISH (Borderless Tonal Craft, Zero Clutter)
+   ============================================================================ */
+
+.x1-app .x1-sidebar {
+  background: var(--ve-surface-0);
+  border-right: 1px solid var(--ve-hairline-subtle);
+}
+
+/* Approved GVV Eclipse Brand Mark — authentic pale-mint metallic luster & clean circular framing */
+.x1-app .x1-brand {
+  margin-bottom: 24px;
+}
+
+.x1-app .x1-brand img {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  filter: none;
+  background: #000000;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1), 0 4px 16px rgba(0, 0, 0, 0.52);
+  transition:
+    transform var(--ve-dur-ui) var(--ve-ease-functional),
+    box-shadow var(--ve-dur-ui) var(--ve-ease-micro);
+}
+
+.x1-app .x1-brand:hover img {
+  box-shadow: 0 0 0 1px rgba(196, 228, 216, 0.34), 0 6px 20px rgba(0, 0, 0, 0.58);
+}
+
+.x1-app .x2-header-logo img {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  object-fit: cover;
+  filter: none;
+  background: #000000;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.x1-app .x1-sidebar nav {
+  gap: 4px;
+}
+
+.x1-app .x1-sidebar nav a {
+  position: relative;
+  border: 1px solid transparent !important;
+  border-radius: var(--ve-radius-sm);
+  padding: 10px 12px 10px 14px;
+  transition:
+    background var(--ve-dur-micro) var(--ve-ease-micro),
+    color var(--ve-dur-micro) var(--ve-ease-micro);
+}
+
+.x1-app .x1-sidebar nav a:hover:not([aria-current="page"]) {
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--x1-text-primary);
+}
+
+/* Crisp borderless tonal active nav item + sleek 3px vertical accent indicator */
+.x1-app .x1-sidebar nav a[aria-current="page"],
+.x1-app .x1-sidebar nav a.is-active {
+  border-color: transparent !important;
+  background: var(--ss-section-accent-soft);
+  box-shadow: none;
+}
+
+.x1-app .x1-sidebar nav a[aria-current="page"]::before,
+.x1-app .x1-sidebar nav a.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--ss-section-accent);
+}
+
+/* Topbar refinement: subtle bottom hairline, crisp utility controls */
+.x1-app .x1-topbar.x11-header {
+  background: rgba(7, 8, 9, 0.96);
+  border-bottom: 1px solid var(--ve-hairline-subtle);
+  padding-block: 8px;
+}
+
+.x1-app .x1-topbar .x51-menu-btn,
+.x1-app .x11-header-actions .x51-bell-btn,
+.x1-app .x11-header-actions .x51-help-btn,
+.x1-app .x11-header-actions .x6-avatar-trigger-guest {
+  border: 1px solid var(--ve-hairline-default);
+  background: var(--ve-surface-1);
+  border-radius: var(--ve-radius-sm);
+  transition:
+    background var(--ve-dur-micro) var(--ve-ease-micro),
+    border-color var(--ve-dur-micro) var(--ve-ease-micro),
+    transform var(--ve-dur-micro) var(--ve-ease-micro);
+}
+
+.x1-app .x11-header-actions .x6-avatar-trigger-guest {
+  border-radius: var(--ve-radius-pill);
+  padding-inline: 14px;
+}
+
+.x1-app .x1-topbar .x51-menu-btn:hover,
+.x1-app .x11-header-actions .x51-bell-btn:hover,
+.x1-app .x11-header-actions .x51-help-btn:hover,
+.x1-app .x11-header-actions .x6-avatar-trigger-guest:hover {
+  background: var(--ve-surface-2);
+  border-color: var(--ve-hairline-hover);
+}
+
+.x1-app .x2-omnisearch,
+.x1-app .x51-body-search {
+  background: var(--ve-surface-1);
+  border: 1px solid var(--ve-hairline-default);
+  border-radius: var(--ve-radius-sm);
+  transition:
+    border-color var(--ve-dur-micro) var(--ve-ease-micro),
+    background var(--ve-dur-micro) var(--ve-ease-micro);
+}
+
+.x1-app .x2-omnisearch:focus-within,
+.x1-app .x51-body-search:focus-within {
+  background: var(--ve-surface-2);
+  border-color: var(--ss-section-accent-border, var(--ve-hairline-hover));
+}
+
+/* Global subtle tactile press on interactive buttons */
+@media (prefers-reduced-motion: no-preference) {
+  .x1-app:not([data-motion="minimal"]) button:active:not(:disabled) {
+    transform: scale(0.985);
+  }
+}
+
+/* ============================================================================
+   2. GLOBAL DASHBOARD — REFINED HERO, INLINE GLOBE PILL & COMPACT MARKET TILES
+   ============================================================================ */
+
+.x1-app .x53-dashboard-stack {
+  gap: 22px;
+}
+
+.x1-app .x53-dashboard-head {
+  gap: 10px;
+}
+
+/* Balanced single-row hero: flush display heading + sleek inline Strategic Globe pill */
+.x1-app .ss-market-overview-lead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  padding: 2px 0 14px;
+  border-bottom: 1px solid var(--ve-hairline-subtle);
+}
+
+.x1-app .ss-market-overview-lead .x53-dashboard-title {
+  margin: 0;
+  font: 500 clamp(1.55rem, 3vw, 2.45rem) / 1.08 "Space Grotesk", sans-serif;
+  letter-spacing: -0.04em;
+  color: var(--x1-text-primary);
+}
+
+/* Compact, non-wrapping inline Globe trigger pill (eliminates tall 190px box & orphan arrow!) */
+.x1-app .ss-market-atlas {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 14px 6px 8px;
+  border-radius: var(--ve-radius-pill);
+  border: 1px solid var(--x51-green-border);
+  background: linear-gradient(135deg, rgba(110, 231, 183, 0.1) 0%, rgba(15, 19, 24, 0.94) 100%);
+  color: var(--x51-green);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition:
+    transform var(--ve-dur-ui) var(--ve-ease-functional),
+    border-color var(--ve-dur-ui) var(--ve-ease-micro),
+    background var(--ve-dur-ui) var(--ve-ease-micro);
+}
+
+.x1-app .ss-market-atlas:hover {
+  border-color: rgba(110, 231, 183, 0.56);
+  background: linear-gradient(135deg, rgba(110, 231, 183, 0.16) 0%, rgba(21, 26, 34, 0.98) 100%);
+  transform: translateY(-1px);
+}
+
+.x1-app .ss-market-atlas img {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 50%;
+  border: 1px solid rgba(110, 231, 183, 0.36);
+  flex-shrink: 0;
+}
+
+.x1-app .ss-market-atlas span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  font-size: 0.86rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Clean secondary dashboard utility toolbar */
+.x1-app .x53-dashboard-bar {
+  padding-top: 2px;
+  gap: 8px 12px;
+}
+
+.x1-app .x53-toolbar-btn {
+  min-height: 38px;
+  padding: 6px 12px;
+  border-radius: var(--ve-radius-sm);
+  border: 1px solid var(--ve-hairline-default);
+  background: var(--ve-surface-1);
+  font-size: 0.84rem;
+}
+
+.x1-app .x53-toolbar-btn:hover:not(:disabled) {
+  background: var(--ve-surface-2);
+  border-color: var(--ve-hairline-hover);
+}
+
+/* Public Market References Strip — CLS-stable, ultra-crisp tabular grid */
+.x1-app .x11-public-references {
+  margin-top: 2px;
+}
+
+.x1-app .x11-public-references h2 {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--x1-text-muted);
+  margin: 0 0 8px;
+}
+
+.x1-app .x11-reference-grid {
+  border-radius: var(--ve-radius-md);
+  border: 1px solid var(--ve-hairline-default);
+  background: var(--ve-hairline-subtle);
+  gap: 1px;
+}
+
+.x1-app .x11-reference-card {
+  background: var(--ve-surface-1);
+  padding: 14px 16px;
+  gap: 5px;
+  transition: background var(--ve-dur-micro) var(--ve-ease-micro);
+}
+
+.x1-app .x11-reference-card:hover {
+  background: var(--ve-surface-2);
+}
+
+.x1-app .x11-reference-card > span {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--x1-text-muted);
+}
+
+.x1-app .x11-reference-card strong {
+  font: 600 clamp(1.18rem, 1.8vw, 1.65rem) / 1.15 "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+  color: var(--x1-text-primary);
+}
+
+.x1-app .x11-reference-card small {
+  font-size: 0.75rem;
+  color: var(--x1-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.x1-app .x11-reference-card.is-loading {
+  cursor: default;
+}
+
+.x1-app .x11-reference-card.is-loading strong {
+  color: var(--x1-text-muted);
+}
+
+.x1-app .x11-exchange-coverage {
+  margin: 10px 0 8px;
+  font-size: 0.8rem;
+  color: var(--x1-text-muted);
+}
+
+/* 8-Tile Market Overview Grid — CLS-Stable Uniform Height, Zero Template Sheen, Smart Hover */
+.x1-app .ss-v3-market-grid-8 {
+  gap: 10px;
+}
+
+.x1-app .ss-v3-market-grid-8 > .ss-v31-mcard {
+  min-height: 118px;
+  padding: 12px 14px;
+  border-radius: var(--ve-radius-md);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-1);
+  gap: 6px;
+  box-shadow: none;
+  /* Remove permanent will-change from idle cards to preserve GPU memory */
+  will-change: auto;
+  transition:
+    transform var(--ve-dur-ui) var(--ve-ease-functional),
+    border-color var(--ve-dur-ui) var(--ve-ease-micro),
+    background var(--ve-dur-ui) var(--ve-ease-micro);
+}
+
+/* Remove SaaS-template top sheen bar */
+.x1-app .ss-v3-market-grid-8 > .ss-v31-mcard::before {
+  display: none;
+}
+
+.x1-app .ss-v3-market-grid-8 > .ss-v31-mcard.is-unavailable {
+  min-height: 118px;
+  background: var(--ve-surface-0);
+  border-color: var(--ve-hairline-subtle);
+}
+
+.x1-app .ss-v3-market-grid-8 > button.ss-v31-mcard:hover {
+  background: var(--ve-surface-2);
+  border-color: var(--ve-hairline-hover);
+}
+
+.x1-app[data-section="global"] .ss-v3-market-grid-8 > button.ss-v31-mcard.has-live-value:hover {
+  border-color: var(--x51-green-border);
+}
+
+/* Only populated cards get subtle desktop perspective tilt — unavailable cards stay calm & still */
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .x1-app:not([data-motion="minimal"]) .ss-v3-market-grid-8 > button.ss-v31-mcard.is-unavailable:hover {
+    transform: none;
+  }
+  .x1-app:not([data-motion="minimal"]) .ss-v3-market-grid-8 > button.ss-v31-mcard.has-live-value.ss-x3-tilt-card:hover {
+    transform: perspective(900px) translateY(-2px) rotateX(var(--tilt-rx, 0deg)) rotateY(var(--tilt-ry, 0deg));
+  }
+}
+
+.x1-app .ss-v31-mcard .x51-mcard-name {
+  font-family: "Space Grotesk", "Inter", sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--x1-text-primary);
+}
+
+.x1-app .ss-v31-mcard .x51-mcard-venue {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--x1-text-muted);
+}
+
+.x1-app .ss-v31-mcard .ss-v31-mcard-price {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 1.24rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+  color: var(--x1-text-primary);
+}
+
+.x1-app .ss-v31-mcard.is-unavailable .ss-v31-mcard-price {
+  font-size: 1.05rem;
+  color: var(--x1-text-muted);
+}
+
+.x1-app .ss-v31-unavail-note {
+  font-size: 0.74rem;
+  color: var(--x1-text-muted);
+  margin-top: auto;
+}
+
+/* Portfolio & Watchlist Compact Overview Cards — Tonal Separation */
+.x1-app .x53-pw-grid {
+  gap: 12px;
+}
+
+.x1-app .x53-pw-card {
+  border-radius: var(--ve-radius-md);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-1);
+  padding: 18px 20px;
+  box-shadow: none;
+  transition:
+    border-color var(--ve-dur-ui) var(--ve-ease-micro),
+    background var(--ve-dur-ui) var(--ve-ease-micro);
+}
+
+.x1-app .x53-pw-card:hover {
+  border-color: var(--ve-hairline-hover);
+  background: var(--ve-surface-2);
+}
+
+.x1-app[data-section="global"] .x53-pw-card.ss-v3-pw-card-featured {
+  border-color: rgba(110, 231, 183, 0.22);
+}
+
+.x1-app .x53-pw-metrics strong {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================================
+   3. SIGNATURE EXPERIENCE A — STRATEGIC GLOBE STAGE & ATMOSPHERIC HUD
+   ============================================================================ */
+
+.x1-app .x53-globe-section {
+  gap: 10px;
+}
+
+.x1-app .x53-globe-head {
+  align-items: baseline;
+  gap: 8px 14px;
+}
+
+.x1-app .x53-globe-stage {
+  border-radius: var(--ve-radius-lg);
+  border: 1px solid var(--ve-hairline-default);
+  background:
+    radial-gradient(circle at 50% 48%, rgba(36, 86, 138, 0.2) 0%, rgba(12, 22, 36, 0.55) 42%, #05070a 78%);
+  box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.65), var(--ve-shadow-card);
+  overflow: hidden;
+}
+
+.x1-app .x53-globe-pill {
+  min-height: 36px;
+  padding: 6px 13px;
+  border-radius: var(--ve-radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(11, 14, 18, 0.84);
+  color: var(--x1-text-primary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  transition:
+    background var(--ve-dur-micro) var(--ve-ease-micro),
+    border-color var(--ve-dur-micro) var(--ve-ease-micro),
+    color var(--ve-dur-micro) var(--ve-ease-micro);
+}
+
+.x1-app .x53-globe-pill:hover,
+.x1-app .x53-globe-pill.is-active {
+  background: rgba(18, 28, 28, 0.94);
+  border-color: var(--x51-green-border);
+  color: var(--x51-green);
+}
+
+.x1-app .x53-globe-overlay-bl,
+.x1-app .x53-globe-overlay-tr {
+  background: rgba(11, 14, 18, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--ve-radius-pill);
+  padding: 3px;
+  gap: 2px;
+}
+
+.x1-app .x53-globe-icon-btn {
+  border: 0;
+  background: transparent;
+  border-radius: var(--ve-radius-pill);
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.x1-app .x53-globe-icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.x1-app .x53-globe-zoom-readout {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.76rem;
+  color: var(--x1-text-secondary);
+  padding-inline: 6px;
+}
+
+.x1-app .x53-globe-hint,
+.x1-app .x53-globe-popover,
+.x1-app .x53-globe-entity-card {
+  background: rgba(11, 14, 18, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--ve-radius-md);
+  box-shadow: var(--ve-shadow-elev);
+}
+
+/* Economic Calendar — Calm Flat Timeline Rhythm */
+.x1-app .x53-cal-section {
+  border-radius: var(--ve-radius-md);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-1);
+  padding: 20px;
+}
+
+.x1-app .x53-cal-row {
+  border-bottom: 1px solid var(--ve-hairline-subtle);
+  transition: background var(--ve-dur-micro) var(--ve-ease-micro);
+}
+
+.x1-app .x53-cal-row:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+/* Heatmap & Portfolio Allocation Visual Polish (Phase 6) */
+.x1-app .x52-alloc-card {
+  border-radius: var(--ve-radius-md);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-1);
+  padding: 18px 20px;
+}
+
+.x1-app .x52-alloc-row {
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--ve-radius-xs);
+  transition: background var(--ve-dur-micro) var(--ve-ease-micro);
+}
+
+.x1-app .x52-alloc-row:hover,
+.x1-app .x52-alloc-row:focus-visible {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.x1-app .x52-hm-tile {
+  border-radius: var(--ve-radius-sm);
+  font-variant-numeric: tabular-nums;
+  transition:
+    transform var(--ve-dur-ui) var(--ve-ease-functional),
+    border-color var(--ve-dur-ui) var(--ve-ease-micro);
+}
+
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .x1-app:not([data-motion="minimal"]) .x52-hm-tile:hover {
+    transform: translateY(-1px);
+  }
+}
+
+/* Reserve Public References vertical budget on Global to minimize CLS */
+.x1-app .x53-dashboard-hero {
+  contain: layout style;
+}
+
+/* ============================================================================
+   4. STRATEGY WORKSTATION — FLATTENED HIERARCHY, RUN SCAN ABOVE FOLD,
+      SIGNATURE SOUL SCAN PROGRESS & SOUL MEMORY CONSTELLATION
+   ============================================================================ */
+
+/* Streamline top [Soul Scan | Formula Lab] into a clean underline rail (zero boxed clutter) */
+.x1-app[data-section="strategy"] .x52-full-tabs-2 {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--ve-hairline-default);
+  border-radius: 0;
+  padding: 0;
+  gap: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+
+.x1-app[data-section="strategy"] .x52-full-tabs-2 .x52-full-tab {
+  width: auto;
+  flex: 0 0 auto;
+  border: 0 !important;
+  border-bottom: 2px solid transparent !important;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 10px 4px 12px;
+  min-height: 44px;
+  color: var(--x1-text-muted);
+  font-weight: 600;
+  transition:
+    color var(--ve-dur-micro) var(--ve-ease-micro),
+    border-color var(--ve-dur-ui) var(--ve-ease-functional);
+}
+
+.x1-app[data-section="strategy"] .x52-full-tabs-2 .x52-full-tab:hover {
+  color: var(--x1-text-primary);
+}
+
+.x1-app[data-section="strategy"] .x52-full-tabs-2 .x52-full-tab.is-active,
+.x1-app[data-section="strategy"] .x52-full-tabs-2 .x52-full-tab[aria-selected="true"] {
+  color: var(--x1-title-blue);
+  border-bottom-color: var(--x1-title-blue) !important;
+  box-shadow: none !important;
+}
+
+/* Desktop Quantitative Workstation 2-column layout */
+@media (min-width: 1120px) {
+  .x1-app[data-section="strategy"] .ve-strategy-workstation {
+    display: grid;
+    grid-template-columns: minmax(0, 1.06fr) minmax(0, 0.94fr);
+    gap: 18px;
+    align-items: start;
+  }
+
+  .x1-app[data-section="strategy"] .ve-strategy-results-col {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    position: sticky;
+    top: 72px;
+  }
+}
+
+/* Remove nested border fatigue inside Strategy cards */
+.x1-app[data-section="strategy"] .ss-v3-strategy-card,
+.x1-app[data-section="strategy"] .ss-v3-results-card,
+.x1-app[data-section="strategy"] .x53-graveyard-shell {
+  border-radius: var(--ve-radius-md);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-1);
+  padding: 18px 20px;
+  gap: 14px;
+  box-shadow: none;
+}
+
+.x1-app[data-section="strategy"] .ss-v3-strategy-head {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--ve-hairline-subtle);
+}
+
+.x1-app[data-section="strategy"] #ss-v3-strategy-heading {
+  font-size: clamp(1.35rem, 2.2vw, 1.7rem);
+  line-height: 1.15;
+}
+
+/* Quiet segmented pills (Classic/Advanced, Markets/Watchlist, 5 Timeframes) */
+.x1-app[data-section="strategy"] .ss-v3-seg-row,
+.x1-app[data-section="strategy"] .ss-x3-source-grid-2,
+.x1-app[data-section="strategy"] .ss-x3-tf-grid-5 {
+  gap: 6px;
+}
+
+.x1-app[data-section="strategy"] .ss-v3-seg-btn {
+  min-height: 40px;
+  border-radius: var(--ve-radius-sm);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-0);
+  color: var(--x1-text-secondary);
+  font-weight: 500;
+  transition:
+    background var(--ve-dur-micro) var(--ve-ease-micro),
+    border-color var(--ve-dur-micro) var(--ve-ease-micro),
+    color var(--ve-dur-micro) var(--ve-ease-micro);
+}
+
+.x1-app[data-section="strategy"] .ss-v3-seg-btn:hover:not(:disabled):not(.is-active) {
+  background: var(--ve-surface-2);
+  color: var(--x1-text-primary);
+}
+
+.x1-app[data-section="strategy"] .ss-v3-seg-btn.is-active {
+  background: rgba(118, 192, 255, 0.13);
+  border-color: rgba(118, 192, 255, 0.42);
+  color: var(--x1-title-blue);
+  font-weight: 600;
+  box-shadow: none;
+}
+
+/* Flattened Classic Formula card — compact padding so Run Scan stays reachable */
+.x1-app[data-section="strategy"] .ss-v31-classic-box {
+  border-radius: var(--ve-radius-sm);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-0);
+  padding: 13px 14px;
+  gap: 10px;
+}
+
+.x1-app[data-section="strategy"] .x54-name-input {
+  min-height: 40px;
+  border-radius: var(--ve-radius-xs);
+  border: 1px solid var(--ve-hairline-default);
+  background: var(--ve-surface-1);
+}
+
+.x1-app[data-section="strategy"] .x54-name-input:focus {
+  border-color: rgba(118, 192, 255, 0.56);
+}
+
+.x1-app[data-section="strategy"] .ss-v31-browse-cta {
+  min-height: 42px;
+  border-radius: var(--ve-radius-sm);
+  border: 1px solid var(--ve-hairline-default);
+  background: var(--ve-surface-2);
+  color: var(--x1-title-blue);
+  font-weight: 600;
+  transition:
+    background var(--ve-dur-micro) var(--ve-ease-micro),
+    border-color var(--ve-dur-micro) var(--ve-ease-micro);
+}
+
+.x1-app[data-section="strategy"] .ss-v31-browse-cta:hover {
+  background: rgba(118, 192, 255, 0.12);
+  border-color: rgba(118, 192, 255, 0.42);
+}
+
+/* Signature Primary Run Scan CTA — Crisp Dimensional Restraint */
+.x1-app[data-section="strategy"] .ss-v3-run-cta {
+  min-height: 48px;
+  border-radius: var(--ve-radius-sm);
+  border: 1px solid rgba(118, 192, 255, 0.55);
+  background: linear-gradient(180deg, rgba(118, 192, 255, 0.22) 0%, rgba(118, 192, 255, 0.12) 100%);
+  color: var(--x1-text-primary);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 8px 22px rgba(24, 90, 150, 0.22);
+}
+
+.x1-app[data-section="strategy"] .ss-v3-run-cta:hover:not(:disabled) {
+  border-color: rgba(148, 208, 255, 0.78);
+  background: linear-gradient(180deg, rgba(118, 192, 255, 0.3) 0%, rgba(118, 192, 255, 0.16) 100%);
+}
+
+/* Desktop Strategy vertical rhythm — placed after base rules so Run Scan sits 100% above 900px fold */
+@media (min-width: 1120px) {
+  .x1-app[data-section="strategy"] .x52-full-tabs-2 {
+    margin-bottom: 10px;
+  }
+
+  .x1-app[data-section="strategy"] .x52-full-tabs-2 .x52-full-tab {
+    min-height: 38px;
+    padding: 6px 4px 8px;
+  }
+
+  .x1-app[data-section="strategy"] .ss-v3-strategy-card {
+    padding: 14px 18px;
+    gap: 9px;
+  }
+
+  .x1-app[data-section="strategy"] .ss-v3-strategy-head {
+    padding-bottom: 8px;
+  }
+
+  .x1-app[data-section="strategy"] .ss-v3-seg-btn {
+    min-height: 36px;
+  }
+
+  .x1-app[data-section="strategy"] .ss-v31-classic-box {
+    padding: 10px 12px;
+    gap: 7px;
+  }
+
+  .x1-app[data-section="strategy"] .x54-name-input {
+    min-height: 36px;
+    padding: 6px 10px;
+  }
+
+  .x1-app[data-section="strategy"] .ss-v31-browse-cta {
+    min-height: 36px;
+  }
+
+  .x1-app[data-section="strategy"] .ss-v3-run-cta {
+    min-height: 44px;
+  }
+}
+
+/* Signature Experience B: Soul Scan Real-Progress Dimensional Surface */
+.ve-scan-progress-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: var(--ve-radius-sm);
+  border: 1px solid rgba(118, 192, 255, 0.28);
+  background: linear-gradient(135deg, rgba(118, 192, 255, 0.08) 0%, var(--ve-surface-0) 100%);
+  margin-top: 8px;
+}
+
+.ve-scan-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.82rem;
+  color: var(--x1-text-secondary);
+}
+
+.ve-scan-progress-head strong {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--x1-title-blue);
+}
+
+.ve-scan-track {
+  position: relative;
+  width: 100%;
+  height: 5px;
+  border-radius: var(--ve-radius-pill);
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.ve-scan-fill {
+  height: 100%;
+  border-radius: var(--ve-radius-pill);
+  background: linear-gradient(90deg, #4b9be6 0%, #76c0ff 65%, #94d0ff 100%);
+  transition: width 240ms var(--ve-ease-functional);
+}
+
+.ve-scan-fill.is-indeterminate {
+  width: 34%;
+  animation: veScanSweep 1.35s var(--ve-ease-signature) infinite;
+}
+
+@keyframes veScanSweep {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(330%); }
+}
+
+/* Signature Experience C: SOUL MEMORY Compact Constellation Visualization */
+.x1-app .ss-x3-soul-memory-strip {
+  border-radius: var(--ve-radius-sm);
+  border: 1px solid var(--ve-hairline-subtle);
+  border-inline-start: 2px solid var(--x1-title-blue);
+  background: var(--ve-surface-0);
+  padding: 11px 14px;
+  gap: 10px 14px;
+}
+
+.ve-memory-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.ve-memory-constellation {
+  flex-shrink: 0;
+  display: block;
+  overflow: visible;
+}
+
+.ve-memory-node {
+  transition: opacity var(--ve-dur-surface) var(--ve-ease-functional);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .x1-app:not([data-motion="minimal"]) .ss-x3-soul-memory-strip[data-memory-status="ACTIVE"] .ve-memory-node-pulse,
+  .x1-app:not([data-motion="minimal"]) .ss-x3-soul-memory-strip[data-memory-status="LEARNING"] .ve-memory-node-pulse {
+    animation: veMemoryPulse 2.8s ease-in-out infinite;
+  }
+}
+
+@keyframes veMemoryPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* ============================================================================
+   5. COMMUNITY — EDITORIAL READING FOCUS, RAZOR LAVENDER RAIL & CALM STATES
+   ============================================================================ */
+
+.x1-app[data-section="community"] .ss-v3-comm-header {
+  padding-block: 0 10px;
+  border-bottom: 1px solid var(--ve-hairline-subtle);
+  margin-bottom: 8px;
+}
+
+.x1-app[data-section="community"] .x54-my-strip {
+  border-radius: var(--ve-radius-sm);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-1);
+  padding: 10px 14px;
+}
+
+/* Pure editorial underline rail — eliminate heavy dark filled slab on active tab */
+.x1-app[data-section="community"] .ss-v3-comm-tabs {
+  border-bottom: 1px solid var(--ve-hairline-default);
+}
+
+.x1-app[data-section="community"] .ss-v3-comm-tab {
+  background: transparent;
+  border-radius: 0;
+  min-height: 46px;
+}
+
+.x1-app[data-section="community"] .ss-v3-comm-tab:hover {
+  background: rgba(196, 181, 253, 0.045);
+}
+
+.x1-app[data-section="community"] .ss-v3-comm-tab.is-active,
+.x1-app[data-section="community"] .ss-v3-comm-tab[aria-selected="true"] {
+  background: transparent;
+  color: #c4b5fd;
+}
+
+.x1-app[data-section="community"] .x51-soul-card {
+  border-radius: var(--ve-radius-md);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-1);
+  padding: 18px 20px;
+  transition:
+    border-color var(--ve-dur-ui) var(--ve-ease-micro),
+    background var(--ve-dur-ui) var(--ve-ease-micro);
+}
+
+.x1-app[data-section="community"] .x51-soul-card:hover {
+  border-color: rgba(196, 181, 253, 0.32);
+  background: var(--ve-surface-2);
+}
+
+.x1-app[data-section="community"] .x1-empty,
+.x1-app[data-section="community"] .x11-feed-error {
+  border-radius: var(--ve-radius-md);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-1);
+  padding: 20px 22px;
+}
+
+.x1-app .x2-guest-banner {
+  border-radius: var(--ve-radius-md);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-1);
+  padding: 14px 18px;
+}
+
+/* ============================================================================
+   6. SETTINGS & AUTH — CALM NEUTRAL SURFACES
+   ============================================================================ */
+
+.x1-app .ss-x3-settings-group {
+  border-radius: var(--ve-radius-md);
+  border: 1px solid var(--ve-hairline-subtle);
+  background: var(--ve-surface-1);
+}
+
+.x1-app .ss-x3-settings-row {
+  border-bottom: 1px solid var(--ve-hairline-subtle);
+}
+
+.x1-app .ss-x3-settings-row:hover,
+.x1-app .ss-x3-settings-row:focus-visible {
+  background: var(--ve-surface-2);
+}
+
+.x1-app .x2-auth-panel {
+  gap: 16px;
+}
+
+.x1-app .x2-auth-panel .x1-segment {
+  background: var(--ve-surface-0);
+  border: 1px solid var(--ve-hairline-default);
+  border-radius: var(--ve-radius-sm);
+  padding: 3px;
+}
+
+/* ============================================================================
+   7. MOBILE-FIRST REFINEMENT (320px, 360px, 390px, 430px, 768px)
+   ============================================================================ */
+
+@media (max-width: 767px) {
+  .x1-app .x1-topbar.x11-header {
+    padding-block: 6px;
+    row-gap: 6px;
+  }
+
+  .x1-app .ss-market-overview-lead {
+    padding: 0 0 10px;
+    gap: 8px 10px;
+    flex-wrap: nowrap;
+  }
+
+  .x1-app .ss-market-overview-lead .x53-dashboard-title {
+    font-size: clamp(1.22rem, 5.2vw, 1.7rem);
+    line-height: 1.12;
+  }
+
+  .x1-app .ss-market-atlas {
+    padding: 5px 11px 5px 6px;
+    gap: 6px;
+    min-height: 40px;
+  }
+
+  .x1-app .ss-market-atlas img {
+    width: 26px;
+    height: 26px;
+  }
+
+  .x1-app .ss-market-atlas span {
+    font-size: 0.78rem;
+  }
+
+  .x1-app .x11-reference-card {
+    padding: 11px 12px;
+  }
+
+  .x1-app .x11-reference-card strong {
+    font-size: 1.16rem;
+  }
+
+  .x1-app .ss-v3-market-grid-8 > .ss-v31-mcard {
+    min-height: 100px;
+    padding: 11px 12px;
+  }
+
+  .x1-app .ss-v3-market-grid-8 > .ss-v31-mcard.is-unavailable {
+    min-height: 100px;
+  }
+
+  .x1-app[data-section="strategy"] .ss-v3-strategy-card,
+  .x1-app[data-section="strategy"] .ss-v3-results-card,
+  .x1-app[data-section="strategy"] .x53-graveyard-shell {
+    padding: 14px;
+    gap: 11px;
+  }
+}
+
+@media (max-width: 360px) {
+  .x1-app .ss-market-atlas {
+    padding: 4px 9px 4px 5px;
+  }
+
+  .x1-app .ss-market-atlas img {
+    width: 22px;
+    height: 22px;
+  }
+
+  .x1-app .ss-market-atlas span {
+    font-size: 0.74rem;
+  }
+}
+
+/* ============================================================================
+   8. STRICT REDUCED-MOTION & MINIMAL-MOTION OVERRIDES
+   ============================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  .ve-scan-fill.is-indeterminate,
+  .ve-memory-node-pulse {
+    animation: none !important;
+  }
+
+  .ve-scan-fill.is-indeterminate {
+    width: 60%;
+    transform: none !important;
+  }
+
+  .x1-app button:active:not(:disabled),
+  .x1-app .ss-market-atlas:hover,
+  .x1-app .ss-v3-market-grid-8 > button.ss-v31-mcard:hover {
+    transform: none !important;
+    transition: none !important;
+  }
+}
+
+html[data-motion="minimal"] .ve-scan-fill.is-indeterminate,
+html[data-motion="minimal"] .ve-memory-node-pulse,
+.x1-app[data-motion="minimal"] .ve-scan-fill.is-indeterminate,
+.x1-app[data-motion="minimal"] .ve-memory-node-pulse {
+  animation: none !important;
+}
+
+html[data-motion="minimal"] .ve-scan-fill.is-indeterminate,
+.x1-app[data-motion="minimal"] .ve-scan-fill.is-indeterminate {
+  width: 60%;
+  transform: none !important;
+}

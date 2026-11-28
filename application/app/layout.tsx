@@ -6,6 +6,7 @@ import "../frontend/styles/x2.css";
 import "../frontend/features/account/account.css";
 import "../frontend/styles/x51.css";
 import "../frontend/styles/ss-v3.css";
+import "../frontend/styles/visual-excellence.css";
 export const viewport: Viewport = {
   themeColor: "#070809",
   colorScheme: "dark",

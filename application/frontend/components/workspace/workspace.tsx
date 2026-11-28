@@ -891,7 +891,7 @@ export default function X1Workspace() {
                   aria-label="Search Body ID or Souls"
                   value={communitySearch}
                   onChange={(e) => setCommunitySearch(e.target.value)}
-                  placeholder="Search Body ID or Soul…"
+                  placeholder="Search @handle…"
                 />
               </label>
             </div>

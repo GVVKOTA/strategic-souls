@@ -995,7 +995,7 @@ export default function ResearchNetworkShell({
             <div className="x54-my-strip-text">
               <span className="x54-my-strip-name">Soul Network</span>
               <span className="x54-my-strip-sub">
-                Explore public Souls · Sign in to create your Body ID
+                Explore Souls · Sign in for Body ID
               </span>
             </div>
             <button
