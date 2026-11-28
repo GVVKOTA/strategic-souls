@@ -2841,3 +2841,63 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
   min-height: 40px;
   font-size: 12.5px;
 }
+
+/* Keep comparable market values on a common baseline and preserve available width. */
+.x1-app .x11-reference-grid {
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--x1-divider);
+  border-radius: 10px;
+  background: var(--x1-divider);
+}
+.x1-app .x11-reference-card {
+  min-width: 0;
+  gap: 8px;
+  padding: 16px;
+  border: 0;
+  border-radius: 0;
+  background: var(--x1-surface-1);
+}
+.x1-app .x11-reference-card strong {
+  font: 500 clamp(1.25rem, 2vw, 2rem)/1.15 "IBM Plex Mono", monospace;
+  overflow-wrap: anywhere;
+}
+.x1-app .x11-reference-card:focus-visible {
+  outline: 2px solid var(--ss-section-accent);
+  outline-offset: -3px;
+}
+.x1-app .ss-v3-comm-header {
+  align-items: start;
+  flex-direction: column;
+  padding-block: 8px 16px;
+  border-bottom: 1px solid var(--x1-divider);
+}
+.x1-app .ss-v3-comm-header h1,
+.x1-app #ss-v3-strategy-heading {
+  font: 500 clamp(1.75rem, 3vw, 2.5rem)/1.1 "Space Grotesk", sans-serif;
+  letter-spacing: -.045em;
+  color: var(--x1-text-primary);
+}
+.x1-app .ss-x3-soul-memory-strip {
+  border: 0;
+  border-inline-start: 2px solid var(--ss-section-accent);
+  border-radius: 0;
+  background: var(--x1-surface-1);
+  padding: 12px 16px;
+}
+.ss-research-evidence summary {
+  width: fit-content;
+  cursor: pointer;
+  padding-block: 12px;
+  min-height: 44px;
+  color: var(--ss-section-accent);
+}
+.ss-research-evidence p {
+  margin-block: 4px;
+  color: var(--x1-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 700px) {
+  .x1-app .x11-reference-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .x1-app .x11-reference-card { padding: 12px; }
+}

@@ -29,6 +29,7 @@ export default function SoulMemoryStrip({
   onToggle,
 }: Props) {
   const [summary, setSummary] = useState<SoulMemorySummaryView | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
     if (!authenticated) {
@@ -42,12 +43,16 @@ export default function SoulMemoryStrip({
       { signal: ctrl.signal },
     )
       .then((res) => {
-        if (!ctrl.signal.aborted && res.soulMemory) {
-          setSummary(res.soulMemory);
+        if (!ctrl.signal.aborted) {
+          setSummary(res.soulMemory ?? null);
+          setUnavailable(!res.soulMemory);
         }
       })
       .catch(() => {
-        /* Fail soft without blocking Strategy builder */
+        if (!ctrl.signal.aborted) {
+          setSummary(null);
+          setUnavailable(true);
+        }
       });
     return () => ctrl.abort();
   }, [authenticated, refreshNonce]);
@@ -59,7 +64,7 @@ export default function SoulMemoryStrip({
       ? "Active Today"
       : summary?.status === "BASELINE"
         ? "Baseline"
-        : "Ready";
+        : summary ? "Awaiting evidence" : unavailable ? "Unavailable" : "Loading";
 
   return (
     <div className="ss-x3-soul-memory-strip" role="region" aria-label="SOUL MEMORY daily research ranking">
@@ -73,6 +78,13 @@ export default function SoulMemoryStrip({
             ? `${summary.scansAnalyzed} scan${summary.scansAnalyzed === 1 ? "" : "s"} · ${summary.evaluatedOutcomes} evaluated today · ${summary.resetLabel}`
             : "Private daily research ranking · Resets 00:00 IST"}
         </span>
+        {summary && (
+          <details className="ss-research-evidence">
+            <summary>Inspect evidence</summary>
+            <p>{summary.istDay} (IST) · {summary.distinctSignals} distinct signals · {summary.evaluatedOutcomes} evaluated outcomes</p>
+            <p>{summary.note}</p>
+          </details>
+        )}
       </div>
       <button
         type="button"

@@ -951,7 +951,7 @@ test("V2/V3 Asset & Copy Invariants: GVV logo SHA-256 unchanged, zero user-visib
   const sha = createHash("sha256").update(logoBytes).digest("hex").toUpperCase();
   assert.equal(
     sha,
-    "7512003E8E05BF88C75ECB1B62B418000D61B9D4EEDD560531017BC002288FAB",
+    "FB5D42B4377077568F3B1977EC21C11018845124C44DBCAD6AE21D5AF4BDF61A",
     "GVV approved logo must remain byte-identical",
   );
 

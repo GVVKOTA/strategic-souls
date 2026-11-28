@@ -5,7 +5,7 @@
  *  - ONLY caches static public shell assets (icons, manifest, fonts, static avatars).
  *  - Clears all caches immediately on CLEAR_USER_CACHES message (sent at logout).
  */
-const STATIC_CACHE = "ss-x3-static-v1";
+const STATIC_CACHE = "ss-x3-static-v2";
 const STATIC_URLS = [
   "/manifest.webmanifest",
   "/icon-192.png",

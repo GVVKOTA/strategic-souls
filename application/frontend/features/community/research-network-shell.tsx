@@ -944,7 +944,7 @@ export default function ResearchNetworkShell({
   return (
     <div className="x51-global-stack" style={{ gap: 12 }}>
       <header className="ss-v3-comm-header">
-        <h1>Community</h1>
+        <h1>{tab === "web" ? "Soul Feed" : tab === "chats" ? "Chats" : "Research rooms"}</h1>
         <span className="x1-caption">
           Published Souls, direct chats, and private research rooms
         </span>
