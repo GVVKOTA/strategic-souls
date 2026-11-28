@@ -91,8 +91,8 @@ test("X3-027–041 & X3-131: Strategy exposes exactly 2 sources (Markets/Watchli
 
 test("X3-001–017: Section accents (Global Green, Strategy Blue, Community Lavender) & Globe freeze fixes wired", () => {
   const css = readFileSync(resolve("frontend/styles/ss-v3.css"), "utf8");
-  assert.match(css, /\[data-section="global"\][\s\S]*?#42cf91/i);
-  assert.match(css, /\[data-section="strategy"\][\s\S]*?#76c0ff/i);
+  assert.match(css, /\[data-section="global"\]\s*\{\s*--ss-section-accent:\s*var\(--x51-green\)/);
+  assert.match(css, /\[data-section="strategy"\]\s*\{\s*--ss-section-accent:\s*var\(--x1-title-blue\)/);
   assert.match(css, /\[data-section="community"\][\s\S]*?#c4b5fd/i);
 
   const globeSrc = readFileSync(resolve("frontend/features/global/globe-canvas.tsx"), "utf8");

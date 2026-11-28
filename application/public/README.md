@@ -26,6 +26,7 @@
 | `public/favicon-x1.svg`, `public/favicon.svg` | `/favicon-x1.svg` | Active matte-black/silver favicon and retained legacy icon. |
 | `public/avatars/a01.svg`–`a50.svg` | `/avatars/a01.svg`–`a50.svg` | 50 built-in researcher avatar SVGs verified by `tests/unit/x6-avatars-and-earth.test.mjs` (work without Cloudflare R2). |
 | `public/data/` | `/data/*` | **NASA Blue Marble (2002)** & **Black Marble (2016)** textures (`earth-day.jpg`, `earth-night.jpg`, `earth-clouds.jpg`, `earth-static.jpg`), Natural Earth 110m TopoJSON (`land-110m.json`), MapLibre license, and SHA-256 provenance manifest (`earth-assets.json`). Verified by `tests/unit/x1-globe.test.mjs`. Never claim historical NASA textures are live satellite imagery. |
+| `public/data/strategic-atlas.webp` | `/data/strategic-atlas.webp` | Static dashboard entry to the interactive globe. The design uses the existing public-domain [Natural Earth](https://www.naturalearthdata.com/about/terms-of-use/) geography. |
 | `public/fonts/` | `/fonts/*` | Self-hosted WOFF2 weights for **Space Grotesk**, **Inter**, and **IBM Plex Mono**, `fonts.css`, and SIL OFL licenses (`spacegrotesk-OFL.txt`, `inter-OFL.txt`, `ibmplexmono-OFL.txt`). |
 
 ---

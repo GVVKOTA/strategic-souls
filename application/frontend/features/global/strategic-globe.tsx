@@ -463,7 +463,7 @@ export default function StrategicGlobe({
       aria-labelledby="x53-globe-heading"
     >
       <div className="x53-globe-head">
-        <h2 id="x53-globe-heading">Strategic Globe</h2>
+        <h2 id="x53-globe-heading" tabIndex={-1}>Strategic Globe</h2>
         <span className="x1-caption">
           {mapReady ? "Regional map · Natural Earth" : "3D Earth · NASA Blue Marble"} · USGS &amp; NASA EONET
         </span>

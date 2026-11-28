@@ -2486,35 +2486,47 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
   cursor: pointer;
 }
 
-/* The dashboard artwork has reserved geometry on every viewport. */
+/* Keep the lightweight atlas and the dashboard heading visible together. */
 .x53-dashboard-head { padding-top: 0; }
-.ss-eclipse-horizon {
-  position: relative;
-  isolation: isolate;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
-  width: 100%;
-  min-height: clamp(180px, 16vw, 236px);
-  padding: clamp(18px, 3.2vw, 48px);
-  gap: 14px;
-  overflow: hidden;
-  border-radius: 16px;
-  border: 1px solid var(--x1-divider-strong);
-  background: var(--x1-bg);
+.ss-market-overview-lead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 32%);
+  align-items: center;
+  gap: clamp(12px, 3vw, 32px);
+  padding: 8px 0 16px;
+  border-bottom: 1px solid var(--x1-divider);
 }
-.ss-eclipse-horizon picture,
-.ss-eclipse-horizon img { position: absolute; inset: 0; width: 100%; height: 100%; }
-.ss-eclipse-horizon picture { z-index: -1; }
-.ss-eclipse-horizon img { object-fit: cover; object-position: center 36%; }
-.x1-app .ss-eclipse-horizon .x53-dashboard-title {
-  max-width: 60%;
+.x1-app .ss-market-overview-lead .x53-dashboard-title {
   text-align: left;
-  font: 500 clamp(2.25rem, 4vw, 4.4rem) / .99 "Space Grotesk", sans-serif;
+  font: 500 clamp(2rem, 4vw, 3.65rem) / 1.02 "Space Grotesk", sans-serif;
   letter-spacing: -.055em;
   text-wrap: balance;
 }
+.ss-market-atlas {
+  display: grid;
+  justify-items: center;
+  min-width: 0;
+  min-height: 44px;
+  padding: 4px 8px 12px;
+  border-radius: 10px;
+  color: var(--ss-section-accent);
+  background: var(--x1-surface-1);
+}
+.ss-market-atlas img {
+  display: block;
+  width: min(100%, 260px);
+  height: auto;
+}
+.ss-market-atlas span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: .85rem;
+  text-align: center;
+}
+#x53-globe-heading { scroll-margin-top: 144px; }
 .ss-v3-market-grid-8 > .ss-v31-mcard {
   position: relative; isolation: isolate; overflow: hidden;
   min-height: 148px;
@@ -2527,13 +2539,10 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
 .x1-main > .x3-skeleton { min-block-size: calc(100svh - 56px); }
 @media (min-width: 768px) { .x1-app button.x11-market-expand { display: none !important; } }
 @media (max-width: 767px) {
-  .ss-eclipse-horizon { padding: 18px; min-height: 170px; gap: 9px; }
-  .ss-eclipse-horizon img { object-position: 65% center; }
-  .x1-app .ss-eclipse-horizon .x53-dashboard-title { max-width: 65%; font-size: clamp(2.1rem, 8.8vw, 3.4rem); }
+  .ss-market-overview-lead { grid-template-columns: minmax(0, 1fr) minmax(92px, 37%); }
+  .x1-app .ss-market-overview-lead .x53-dashboard-title { font-size: clamp(1.55rem, 6.5vw, 2.7rem); }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .x1-app:not([data-motion="minimal"]) .ss-eclipse-horizon picture { animation: ss-eclipse-settle 760ms cubic-bezier(.2,.65,.25,1) both; }
-  @keyframes ss-eclipse-settle { from { transform: scale(1.045) translateX(1%); } to { transform: none; } }
   @media (hover: hover) {
     .x1-app:not([data-motion="minimal"]) .ss-v31-mcard { transition: transform 180ms ease, border-color 180ms ease; }
     .x1-app:not([data-motion="minimal"]) button.ss-v31-mcard:hover { transform: translateY(-2px); border-color: var(--x1-text-muted); }
@@ -2549,20 +2558,20 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
 
 /* ==========================================================================
    STRATEGIC SOULS X 3.0 — Section Accents, Calm Grouped Settings, & Layout
-   Global = Subtle Green (#42CF91)
+   Global = existing market green
    Strategy = Strategic Blue (#76C0FF)
    Community = Soft Lavender (#C4B5FD, zero blue accent leakage)
    ========================================================================== */
 
 .x1-app[data-section="global"] {
-  --ss-section-accent: #42cf91;
-  --ss-section-accent-soft: rgba(66, 207, 145, 0.12);
-  --ss-section-accent-border: rgba(66, 207, 145, 0.36);
-  --ss-v3-accent-top: 2px solid rgba(66, 207, 145, 0.55);
+  --ss-section-accent: var(--x51-green);
+  --ss-section-accent-soft: var(--x51-green-soft);
+  --ss-section-accent-border: var(--x51-green-border);
+  --ss-v3-accent-top: 2px solid var(--ss-section-accent-border);
 }
 
 .x1-app[data-section="strategy"] {
-  --ss-section-accent: #76c0ff;
+  --ss-section-accent: var(--x1-title-blue);
   --ss-section-accent-soft: rgba(118, 192, 255, 0.14);
   --ss-section-accent-border: rgba(118, 192, 255, 0.4);
   --ss-v3-accent-top: 2px solid rgba(118, 192, 255, 0.58);
@@ -2602,20 +2611,20 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
 .x1-app[data-section="global"] .x53-globe-pill.is-active,
 .x1-app[data-section="global"] .x53-globe-pill:hover,
 .x1-app[data-section="global"] .ss-v3-welcome-head h2 {
-  color: #42cf91;
-  border-color: rgba(66, 207, 145, 0.36);
+  color: var(--ss-section-accent);
+  border-color: var(--ss-section-accent-border);
 }
 
 .x1-app[data-section="global"] .ss-v3-icon-badge {
-  background: rgba(66, 207, 145, 0.12);
-  border-color: rgba(66, 207, 145, 0.32);
-  color: #42cf91;
+  background: var(--ss-section-accent-soft);
+  border-color: var(--ss-section-accent-border);
+  color: var(--ss-section-accent);
 }
 
 .x1-app[data-section="global"] .ss-v3-market-grid-8 .ss-v3-mcard:hover,
 .x1-app[data-section="global"] .ss-v3-market-grid-8 .ss-v3-mcard:focus-visible,
 .x1-app[data-section="global"] .ss-v3-pw-card-featured {
-  border-color: rgba(66, 207, 145, 0.34);
+  border-color: var(--ss-section-accent-border);
 }
 
 /* Community section soft lavender accents — ZERO blue accent leakage */
@@ -2891,6 +2900,19 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
   padding-block: 12px;
   min-height: 44px;
   color: var(--ss-section-accent);
+}
+.ss-research-evidence-mark,
+.x1-app[data-section="community"] .x1-empty h3,
+.x1-app[data-section="community"] .x1-empty-mark {
+  color: var(--ss-section-accent);
+}
+.x1-app[data-section="community"] .ss-v3-comm-tab.is-active {
+  box-shadow: inset 0 -2px var(--ss-section-accent);
+}
+.x1-app .ss-market-atlas:focus-visible,
+.x1-app[data-section="community"] :is(.ss-v3-comm-tab, .x1-secondary, .x54-my-strip-main):focus-visible {
+  outline: 2px solid var(--ss-section-accent);
+  outline-offset: 2px;
 }
 .ss-research-evidence p {
   margin-block: 4px;

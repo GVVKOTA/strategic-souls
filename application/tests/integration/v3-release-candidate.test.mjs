@@ -412,7 +412,12 @@ test("V3 S01/S05/S07: Unentitled ordinary user Market scan fails closed honestly
   assert.equal(quotaB.classic.used, 0);
 });
 
-test("V3 S02/S03/S04/S06: Licensed shared commercial NSE+BSE+MCX provider serves ordinary users A & B on Market & Watchlist across 1h, 1d, 1wk, 1mo", async () => {
+test("V3 S02/S03/S04/S06: Licensed shared commercial NSE+BSE+MCX provider serves ordinary users A & B on Market & Watchlist across 1h, 1d, 1wk, 1mo", async (t) => {
+  // Evaluate freshness against the last trading session supplied by the fixed provider fixture.
+  const systemDate = context.Date;
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-11-23T18:45:00Z") });
+  context.Date = Date;
+  t.after(() => { context.Date = systemDate; });
   const alice = await registerUser("alice_shared@example.test", "StrongPass123!", "Alice Shared");
   const bob = await registerUser("bob_shared@example.test", "StrongPass456!", "Bob Shared");
 

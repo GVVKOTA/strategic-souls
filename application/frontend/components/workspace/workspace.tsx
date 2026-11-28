@@ -856,7 +856,7 @@ export default function X1Workspace() {
             </>
           )}
 
-          {/* STRATEGY HEADER: 3-dot Sections Drawer + Centered "Strategy Builder" (NO global search!) + bordered ? Help + Avatar */}
+          {/* Strategy uses the section menu and account controls. */}
           {view === "Strategy" && (
             <>
               <div className="x51-topbar-left">
@@ -874,7 +874,7 @@ export default function X1Workspace() {
                 </button>
               </div>
               <div className="x51-topbar-center">
-                <h1 className="x51-topbar-title">Strategy Builder</h1>
+                <h1 className="x51-topbar-title">Strategy</h1>
               </div>
             </>
           )}

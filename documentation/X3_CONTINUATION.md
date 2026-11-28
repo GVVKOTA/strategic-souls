@@ -2,9 +2,9 @@
 
 > **Resume Trigger:** When the owner says **`CONTINUE X 3.0`**, inspect this document, the 133-item traceability ledger (`x3_requirement_ledger.md` in the conversation brain directory), and actual `git status` / `git log`, then **resume immediately at Stage 8B (Playwright Browser QA Matrix & Migrated Preview Route Crawl)** without repeating completed work or re-auditing Waves 1–6.
 
-**Checkpoint Created:** `2026-11-28T04:10:00+05:30` (`2026-11-27T22:40:00Z`)  
-**Canonical Repository:** `C:\Users\Vishnu Kota\.gemini\antigravity\scratch\strategic-souls-x51` (remote `https://github.com/GVVKOTA/strategic-souls`)  
-**DO NOT TOUCH:** Unrelated `scratch\strategic-souls` or sibling worktrees (`ss-wt-experience`, `ss-wt-platform`, `ss-wt-reliability`).  
+**Checkpoint Created:** `2026-11-28T04:10:00+05:30` (`2026-11-27T22:40:00Z`)
+**Canonical Repository:** `C:\Users\Vishnu Kota\.gemini\antigravity\scratch\strategic-souls-x51` (remote `https://github.com/GVVKOTA/strategic-souls`)
+**DO NOT TOUCH:** Unrelated `scratch\strategic-souls` or sibling worktrees (`ss-wt-experience`, `ss-wt-platform`, `ss-wt-reliability`).
 **Production Status:** **UNTOUCHED** — no unfinished or unverified changes were deployed or pushed to `main` or production Cloudflare D1/Worker.
 
 ---

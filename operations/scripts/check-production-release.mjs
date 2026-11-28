@@ -102,7 +102,7 @@ async function smoke(version, sha, override) {
   const html = await home.text();
   const htmlAssets = [...html.matchAll(/(?:href|src|srcSet)="(\/[^"\s]+\.(?:js|css|woff2|png|jpe?g|webp|svg))"/gi)].map(match => match[1]);
   verify(htmlAssets.some(path => path.startsWith("/_next/static/")), "Homepage did not reference generated static assets.");
-  const assets = [...new Set([...htmlAssets, "/eclipse-horizon.webp", "/eclipse-horizon-mobile.webp"])];
+  const assets = [...new Set([...htmlAssets, "/data/strategic-atlas.webp", "/gvv-approved.jpg", "/icon-192.png"])];
   for (let start = 0; start < assets.length; start += 8) {
     await Promise.all(assets.slice(start, start + 8).map(async (path) => {
       const response = await get(path);

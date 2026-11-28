@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowDown,
+  ArrowUpRight,
   ArrowUp,
   GripVertical,
   RefreshCw,
@@ -439,14 +440,14 @@ export default function MarketOverviewGrid({
   return (
     <section className="x53-dashboard-hero" aria-labelledby="x53-dashboard-title">
       <div className="x53-dashboard-head">
-        <div className="ss-eclipse-horizon">
-          <picture>
-            <source media="(width < 768px)" srcSet="/eclipse-horizon-mobile.webp" />
-            <img src="/eclipse-horizon.webp" width="1280" height="400" alt="" fetchPriority="high" />
-          </picture>
+        <div className="ss-market-overview-lead">
           <h1 id="x53-dashboard-title" className="x53-dashboard-title ss-v31-page-title">
             Strategic Dashboard
           </h1>
+          <a className="ss-market-atlas" href="#x53-globe-heading">
+            <img src="/data/strategic-atlas.webp" width="420" height="252" alt="" />
+            <span>Strategic Globe <ArrowUpRight size={14} aria-hidden="true" /></span>
+          </a>
         </div>
         <div className="x53-dashboard-bar">
           <div className="x53-dashboard-meta" aria-live="polite">
