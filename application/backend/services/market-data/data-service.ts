@@ -51,6 +51,7 @@ import {
   type SharedHistory,
 } from "./shared-history";
 import {
+  aggregateIntradayCandles,
   aggregateIntradayObservations,
   isIntradayInterval,
   resolveNativeInterval,
@@ -408,18 +409,44 @@ export async function providerSettings(subject: string) {
     sharedIngestionHealth().catch(() => []),
     niftyUniverse().catch(() => null),
   ]);
+  const envMap = environment();
+  const canonicalTarget =
+    typeof envMap.MARKET_DATA_PROVIDER === "string"
+      ? envMap.MARKET_DATA_PROVIDER.trim().toUpperCase()
+      : "";
+  const canonicalKeySet =
+    typeof envMap.MARKET_DATA_API_KEY === "string" &&
+    envMap.MARKET_DATA_API_KEY !== "demo" &&
+    /^\S{8,2048}$/.test(envMap.MARKET_DATA_API_KEY);
   return {
     isOwner: true,
     providers: Object.entries(PROVIDERS).map(([id, meta]) => {
       const row = rows.results.find((r) => r.provider === id);
+      const usesCanonical = canonicalTarget === id && canonicalKeySet;
+      const resolved = secretFrom(id as ProviderId, envMap);
       return {
         id,
         ...meta,
-        secretConfigured: !!secretFrom(id as ProviderId, environment()),
+        secretConfigured: !!resolved,
+        secretSource: usesCanonical
+          ? "MARKET_DATA_API_KEY"
+          : resolved
+            ? "PROVIDER_SECRET"
+            : "MISSING",
         config: row ? JSON.parse(row.payload) : null,
         health: row ? JSON.parse(row.health) : EMPTY_HEALTH,
       };
     }),
+    canonicalSecret: {
+      providerTarget:
+        canonicalTarget === "BHARATSTOCK" ||
+        canonicalTarget === "INDIANAPI" ||
+        canonicalTarget === "EODHD" ||
+        canonicalTarget === "TRUEDATA"
+          ? canonicalTarget
+          : null,
+      keyConfigured: canonicalKeySet,
+    },
     sharedIngestion,
     universe: activeUniverse
       ? {
@@ -1012,20 +1039,26 @@ async function sourceResearch(
       };
       try {
         let raw: AssetResearch["candles"] = [];
-        const isIntraday = interval === "30m" || interval === "1h";
+        const isIntraday = isIntradayInterval(interval);
+        const nativeIntra = isIntraday ? (resolveNativeInterval(interval) as "30m" | "1h") : null;
         if (c.datasets.includes("candles")) {
           await quota(c);
-          raw = isIntraday
+          raw = isIntraday && nativeIntra
             ? await providerIntradayCandles(
                 c,
                 instrument,
                 secret,
-                interval,
-                interval === "30m" ? 30 : 45,
+                nativeIntra,
+                nativeIntra === "30m" ? 10 : 65,
               )
             : await providerCandles(c, instrument, secret);
         }
-        out.candles = isIntraday ? raw : aggregateCandles(raw, interval);
+        out.candles =
+          interval === "3h" || interval === "6h"
+            ? aggregateIntradayCandles(raw, interval, instrument.market, nowMs).bars
+            : isIntraday
+              ? raw
+              : aggregateCandles(raw, interval);
         out.references = out.candles.map((b) => ({
           date: b.date,
           close: b.close,
@@ -1160,14 +1193,15 @@ async function sourceResearch(
     /^(NSE|BSE|MCX):/i.test(id)
   ) {
     try {
-      const isIntraday = interval === "30m" || interval === "1h";
+      const isIntraday = isIntradayInterval(interval);
+      const nativeIntra = isIntraday ? (resolveNativeInterval(interval) as "30m" | "1h") : null;
       const targetGatewayId = await resolveMcxRootAliasId(id, subject);
       const series = await gatewayCandles({
         authenticated: true,
         isOwner: isDataOwner(subject),
         id: targetGatewayId,
-        interval: isIntraday ? interval : "1d",
-        days: interval === "30m" ? 30 : interval === "1h" ? 45 : 180,
+        interval: nativeIntra ?? "1d",
+        days: interval === "30m" ? 10 : interval === "1h" ? 21 : interval === "3h" ? 35 : interval === "6h" ? 65 : 180,
         runtimeEnv: environment(),
       });
       if (series.candles.length > 0) {
@@ -1184,7 +1218,12 @@ async function sourceResearch(
           adjustment: "RAW" as const,
           provider: feedLabel,
         }));
-        const aggregated = isIntraday ? rawBars : aggregateCandles(rawBars, interval);
+        const aggregated =
+          interval === "3h" || interval === "6h"
+            ? aggregateIntradayCandles(rawBars, interval, series.instrument.exchange, nowMs).bars
+            : isIntraday
+              ? rawBars
+              : aggregateCandles(rawBars, interval);
         return {
           ...result,
           id,
@@ -1435,7 +1474,7 @@ export async function researchUniverse(
           id: h.id,
           kind: "scope",
           reason:
-            `Daily reference FX does not publish genuine ${interval === "30m" ? "30-minute (30m)" : "1-hour (1h)"} candles; daily bars are never fabricated into intraday bars.`,
+            `Daily reference FX does not publish genuine ${interval} intraday candles; daily bars are never fabricated into intraday bars.`,
         });
       }
       out.rights = { analysis: false, storage: false };
@@ -1545,7 +1584,7 @@ export async function researchUniverse(
       ? options.provider
       : undefined;
   const stored = eligibleGrants.length && ids.length
-    ? await readSharedHistoryBatch(ids, interval, eligibleGrants, {
+    ? await readSharedHistoryBatch(ids, isIntraday ? resolveNativeInterval(interval) : interval, eligibleGrants, {
         cutoff: options.eventCutoff ? cutoffMs : undefined,
         provider: pinnedSharedProvider,
         requireDisplay: false,
@@ -2008,7 +2047,11 @@ export async function researchUniverse(
               ? "INTRADAY_30M"
               : interval === "1h"
                 ? "INTRADAY_1H"
-                : "PUBLISHED_EOD",
+                : interval === "3h"
+                  ? "INTRADAY_3H"
+                  : interval === "6h"
+                    ? "INTRADAY_6H"
+                    : "PUBLISHED_EOD",
           maxAgeMs,
           observations,
         });
@@ -2027,9 +2070,13 @@ export async function researchUniverse(
               ? "COMPLETED_30M_SESSION_BARS_WITH_TERMINAL_CLOSE"
               : interval === "1h"
                 ? "COMPLETED_1H_SESSION_BARS_WITH_TERMINAL_CLOSE"
-                : interval === "1d"
-                  ? "PRIVATE_OWNER_COMPLETED_DAILY_CANDLES"
-                  : "PRIVATE_OWNER_DAILY_CANDLES_IN_COMPLETED_CALENDAR_PERIODS",
+                : interval === "3h"
+                  ? "SESSION_ANCHORED_3H_FROM_COMPLETED_1H"
+                  : interval === "6h"
+                    ? "SESSION_ANCHORED_6H_FROM_COMPLETED_1H"
+                    : interval === "1d"
+                      ? "PRIVATE_OWNER_COMPLETED_DAILY_CANDLES"
+                      : "PRIVATE_OWNER_DAILY_CANDLES_IN_COMPLETED_CALENDAR_PERIODS",
         });
       } catch (error) {
         if (interval === "30m" && isUnsupportedIntervalError(error)) {

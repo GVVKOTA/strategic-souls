@@ -753,8 +753,10 @@ export default function GlobeCanvas({
         dirty = true;
       }
       if (target) {
-        rotation.current.yaw += (target.yaw - rotation.current.yaw) * 0.14;
-        rotation.current.pitch += (target.pitch - rotation.current.pitch) * 0.14;
+        // Frame-rate-independent exponential damping (M08) so 60Hz and 120Hz displays glide identically.
+        const alpha = 1 - Math.exp(-Math.min(delta, 80) * 0.0085);
+        rotation.current.yaw += (target.yaw - rotation.current.yaw) * alpha;
+        rotation.current.pitch += (target.pitch - rotation.current.pitch) * alpha;
         if (
           Math.abs(target.yaw - rotation.current.yaw) +
             Math.abs(target.pitch - rotation.current.pitch) <
@@ -995,13 +997,17 @@ export default function GlobeCanvas({
             9 * zoomPtBoost * dpr,
           );
         }
+        const focusPulse =
+          !reducedMotion && (selectedPointBuffer || selectedMarkerBuffer)
+            ? 1 + Math.sin(time * 0.0032) * 0.075
+            : 1;
         if (s.showExchanges && selectedPointBuffer) {
           drawBuffer(
             selectedPointBuffer,
             3,
             [0.46, 0.75, 1.0, 0.96],
             gl!.POINTS,
-            17 * zoomPtBoost * dpr,
+            17 * focusPulse * zoomPtBoost * dpr,
           );
           drawBuffer(
             selectedPointBuffer,
@@ -1017,7 +1023,7 @@ export default function GlobeCanvas({
             3,
             [0.46, 0.75, 1.0, 0.98],
             gl!.POINTS,
-            19 * zoomPtBoost * dpr,
+            19 * focusPulse * zoomPtBoost * dpr,
           );
         }
 

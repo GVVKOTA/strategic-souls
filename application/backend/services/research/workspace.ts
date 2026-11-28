@@ -48,7 +48,11 @@ import {
   recordCompletedScanObservations,
   type ResearchOrigin,
 } from "./soul-memory";
-import { historyWindowForInterval } from "../market-data/timeframes";
+import {
+  historyWindowForInterval,
+  isIntradayInterval,
+  normalizeIntervalInput,
+} from "../market-data/timeframes";
 import { parseDiscoverQuery } from "./discover-parser";
 import { CLASSIC_50_PRESETS } from "./classic-presets";
 import {
@@ -478,10 +482,10 @@ async function scanSource(
       `Private CSV uploads supply daily bars and cannot run on ${definition.interval}. Select Daily (1d).`,
     );
   const ecbOnly = preset === "ECB_DAILY" || (!preset && definition.universe === "ECB_DAILY");
-  if (ecbOnly && (definition.interval === "30m" || definition.interval === "1h")) {
+  if (ecbOnly && isIntradayInterval(definition.interval)) {
     return unavailable(
       "ECB Daily Reference FX",
-      `ECB daily reference FX does not publish genuine ${definition.interval === "30m" ? "30-minute (30m)" : "1-hour (1h)"} candles. Select Daily, Weekly, or Monthly.`,
+      `ECB daily reference FX does not publish genuine ${definition.interval} intraday candles. Select 24H (Daily).`,
     );
   }
   if (hasCsv) {
@@ -1139,11 +1143,10 @@ export async function mutateWorkspace(
     );
     const universe =
       input.universe === "CONNECTED_MARKETS" ? "CONNECTED_MARKETS" : "ECB_DAILY";
-    const interval = ["30m", "1h", "1d", "1wk", "1mo"].includes(
-      String(input.interval ?? "1d"),
-    )
-      ? (String(input.interval ?? "1d") as ResearchDefinition["interval"])
-      : "1d";
+    const interval = normalizeIntervalInput(String(input.interval ?? "1d"));
+    if (!interval) {
+      throw new HttpError(400, "Choose a supported timeframe.");
+    }
 
     const definition: ResearchDefinition = {
       name,

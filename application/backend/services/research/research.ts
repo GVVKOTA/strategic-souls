@@ -79,6 +79,9 @@ export function matchesScanMarketPreset(
     if (exchange === "MCX" && assetClass === "FUTURE") {
       return !!expiry && Date.parse(`${expiry}T23:59:59+05:30`) >= now;
     }
+    if (exchange === "GLOBAL" && (assetClass === "EQUITY" || assetClass === "INDEX" || assetClass === "FUTURE")) {
+      return assetClass !== "FUTURE" || (!!expiry && Date.parse(`${expiry}T23:59:59Z`) >= now);
+    }
     return false;
   }
   if (preset === "INDIAN_EQUITIES")

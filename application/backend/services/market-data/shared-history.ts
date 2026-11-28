@@ -31,6 +31,7 @@ import { niftyUniverse } from "./nifty-500";
 import { matchesScanMarketPreset, type ScanUniversePreset } from "../research/research";
 import {
   aggregateIntradayCandles,
+  isIntradayInterval,
   resolveNativeInterval,
 } from "./timeframes";
 
@@ -548,7 +549,7 @@ async function acquire(config: SharedGrant, now: number) {
 const providerHistory = (config: SharedGrant, instrument: Instrument, secret: string, interval: NativeHistoryInterval, now: number) =>
   interval === "1d"
     ? providerCandles(config, instrument, secret, fetch, now, config.sharedHistory.dailyLookbackDays)
-    : providerIntradayCandles(config, instrument, secret, interval, 45, fetch, now);
+    : providerIntradayCandles(config, instrument, secret, interval, interval === "30m" ? 10 : 65, fetch, now);
 
 async function refresh(task: Task, config: SharedGrant, fetchHistory: typeof providerHistory) {
   const db = database();
@@ -637,7 +638,7 @@ export async function hasReadySharedHistory(
     if (!grant.instruments.length) continue;
     const earliest = needsCompletedSession
       ? expectedDailyDate(grant.instruments[0], now, grant.sharedHistory.lagMinutes) : null;
-    if (needsCompletedSession && (!earliest || interval === "1h" || interval === "30m")) continue;
+    if (needsCompletedSession && (!earliest || isIntradayInterval(interval))) continue;
     let ready: number | null = null;
     try {
       ready = await database().prepare(

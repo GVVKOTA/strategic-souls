@@ -237,7 +237,7 @@ function parseInput(raw: Record<string, unknown>): Input {
 
 async function resolveScope(subject: string, definition: ResearchDefinition) {
   const preset = definition.universePreset ?? "MARKET";
-  if ((preset === "MARKET" || preset === "NIFTY_500") && definition.instrumentIds.length === 0) {
+  if (preset === "NIFTY_500" && definition.instrumentIds.length === 0) {
     const universe = await niftyUniverse();
     if (!universe) {
       throw new ScanActionError(
@@ -251,6 +251,37 @@ async function resolveScope(subject: string, definition: ResearchDefinition) {
       version: universe.version,
       members: universe.constituents.map((row) => row.id),
       defaultMarket: true,
+      storeExplicitMembers: false,
+    };
+  }
+  if (preset === "MARKET" && definition.instrumentIds.length === 0) {
+    // Unified default Markets scope (R06): Nifty 500 default equity universe + all active
+    // authorized compatible instruments (indices, MCX/global futures, equities) deduplicated
+    // by canonical uppercase ID within the 1,000-instrument execution budget.
+    const [universe, authorizedExtra] = await Promise.all([
+      niftyUniverse().catch(() => null),
+      scanScopeInstruments("MARKET", definition.interval),
+    ]);
+    const niftyIds = universe ? universe.constituents.map((row) => row.id) : [];
+    const unified = [...new Set([...niftyIds, ...authorizedExtra].map((id) => id.trim().toUpperCase()).filter(Boolean))];
+    if (!unified.length) {
+      throw new ScanActionError(
+        503,
+        "The authorized Nifty 500 constituent snapshot is not yet imported on this deployment. No scan allowance was used.",
+        "NIFTY_UNIVERSE_UNAVAILABLE",
+        false,
+      );
+    }
+    const bounded = unified.slice(0, 1000);
+    const pureNifty =
+      !!universe &&
+      bounded.length === niftyIds.length &&
+      bounded.every((id, idx) => id === niftyIds[idx]);
+    return {
+      version: universe ? universe.version : EXPLICIT_SCOPE_VERSION,
+      members: pureNifty ? niftyIds : [...bounded].sort(),
+      defaultMarket: true,
+      storeExplicitMembers: !pureNifty,
     };
   }
   let members: string[];
@@ -287,7 +318,7 @@ async function resolveScope(subject: string, definition: ResearchDefinition) {
   if (members.length > 1000) {
     throw new HttpError(422, "This scope exceeds the supported 1,000-instrument budget.");
   }
-  return { version: EXPLICIT_SCOPE_VERSION, members, defaultMarket: false };
+  return { version: EXPLICIT_SCOPE_VERSION, members, defaultMarket: false, storeExplicitMembers: true };
 }
 
 export async function submitMarketScan(subject: string, raw: Record<string, unknown>) {
@@ -337,14 +368,6 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
 
   const scope = await resolveScope(subject, input.definition);
   const isIntraday = isIntradayInterval(input.definition.interval);
-  if (scope.defaultMarket && isIntraday) {
-    throw new ScanActionError(
-      422,
-      "The shared Nifty 500 feed supplies completed daily (24H) bars only. Choose 24H (Daily) or connect an intraday-licensed feed. Your scan quota was not charged.",
-      "INTRADAY_NOT_SUPPORTED",
-      false,
-    );
-  }
 
   const refInterval = !isIntraday;
   const referenceIds = refInterval ? scope.members.filter((id) => id.startsWith("ECB:")) : [];
@@ -355,17 +378,23 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
     if (isIntraday && readiness.eligibleIntervals.length > 0 && !readiness.eligibleIntervals.includes(input.definition.interval)) {
       throw new ScanActionError(
         422,
-        `Intraday ${input.definition.interval} candles are not supported by the active shared market-data feed. Choose 24H (Daily). Your scan quota was not charged.`,
+        `Intraday ${input.definition.interval} candles are not supported by the active shared market-data feed. Choose 24H (Daily) or connect an intraday-licensed feed. Your scan quota was not charged.`,
         "INTRADAY_NOT_SUPPORTED",
         false,
       );
     }
     const code: SharedErrorCode =
-      readiness.reasonCode ?? (readiness.status === "READY" ? "INSUFFICIENT_HISTORY" : "MISSING_PERMISSION");
+      isIntraday && readiness.eligibleIntervals.includes(input.definition.interval) && readiness.status === "READY"
+        ? "PENDING_INITIAL_INGEST"
+        : readiness.reasonCode ?? (readiness.status === "READY" ? "INSUFFICIENT_HISTORY" : "MISSING_PERMISSION");
     const retryable = code === "PENDING_INITIAL_INGEST" || code === "PROVIDER_RATE_LIMITED" || code === "SOURCE_DELAYED";
+    const reasonText =
+      isIntraday && readiness.eligibleIntervals.includes(input.definition.interval) && readiness.status === "READY"
+        ? `Intraday ${input.definition.interval} snapshots are still warming for this universe. Retry shortly.`
+        : readiness.reason;
     throw new ScanActionError(
       503,
-      `${readiness.reason} No scan allowance was used.`,
+      `${reasonText} No scan allowance was used.`,
       code,
       retryable,
       {
@@ -423,7 +452,7 @@ export async function submitMarketScan(subject: string, raw: Record<string, unkn
             acceptedInput,
             cutoff,
             deadline,
-            scope.defaultMarket ? null : JSON.stringify(scope.members),
+            scope.storeExplicitMembers ? JSON.stringify(scope.members) : null,
             scope.members.length,
             reservation.id,
             new Date().toISOString(),
@@ -891,15 +920,15 @@ export async function processMarketScanBatch(
       };
       const reference = batchIds.filter((id) => id.startsWith("ECB:"));
       const exchange = batchIds.filter((id) => !id.startsWith("ECB:"));
-      const isDefaultNifty =
-        input.definition.universePreset === "MARKET" || input.definition.universePreset === "NIFTY_500";
+      const isNiftyOnly = input.definition.universePreset === "NIFTY_500";
+      const isDefaultMarket = input.definition.universePreset === "MARKET" || isNiftyOnly;
       const sources = await Promise.all([
         ...(exchange.length
           ? [
               loadHistory(job.subject, {
                 ...options,
-                provider: isDefaultNifty ? "SHARED" : "CONNECTED_MARKETS",
-                universePreset: isDefaultNifty ? "INDIAN_EQUITIES" : input.definition.universePreset,
+                provider: isDefaultMarket ? "SHARED" : "CONNECTED_MARKETS",
+                universePreset: isNiftyOnly ? "INDIAN_EQUITIES" : input.definition.universePreset,
                 instrumentIds: exchange,
               }),
             ]

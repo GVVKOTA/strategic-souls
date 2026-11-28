@@ -383,7 +383,7 @@ export default function X1Workspace() {
         setView("Community");
         const tab = params.get("tab")?.toLowerCase();
         setInitialProfileHandle(rawProf || null);
-        if (rawProf || tab === "souls" || tab === "web") setCommunityTab("web");
+        if (rawProf || tab === "souls" || tab === "web" || tab === "feed") setCommunityTab("web");
         else if (tab === "rooms" || tab === "groups") setCommunityTab("groups");
         else if (tab === "chats" || validId("thread")) setCommunityTab("chats");
         else {
@@ -745,7 +745,7 @@ export default function X1Workspace() {
       name: "Community",
       index: "03",
       icon: IconCommunity,
-      detail: "Souls, Chats & Rooms",
+      detail: "Chats, Souls & Rooms",
     },
   ] as const;
 
@@ -897,180 +897,182 @@ export default function X1Workspace() {
             </div>
           )}
 
-          {/* WORKSPACE-WIDE NOTIFICATION BELL (Global, Strategy & Community) */}
-          {(isSignedIn || view === "Community") && (
-            <div className="x51-topbar-right">
-              <div className="x51-bell-wrap" ref={bellAnchor}>
-                <button
-                  ref={bellTrigger}
-                  type="button"
-                  className="x51-bell-btn"
-                  aria-label="Notifications"
-                  aria-expanded={bellOpen}
-                  onClick={() => {
-                    const next = !bellOpen;
-                    setBellOpen(next);
-                    if (next) void loadNotices();
-                  }}
-                >
-                  <Bell size={18} />
-                  {(authUser?.unreadNotifications ?? 0) > 0 && (
-                    <span className="x51-bell-badge">
-                      {authUser?.unreadNotifications ?? 0}
-                    </span>
-                  )}
-                </button>
-                {bellOpen && (
-                  <div
-                    className="x51-bell-dropdown"
-                    role="dialog"
+          {/* UNIFIED HEADER UTILITY CLUSTER: Bell + Help + Account (never wraps to orphan row) */}
+          <div className="x11-header-actions">
+            {(isSignedIn || view === "Community") && (
+              <div className="x51-topbar-right">
+                <div className="x51-bell-wrap" ref={bellAnchor}>
+                  <button
+                    ref={bellTrigger}
+                    type="button"
+                    className="x51-bell-btn"
                     aria-label="Notifications"
+                    aria-expanded={bellOpen}
+                    onClick={() => {
+                      const next = !bellOpen;
+                      setBellOpen(next);
+                      if (next) void loadNotices();
+                    }}
                   >
+                    <Bell size={18} />
+                    {(authUser?.unreadNotifications ?? 0) > 0 && (
+                      <span className="x51-bell-badge">
+                        {authUser?.unreadNotifications ?? 0}
+                      </span>
+                    )}
+                  </button>
+                  {bellOpen && (
                     <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                      }}
+                      className="x51-bell-dropdown"
+                      role="dialog"
+                      aria-label="Notifications"
                     >
-                      <strong>Notifications</strong>
-                      <button
-                        type="button"
-                        className="x1-text-button"
-                        onClick={() => {
-                          setBellOpen(false);
-                          openSettings("notifications");
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
                         }}
                       >
-                        All settings
-                      </button>
+                        <strong>Notifications</strong>
+                        <button
+                          type="button"
+                          className="x1-text-button"
+                          onClick={() => {
+                            setBellOpen(false);
+                            openSettings("notifications");
+                          }}
+                        >
+                          All settings
+                        </button>
+                      </div>
+                      {isSignedIn && followRequests.length > 0 && <div className="x1-global-menu-group">
+                        <h3>Follow requests</h3>
+                        {followRequests.map(({ handle, displayName }) => <div className="x1-actions" key={handle}>
+                          <span>{displayName} @{handle}</span>
+                          <button type="button" disabled={noticeBusy} className="x1-text-button"
+                            onClick={() => void respondFollowRequest(handle, "APPROVE")}>Approve</button>
+                          <button type="button" disabled={noticeBusy} className="x1-text-button"
+                            onClick={() => void respondFollowRequest(handle, "DECLINE")}>Decline</button>
+                        </div>)}
+                      </div>}
+                      {noticeStatus ? <p role="status">{noticeStatus}</p> : isSignedIn ? (
+                        notices.length ? <div className="x1-global-menu-group">
+                          {notices.map((item) => <button type="button" className={"x51-drawer-item" + (item.readAt ? "" : " is-active")}
+                            key={item.id} disabled={noticeBusy} onClick={() => void openNotification(item.id)}>
+                            <span>{notificationLabel(item.kind)}</span> <ArrowRight size={14} aria-hidden="true" />
+                          </button>)}
+                        </div> : <p>No notifications.</p>
+                      ) : <p>Sign in to view notifications.</p>}
                     </div>
-                    {isSignedIn && followRequests.length > 0 && <div className="x1-global-menu-group">
-                      <h3>Follow requests</h3>
-                      {followRequests.map(({ handle, displayName }) => <div className="x1-actions" key={handle}>
-                        <span>{displayName} @{handle}</span>
-                        <button type="button" disabled={noticeBusy} className="x1-text-button"
-                          onClick={() => void respondFollowRequest(handle, "APPROVE")}>Approve</button>
-                        <button type="button" disabled={noticeBusy} className="x1-text-button"
-                          onClick={() => void respondFollowRequest(handle, "DECLINE")}>Decline</button>
-                      </div>)}
-                    </div>}
-                    {noticeStatus ? <p role="status">{noticeStatus}</p> : isSignedIn ? (
-                      notices.length ? <div className="x1-global-menu-group">
-                        {notices.map((item) => <button type="button" className={"x51-drawer-item" + (item.readAt ? "" : " is-active")}
-                          key={item.id} disabled={noticeBusy} onClick={() => void openNotification(item.id)}>
-                          <span>{notificationLabel(item.kind)}</span> <ArrowRight size={14} aria-hidden="true" />
-                        </button>)}
-                      </div> : <p>No notifications.</p>
-                    ) : <p>Sign in to view notifications.</p>}
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
+            )}
+
+            <div className="x11-help-anchor" ref={helpAnchor}>
+              <button
+                ref={helpTrigger}
+                type="button"
+                className="x51-help-btn"
+                aria-label="Help"
+                aria-expanded={helpMenuOpen}
+                aria-controls="x11-help-options"
+                onClick={() => setHelpMenuOpen((open) => !open)}
+              >?</button>
+              {helpMenuOpen && (
+                <div id="x11-help-options" className="x11-help-options" role="group" aria-label="Help options">
+                  <button type="button" onClick={() => { setHelpMenuOpen(false); setContextHelpOpen(true); }}>
+                    Help &amp; Guide
+                  </button>
+                  <button type="button" onClick={() => openSettings()}>
+                    {isSignedIn ? "All Settings" : "Sign in for settings"}
+                  </button>
+                  <button type="button" onClick={() => {
+                    setHelpMenuOpen(false);
+                    if (isSignedIn) openSettings("about");
+                    else setAbout(true);
+                  }}>About</button>
+                </div>
+              )}
             </div>
-          )}
 
-          <div className="x11-help-anchor" ref={helpAnchor}>
-            <button
-              ref={helpTrigger}
-              type="button"
-              className="x51-help-btn"
-              aria-label="Help"
-              aria-expanded={helpMenuOpen}
-              aria-controls="x11-help-options"
-              onClick={() => setHelpMenuOpen((open) => !open)}
-            >?</button>
-            {helpMenuOpen && (
-              <div id="x11-help-options" className="x11-help-options" role="group" aria-label="Help options">
-                <button type="button" onClick={() => { setHelpMenuOpen(false); setContextHelpOpen(true); }}>
-                  Help &amp; Guide
+            <div className="x6-account-anchor">
+              {isSignedIn ? (
+                <button
+                  ref={avatarTriggerRef}
+                  type="button"
+                  className="x6-avatar-trigger"
+                  aria-haspopup="dialog"
+                  aria-expanded={quickMenuOpen}
+                  aria-controls="ss-account-quick-panel"
+                  aria-label={`${authUser?.displayName || "Account"} · Open account control center`}
+                  onClick={() => setQuickMenuOpen((v) => !v)}
+                >
+                  <AvatarBadge
+                    avatarId={authUser?.avatarId}
+                    size={36}
+                    ring
+                    alt=""
+                  />
+                  {(authUser?.unreadNotifications ?? 0) > 0 && (
+                    <span className="x6-avatar-dot" aria-hidden="true" />
+                  )}
                 </button>
-                <button type="button" onClick={() => openSettings()}>
-                  {isSignedIn ? "All Settings" : "Sign in for settings"}
+              ) : (
+                <button
+                  ref={avatarTriggerRef}
+                  type="button"
+                  className="x6-avatar-trigger x6-avatar-trigger-guest"
+                  aria-haspopup="dialog"
+                  aria-expanded={quickMenuOpen}
+                  aria-controls="ss-account-quick-panel"
+                  aria-label="Guest explorer menu"
+                  onClick={() => setQuickMenuOpen((v) => !v)}
+                >
+                  <UserRound size={16} />
+                  <span>Sign in</span>
                 </button>
-                <button type="button" onClick={() => {
-                  setHelpMenuOpen(false);
-                  if (isSignedIn) openSettings("about");
-                  else setAbout(true);
-                }}>About</button>
-              </div>
-            )}
-          </div>
-
-          <div className="x6-account-anchor">
-            {isSignedIn ? (
-              <button
-                ref={avatarTriggerRef}
-                type="button"
-                className="x6-avatar-trigger"
-                aria-haspopup="dialog"
-                aria-expanded={quickMenuOpen}
-                aria-controls="ss-account-quick-panel"
-                aria-label={`${authUser?.displayName || "Account"} · Open account control center`}
-                onClick={() => setQuickMenuOpen((v) => !v)}
-              >
-                <AvatarBadge
-                  avatarId={authUser?.avatarId}
-                  size={36}
-                  ring
-                  alt=""
-                />
-                {(authUser?.unreadNotifications ?? 0) > 0 && (
-                  <span className="x6-avatar-dot" aria-hidden="true" />
-                )}
-              </button>
-            ) : (
-              <button
-                ref={avatarTriggerRef}
-                type="button"
-                className="x6-avatar-trigger x6-avatar-trigger-guest"
-                aria-haspopup="dialog"
-                aria-expanded={quickMenuOpen}
-                aria-controls="ss-account-quick-panel"
-                aria-label="Guest explorer menu"
-                onClick={() => setQuickMenuOpen((v) => !v)}
-              >
-                <UserRound size={16} />
-                <span>Sign in</span>
-              </button>
-            )}
-            <AccountQuickPanel
-              open={quickMenuOpen}
-              onClose={() => setQuickMenuOpen(false)}
-              triggerRef={avatarTriggerRef}
-              signedIn={isSignedIn}
-              isOwner={isOwner}
-              displayName={authUser?.displayName}
-              handle={authUser?.handle}
-              avatarId={authUser?.avatarId}
-              genderSymbol={authUser?.genderSymbol}
-              instagramHandle={authUser?.instagramHandle}
-              counts={authUser?.counts}
-              unreadNotifications={authUser?.unreadNotifications ?? 0}
-              busy={busy}
-              onOpenMyProfile={() => {
-                if (authUser?.handle) {
-                  setInitialProfileHandle(authUser.handle);
+              )}
+              <AccountQuickPanel
+                open={quickMenuOpen}
+                onClose={() => setQuickMenuOpen(false)}
+                triggerRef={avatarTriggerRef}
+                signedIn={isSignedIn}
+                isOwner={isOwner}
+                displayName={authUser?.displayName}
+                handle={authUser?.handle}
+                avatarId={authUser?.avatarId}
+                genderSymbol={authUser?.genderSymbol}
+                instagramHandle={authUser?.instagramHandle}
+                counts={authUser?.counts}
+                unreadNotifications={authUser?.unreadNotifications ?? 0}
+                busy={busy}
+                onOpenMyProfile={() => {
+                  if (authUser?.handle) {
+                    setInitialProfileHandle(authUser.handle);
+                    setCommunityTab("web");
+                    setCommunitySavedOnly(false);
+                    setCommunityTabNonce((n) => n + 1);
+                    navigate("Community");
+                  } else {
+                    openSettings("profile");
+                  }
+                }}
+                onOpenSettings={openSettings}
+                onOpenOwnerData={() => setOwnerDataOpen(true)}
+                onOpenSaved={() => {
                   setCommunityTab("web");
-                  setCommunitySavedOnly(false);
+                  setCommunitySavedOnly(true);
                   setCommunityTabNonce((n) => n + 1);
                   navigate("Community");
-                } else {
-                  openSettings("profile");
-                }
-              }}
-              onOpenSettings={openSettings}
-              onOpenOwnerData={() => setOwnerDataOpen(true)}
-              onOpenSaved={() => {
-                setCommunityTab("web");
-                setCommunitySavedOnly(true);
-                setCommunityTabNonce((n) => n + 1);
-                navigate("Community");
-              }}
-              onOpenHelp={() => setContextHelpOpen(true)}
-              onSignIn={() => setAuthModal("signin")}
-              onRegister={() => setAuthModal("register")}
-              onSignOut={() => void handleSignOut()}
-            />
+                }}
+                onOpenHelp={() => setContextHelpOpen(true)}
+                onSignIn={() => setAuthModal("signin")}
+                onRegister={() => setAuthModal("register")}
+                onSignOut={() => void handleSignOut()}
+              />
+            </div>
           </div>
         </header>
 

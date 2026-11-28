@@ -80,11 +80,13 @@ export default function SoulMemoryStrip({
   return (
     <div
       className="ss-x3-soul-memory-strip"
+      data-memory-status={summary?.status ?? (unavailable ? "UNAVAILABLE" : "LOADING")}
       role="region"
       aria-label="SOUL MEMORY daily research ranking"
     >
       <div className="ss-x3-soul-memory-meta">
         <strong style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span className="ss-x3-memory-dot" aria-hidden="true" />
           <Sparkles size={14} aria-hidden="true" className="ss-research-evidence-mark" />
           <span>SOUL MEMORY · {statusLabel}</span>
         </strong>

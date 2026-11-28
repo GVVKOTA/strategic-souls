@@ -17,6 +17,7 @@ type ProviderView = {
   markets: string[];
   datasets: string[];
   secretConfigured: boolean;
+  secretSource?: "MARKET_DATA_API_KEY" | "PROVIDER_SECRET" | "MISSING";
   config: ProviderConfig | null;
   health: ProviderHealth;
 };
@@ -34,6 +35,10 @@ type SharedIngestionRow = {
 type Settings = {
   isOwner: boolean;
   providers: ProviderView[];
+  canonicalSecret?: {
+    providerTarget: ProviderId | null;
+    keyConfigured: boolean;
+  };
   sharedIngestion?: SharedIngestionRow[];
   universe?: {
     version: string;
@@ -556,8 +561,20 @@ export default function DataControl({
             <strong>{current?.health.state.replaceAll("_", " ")}</strong>
             <span>
               Server secret:{" "}
-              {current?.secretConfigured ? "Configured" : "Not configured"}
+              {current?.secretConfigured
+                ? current.secretSource === "MARKET_DATA_API_KEY"
+                  ? "Configured (MARKET_DATA_API_KEY)"
+                  : "Configured (provider secret)"
+                : "Not configured"}
             </span>
+            {state.canonicalSecret && (
+              <span>
+                Canonical single-key binding:{" "}
+                {state.canonicalSecret.keyConfigured && state.canonicalSecret.providerTarget
+                  ? `MARKET_DATA_API_KEY → ${state.canonicalSecret.providerTarget}`
+                  : "Not set (set MARKET_DATA_PROVIDER + MARKET_DATA_API_KEY for one-key rotation)"}
+              </span>
+            )}
             <span>Checked: {current?.health.checkedAt ?? "Never"}</span>
             <span>
               Latest accepted event:{" "}

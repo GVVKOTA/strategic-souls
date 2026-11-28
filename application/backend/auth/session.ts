@@ -970,13 +970,27 @@ export async function requestEmailChange(
     actionUrl: verifyUrl,
   });
 
+  if (delivery.configured && !delivery.delivered) {
+    console.warn(
+      JSON.stringify({
+        event: "ss_security_email_delivery_failed",
+        purpose: "EMAIL_VERIFY",
+        provider: delivery.provider,
+        errorCode: delivery.errorCode ?? "DELIVERY_REFUSED",
+        statusCode: delivery.statusCode ?? null,
+      }),
+    );
+  }
+
   return {
     pendingEmail: newEmail,
     emailDeliveryConfigured: delivery.configured,
     delivered: delivery.delivered,
     message: delivery.delivered
       ? `Verification code sent to ${newEmail}. Enter the code below within 30 minutes to complete the change.`
-      : `Verification request created for ${newEmail}, but outbound email delivery is not configured on this deployment yet. Your current email stays active until verified.`,
+      : delivery.configured
+        ? `Verification request created for ${newEmail}, but outbound email delivery is temporarily unavailable. Retry shortly; your current email stays active until verified.`
+        : `Verification request created for ${newEmail}, but outbound email delivery is not configured on this deployment yet. Your current email stays active until verified.`,
   };
 }
 

@@ -180,17 +180,27 @@ test("X3-131 Contract E: session-anchored 3H and 6H OHLCV aggregation drops stub
   assert.match(warmFail.reason ?? "", /requires 20 completed 3H bars/);
 });
 
-test("X3-129 Contract C: canonical MARKET_DATA_API_KEY activates targeted provider while preserving precedence", () => {
-  // Provider-specific secret takes priority over canonical MARKET_DATA_API_KEY
+test("X3-129 Contract C / R02: canonical MARKET_DATA_API_KEY rotation takes precedence when MARKET_DATA_PROVIDER matches", () => {
+  // Canonical MARKET_DATA_API_KEY takes precedence over legacy provider-specific secret
+  // when MARKET_DATA_PROVIDER explicitly targets the provider (one-key rotation).
   assert.equal(
     secretFrom("BHARATSTOCK", {
-      BHARATSTOCK_API_KEY: "specific_key_1234",
-      MARKET_DATA_API_KEY: "canonical_key_9999",
+      BHARATSTOCK_API_KEY: "legacy_specific_key_1234",
+      MARKET_DATA_API_KEY: "canonical_rotated_key_9999",
       MARKET_DATA_PROVIDER: "BHARATSTOCK",
     }),
-    "specific_key_1234",
+    "canonical_rotated_key_9999",
   );
-  // Canonical MARKET_DATA_API_KEY works when MARKET_DATA_PROVIDER matches
+  // Legacy provider-specific secret remains active fallback when canonical targets another provider or is unset
+  assert.equal(
+    secretFrom("BHARATSTOCK", {
+      BHARATSTOCK_API_KEY: "legacy_specific_key_1234",
+      MARKET_DATA_API_KEY: "canonical_truedata_9999",
+      MARKET_DATA_PROVIDER: "TRUEDATA",
+    }),
+    "legacy_specific_key_1234",
+  );
+  // Canonical MARKET_DATA_API_KEY works when MARKET_DATA_PROVIDER matches without any legacy key
   assert.equal(
     secretFrom("BHARATSTOCK", {
       MARKET_DATA_API_KEY: "canonical_key_9999",
@@ -198,11 +208,17 @@ test("X3-129 Contract C: canonical MARKET_DATA_API_KEY activates targeted provid
     }),
     "canonical_key_9999",
   );
-  // Does NOT leak to a different provider
+  // Does NOT leak to a different provider or guess provider from key format
   assert.equal(
     secretFrom("EODHD", {
       MARKET_DATA_API_KEY: "canonical_key_9999",
       MARKET_DATA_PROVIDER: "BHARATSTOCK",
+    }),
+    null,
+  );
+  assert.equal(
+    secretFrom("TRUEDATA", {
+      MARKET_DATA_API_KEY: "canonical_key_9999",
     }),
     null,
   );

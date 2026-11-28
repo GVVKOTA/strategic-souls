@@ -63,11 +63,17 @@ function validHttpsUrl(raw: string | undefined): string | null {
   }
 }
 
+function validSecret(raw: string | undefined): string | null {
+  const trimmed = raw?.trim();
+  if (!trimmed || trimmed === "demo" || !/^\S{8,2048}$/.test(trimmed)) return null;
+  return trimmed;
+}
+
 export function isSecurityEmailConfigured(): boolean {
   if (testTransportOverride) return true;
   const e = runtimeEnv();
   return Boolean(
-    (e.RESEND_API_KEY?.trim() && (e.SS_EMAIL_FROM?.trim() || "no-reply@strategicsouls.app")) ||
+    (validSecret(e.RESEND_API_KEY) && (e.SS_EMAIL_FROM?.trim() || "no-reply@strategicsouls.app")) ||
       validHttpsUrl(e.SS_EMAIL_WEBHOOK_URL),
   );
 }
@@ -84,7 +90,7 @@ export async function sendSecurityEmail(
     return testTransportOverride(message);
   }
   const e = runtimeEnv();
-  const resendKey = e.RESEND_API_KEY?.trim();
+  const resendKey = validSecret(e.RESEND_API_KEY);
   if (resendKey) {
     const from =
       e.SS_EMAIL_FROM?.trim() || "Strategic Souls <no-reply@strategicsouls.app>";

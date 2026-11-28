@@ -93,7 +93,7 @@ function formatCompactObservation(
 ): { text: string; statusKind: "live" | "closed" | "delayed" | "reference" | "stale" | "unavailable"; statusText: string } {
   if (card.value === null || card.quality === "UNAVAILABLE" || card.quality === "NOT_CONNECTED" || card.quality === "RESTRICTED") {
     return {
-      text: card.canonicalId === "GLOBAL:CLF27" ? "Unavailable · No authorized source" : "Quote unavailable",
+      text: card.canonicalId === "GLOBAL:CL" ? "Unavailable · No authorized source" : "Quote unavailable",
       statusKind: "unavailable",
       statusText: "Unavailable",
     };
@@ -249,8 +249,8 @@ function MiniSpark({
 }
 
 /**
- * Strategic Souls V3.1 — Strict 8-Tile Global Market Overview Grid.
- * Displays NIFTY 50, SENSEX, BANK NIFTY, Nifty Midcap Select, GOLD, SILVER MCX, CL Jan 2027, and USD/INR
+ * Strategic Souls X 3.0 — Strict 8-Tile Global Market Overview Grid.
+ * Displays NIFTY 50, SENSEX, BANK NIFTY, Nifty Midcap Select, GOLD, SILVER MCX, Crude Oil, and USD/INR
  * in a balanced 2-col mobile / 4-col desktop grid with truthful timestamps and semantic sparklines.
  */
 export default function MarketOverviewGrid({
@@ -468,12 +468,12 @@ export default function MarketOverviewGrid({
           <div className="x1-actions x53-dashboard-actions">
             <button
               type="button"
-              className="x1-secondary x53-toolbar-btn"
+              className={"x1-secondary x53-toolbar-btn ss-x3-refresh-btn" + (loading ? " is-spinning" : "")}
               onClick={() => void loadOverview()}
               disabled={loading}
               aria-label="Refresh market tiles"
             >
-              <RefreshCw size={14} aria-hidden="true" />
+              <RefreshCw size={14} aria-hidden="true" className="ss-x3-spin-icon" />
               <span>Refresh</span>
             </button>
             <button
@@ -560,7 +560,32 @@ export default function MarketOverviewGrid({
             <button
               key={card.canonicalId}
               type="button"
-              className="x51-mcard ss-v3-mcard ss-v31-mcard"
+              className="x51-mcard ss-v3-mcard ss-v31-mcard ss-x3-tilt-card"
+              style={{ "--stagger-i": Math.min(idx, 7) } as React.CSSProperties}
+              onPointerMove={(e) => {
+                if (
+                  e.pointerType !== "mouse" ||
+                  typeof window === "undefined" ||
+                  window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+                  document.documentElement.dataset.motion === "minimal"
+                ) {
+                  return;
+                }
+                const rect = e.currentTarget.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) return;
+                const nx = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+                const ny = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+                e.currentTarget.style.setProperty("--tilt-ry", `${(nx * 2.1).toFixed(2)}deg`);
+                e.currentTarget.style.setProperty("--tilt-rx", `${(-ny * 1.9).toFixed(2)}deg`);
+              }}
+              onPointerLeave={(e) => {
+                e.currentTarget.style.removeProperty("--tilt-rx");
+                e.currentTarget.style.removeProperty("--tilt-ry");
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.removeProperty("--tilt-rx");
+                e.currentTarget.style.removeProperty("--tilt-ry");
+              }}
               onClick={() => onOpenAsset(card.canonicalId)}
               title={cardTitle}
             >

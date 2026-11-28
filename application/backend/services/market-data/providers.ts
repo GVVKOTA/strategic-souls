@@ -296,18 +296,18 @@ export function secretFrom(
 ): string | null {
   const valid = (v: unknown): string | null =>
     typeof v === "string" && v !== "demo" && /^\S{8,2048}$/.test(v) ? v : null;
-  const direct = valid(environment[PROVIDERS[provider].secret]);
-  if (direct) return direct;
-  // Canonical single-secret fallback (Contract C): MARKET_DATA_API_KEY activates the
-  // explicitly targeted MARKET_DATA_PROVIDER without requiring per-module code edits.
+  // Canonical single-secret rotation (Contract C / R02): when MARKET_DATA_PROVIDER
+  // explicitly targets this provider and MARKET_DATA_API_KEY is valid, it takes
+  // immediate precedence over legacy provider-specific secrets so rotating one key works cleanly.
   const targetProvider =
     typeof environment.MARKET_DATA_PROVIDER === "string"
       ? environment.MARKET_DATA_PROVIDER.trim().toUpperCase()
       : "";
   if (targetProvider === provider) {
-    return valid(environment.MARKET_DATA_API_KEY);
+    const canonical = valid(environment.MARKET_DATA_API_KEY);
+    if (canonical) return canonical;
   }
-  return null;
+  return valid(environment[PROVIDERS[provider].secret]);
 }
 export class ProviderFailure extends Error {
   constructor(
@@ -825,7 +825,7 @@ export async function providerIntradayCandles(
       "Expired contract; select a verified current contract.",
     );
   }
-  const boundedDays = Math.max(7, Math.min(60, Math.round(days)));
+  const boundedDays = Math.max(7, Math.min(70, Math.round(days)));
   const fromMs = now - boundedDays * 86_400_000;
   let url: URL;
   let headers: Record<string, string> = {};

@@ -63,9 +63,10 @@ test("X5.5 P2: canonical brand vocabulary applied and internal jargon removed fr
     "frontend/features/community/research-network-shell.tsx",
     "utf8",
   );
-  assert.match(commShell, />Feed</);
-  assert.match(commShell, />Chats</);
-  assert.match(commShell, />Rooms</);
+  const chatsIdx = commShell.indexOf(">Chats<");
+  const soulsIdx = commShell.indexOf(">Souls<");
+  const roomsIdx = commShell.indexOf(">Rooms<");
+  assert.ok(chatsIdx > -1 && soulsIdx > chatsIdx && roomsIdx > soulsIdx, "Community tabs must be ordered Chats -> Souls -> Rooms");
   assert.match(commShell, />Soul Network</);
   assert.match(commShell, />Try this formula</);
   assert.match(commShell, /ss-v3-comm-tabs/);

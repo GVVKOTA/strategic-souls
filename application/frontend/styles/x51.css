@@ -53,13 +53,29 @@
 }
 .x1-app .x1-topbar.x11-header-global {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) auto auto;
-  grid-template-areas: "identity search help account";
+  grid-template-columns: max-content minmax(0, 1fr) auto;
+  grid-template-areas: "identity search actions";
+  align-items: center;
 }
 .x11-header-global .x51-topbar-left { grid-area: identity; }
 .x11-header-global .x51-topbar-search-wrap { grid-area: search; width: min(100%, 45rem); justify-self: center; }
-.x11-header-global .x11-help-anchor { grid-area: help; }
-.x11-header-global .x6-account-anchor { grid-area: account; }
+.x11-header-global .x11-header-actions { grid-area: actions; }
+.x11-header-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.x11-header-global .x11-header-actions {
+  margin-left: 0;
+}
+.x11-header-actions .x51-topbar-right {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0;
+}
 .x11-header .x51-help-btn,
 .x11-header .x51-menu-btn,
 .x11-header .x51-bell-btn { min-width: 44px; min-height: 44px; }
@@ -105,8 +121,8 @@
 }
 @media (max-width: 56rem) {
   .x1-app .x1-topbar.x11-header-global {
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    grid-template-areas: "identity help account" "search search search";
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "identity actions" "search search";
     padding-inline: max(10px, env(safe-area-inset-left)) max(10px, env(safe-area-inset-right));
   }
   .x11-header-global .x51-topbar-search-wrap { width: 100%; }
@@ -115,10 +131,26 @@
   .x11-header .x6-avatar-trigger-guest { width: 44px; padding: 2px; }
   .x11-header .x6-avatar-trigger-guest span { display: none; }
   .x11-header .x51-topbar-left { gap: 5px; }
+  .x11-header-actions { gap: 2px; }
 }
-@media (max-width: 420px) {
-  .x1-footer > div { flex-wrap: wrap; gap: 6px 12px; }
-  .x1-footer a { white-space: nowrap; }
+@media (max-width: 390px) {
+  .x1-india-identity { font-size: 0.8rem; gap: 5px; line-height: 1.15; }
+  .x1-india-identity img { width: 20px; }
+}
+@media (max-width: 350px) {
+  .x1-india-identity { font-size: 0.72rem; gap: 4px; line-height: 1.12; white-space: nowrap; }
+  .x1-india-identity img { width: 18px; }
+}
+.x1-footer > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 14px;
+}
+.x1-footer > div a {
+  white-space: nowrap;
+  word-break: normal;
+  overflow-wrap: normal;
 }
 .x1-global-menu-group { display: grid; gap: 5px; margin-bottom: .9rem; }
 .x1-global-menu-group h3 { margin: .3rem 0; font-size: .82rem; color: var(--x1-text-secondary); }

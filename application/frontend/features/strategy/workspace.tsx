@@ -1541,14 +1541,15 @@ export default function Strategy({
 
             {/* 5. Primary Run Scan CTA (Guest CTA always enabled: "Sign in to run this scan") */}
             {!isDrawMode && (
-              <div className="ss-v31-run-row">
+              <div className="ss-v31-run-row" data-scan-phase={scanPhase}>
                 <button
                   type="button"
-                  className="ss-v3-run-cta"
+                  className={"ss-v3-run-cta" + (busy ? " is-running" : "")}
                   disabled={sessionPending || busy || (authenticated && exchangeScopeUnavailable)}
                   aria-busy={sessionPending || busy}
                   onClick={() => void executeScan()}
                 >
+                  {busy && <RefreshCw size={15} aria-hidden="true" className="ss-x3-spin-icon" />}
                   <span>
                     {sessionPending
                       ? "Checking session…"
@@ -1588,19 +1589,24 @@ export default function Strategy({
                 Scan Results
               </h2>
               {busy && runningContext ? (
-                <div className="ss-scan-running">
-                <p className="ss-v3-results-context" role="status" aria-live="polite">
-                  Evaluating {runningContext.name} · {runningContext.sourceLabel} ·{" "}
-                  {runningContext.timeframeLabel}
-                  {activeJob?.coverage
-                    ? ` · ${activeJob.coverage.selected - activeJob.coverage.deferred}/${activeJob.coverage.selected} checked`
-                    : "…"}
-                </p>
-                {activeJob?.coverage && activeJob.coverage.selected > 0 && (
-                  <progress className="ss-scan-progress" aria-label="Checked instruments"
-                    max={activeJob.coverage.selected}
-                    value={activeJob.coverage.selected - activeJob.coverage.deferred} />
-                )}
+                <div className="ss-scan-running" data-scan-phase={scanPhase}>
+                  <p className="ss-v3-results-context" role="status" aria-live="polite">
+                    Evaluating {runningContext.name} · {runningContext.sourceLabel} ·{" "}
+                    {runningContext.timeframeLabel}
+                    {activeJob?.coverage && activeJob.coverage.selected > 0
+                      ? ` · ${activeJob.coverage.selected - activeJob.coverage.deferred}/${activeJob.coverage.selected} checked (${Math.round(((activeJob.coverage.selected - activeJob.coverage.deferred) / activeJob.coverage.selected) * 100)}%)`
+                      : "…"}
+                  </p>
+                  {activeJob?.coverage && activeJob.coverage.selected > 0 && (
+                    <div className="ss-x3-progress-wrap">
+                      <progress
+                        className="ss-scan-progress"
+                        aria-label="Checked instruments"
+                        max={activeJob.coverage.selected}
+                        value={activeJob.coverage.selected - activeJob.coverage.deferred}
+                      />
+                    </div>
+                  )}
                 </div>
               ) : activeScan ? (
                 <p className="ss-v3-results-context">
@@ -1831,7 +1837,7 @@ export default function Strategy({
 
                     {sortedMatched.length > 0 ? (
                       <div className="ss-v3-match-list" role="list">
-                        {sortedMatched.map((item) => {
+                        {sortedMatched.map((item, matchIdx) => {
                           const [venue, sym] = item.instrumentId.includes(":")
                             ? item.instrumentId.split(":", 2)
                             : ["MKT", item.instrumentId];
@@ -1870,7 +1876,8 @@ export default function Strategy({
                             <article
                               key={item.instrumentId}
                               role="listitem"
-                              className="ss-v3-match-item ss-v32-match-card"
+                              className="ss-v3-match-item ss-v32-match-card ss-x3-stagger-item"
+                              style={{ "--stagger-i": Math.min(matchIdx, 10) } as React.CSSProperties}
                             >
                               <div className="ss-v32-match-top">
                                 <div className="ss-v32-match-identity">

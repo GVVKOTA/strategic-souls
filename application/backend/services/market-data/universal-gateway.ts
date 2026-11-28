@@ -2,9 +2,10 @@
  * Strategic Souls X 3.0 — Universal Provider-Neutral Market Data Gateway (Contract C).
  *
  * Consolidates shared market-data contracts behind one typed provider-neutral facade:
- *   - Canonical secret resolution: provider-specific secrets (BHARATSTOCK_API_KEY, INDIA_API_KEY,
- *     X2_EODHD_API_TOKEN, X2_TRUEDATA_BEARER_TOKEN) take precedence; canonical MARKET_DATA_API_KEY
- *     activates the preconfigured provider automatically once rights are verified.
+ *   - Canonical secret resolution: when MARKET_DATA_PROVIDER targets a provider and canonical
+ *     MARKET_DATA_API_KEY is set, it takes precedence for one-key rotation; legacy provider-specific
+ *     secrets (BHARATSTOCK_API_KEY, INDIA_API_KEY, X2_EODHD_API_TOKEN, X2_TRUEDATA_BEARER_TOKEN)
+ *     remain supported fallbacks. Provider identity is never guessed from key format.
  *   - Strict entitlement boundaries: separates DISPLAY_AND_DERIVED, DERIVED_ONLY, PRIVATE_OWNER_FEED,
  *     OFFICIAL_REFERENCE, and NONE (fail-closed). Never exposes raw prices/candles to unauthorized viewers.
  *   - In-flight request coalescing & immutable cache keying by provider/version/instrument/interval/rights/cutoff.
@@ -20,7 +21,7 @@ import type {
 } from "./data-types";
 import { registryInstrument } from "./instrument-registry";
 import { loadOfficialReferences } from "./official-references";
-import { PROVIDERS, secretFrom } from "./providers";
+import { PROVIDERS } from "./providers";
 import {
   readSharedDailyQuotes,
   readSharedHistoryBatch,
@@ -61,6 +62,79 @@ export type GatewayQuote = {
   attributionUrl: string;
 };
 
+export type ProviderCapabilityProfile = {
+  provider: ProviderId;
+  label: string;
+  markets: readonly string[];
+  nativeIntervals: readonly ("30m" | "1h" | "1d")[];
+  supportedScanIntervals: readonly Interval[];
+  supportsIntraday: boolean;
+  legacySecretEnvVar: string;
+  canonicalSecretEnvVar: "MARKET_DATA_API_KEY";
+  canonicalProviderEnvVar: "MARKET_DATA_PROVIDER";
+  docsUrl: string;
+};
+
+export const PROVIDER_CAPABILITY_PROFILES: Readonly<Record<ProviderId, ProviderCapabilityProfile>> = Object.freeze({
+  BHARATSTOCK: {
+    provider: "BHARATSTOCK",
+    label: PROVIDERS.BHARATSTOCK.label,
+    markets: PROVIDERS.BHARATSTOCK.markets,
+    nativeIntervals: ["1d"],
+    supportedScanIntervals: ["1d"],
+    supportsIntraday: false,
+    legacySecretEnvVar: PROVIDERS.BHARATSTOCK.secret,
+    canonicalSecretEnvVar: "MARKET_DATA_API_KEY",
+    canonicalProviderEnvVar: "MARKET_DATA_PROVIDER",
+    docsUrl: PROVIDERS.BHARATSTOCK.docs,
+  },
+  INDIANAPI: {
+    provider: "INDIANAPI",
+    label: PROVIDERS.INDIANAPI.label,
+    markets: PROVIDERS.INDIANAPI.markets,
+    nativeIntervals: ["1d"],
+    supportedScanIntervals: ["1d"],
+    supportsIntraday: false,
+    legacySecretEnvVar: PROVIDERS.INDIANAPI.secret,
+    canonicalSecretEnvVar: "MARKET_DATA_API_KEY",
+    canonicalProviderEnvVar: "MARKET_DATA_PROVIDER",
+    docsUrl: PROVIDERS.INDIANAPI.docs,
+  },
+  EODHD: {
+    provider: "EODHD",
+    label: PROVIDERS.EODHD.label,
+    markets: PROVIDERS.EODHD.markets,
+    nativeIntervals: ["1h", "1d"],
+    supportedScanIntervals: ["1h", "3h", "6h", "1d"],
+    supportsIntraday: true,
+    legacySecretEnvVar: PROVIDERS.EODHD.secret,
+    canonicalSecretEnvVar: "MARKET_DATA_API_KEY",
+    canonicalProviderEnvVar: "MARKET_DATA_PROVIDER",
+    docsUrl: PROVIDERS.EODHD.docs,
+  },
+  TRUEDATA: {
+    provider: "TRUEDATA",
+    label: PROVIDERS.TRUEDATA.label,
+    markets: PROVIDERS.TRUEDATA.markets,
+    nativeIntervals: ["30m", "1h", "1d"],
+    supportedScanIntervals: ["30m", "1h", "3h", "6h", "1d"],
+    supportsIntraday: true,
+    legacySecretEnvVar: PROVIDERS.TRUEDATA.secret,
+    canonicalSecretEnvVar: "MARKET_DATA_API_KEY",
+    canonicalProviderEnvVar: "MARKET_DATA_PROVIDER",
+    docsUrl: PROVIDERS.TRUEDATA.docs,
+  },
+});
+
+export type CanonicalActivationReadiness = {
+  targetProvider: ProviderId | null;
+  canonicalSecretSet: boolean;
+  providerConfigPresent: boolean;
+  rightsActive: boolean;
+  missingInputs: string[];
+  ready: boolean;
+};
+
 export type GatewayCapabilities = {
   configuredProviders: {
     provider: ProviderId;
@@ -74,6 +148,8 @@ export type GatewayCapabilities = {
   activeScanIntervals: readonly Interval[];
   officialReferenceActive: boolean;
   canonicalSecretSet: boolean;
+  canonicalProviderTarget: ProviderId | null;
+  activationReadiness: CanonicalActivationReadiness;
 };
 
 export type GatewayHealth = {
@@ -106,26 +182,72 @@ function coalesce<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return p;
 }
 
+function parseCanonicalTargetProvider(environment: Record<string, unknown>): ProviderId | null {
+  const raw = typeof environment.MARKET_DATA_PROVIDER === "string"
+    ? environment.MARKET_DATA_PROVIDER.trim().toUpperCase()
+    : "";
+  return raw === "BHARATSTOCK" || raw === "INDIANAPI" || raw === "EODHD" || raw === "TRUEDATA"
+    ? raw
+    : null;
+}
+
 /**
  * Resolves the canonical secret source without ever returning or logging the secret value.
+ * Canonical MARKET_DATA_API_KEY takes precedence when MARKET_DATA_PROVIDER targets `provider`.
  */
 export function inspectProviderSecretStatus(
   provider: ProviderId,
   environment: Record<string, unknown> = runtimeEnv(),
 ): { configured: boolean; source: "PROVIDER_SECRET" | "MARKET_DATA_API_KEY" | "MISSING"; envVar: string } {
+  const targetProvider = parseCanonicalTargetProvider(environment);
+  const canonicalVal = environment.MARKET_DATA_API_KEY;
+  if (
+    targetProvider === provider &&
+    typeof canonicalVal === "string" &&
+    canonicalVal !== "demo" &&
+    /^\S{8,2048}$/.test(canonicalVal)
+  ) {
+    return { configured: true, source: "MARKET_DATA_API_KEY", envVar: "MARKET_DATA_API_KEY" };
+  }
   const specificKey = PROVIDERS[provider].secret;
   const specificVal = environment[specificKey];
   if (typeof specificVal === "string" && specificVal !== "demo" && /^\S{8,2048}$/.test(specificVal)) {
     return { configured: true, source: "PROVIDER_SECRET", envVar: specificKey };
   }
-  const canonicalVal = environment.MARKET_DATA_API_KEY;
-  if (typeof canonicalVal === "string" && canonicalVal !== "demo" && /^\S{8,2048}$/.test(canonicalVal)) {
-    const resolved = secretFrom(provider, environment);
-    if (resolved) {
-      return { configured: true, source: "MARKET_DATA_API_KEY", envVar: "MARKET_DATA_API_KEY" };
-    }
+  return { configured: false, source: "MISSING", envVar: targetProvider === provider ? "MARKET_DATA_API_KEY" : specificKey };
+}
+
+export function inspectCanonicalActivationReadiness(
+  configs: readonly ProviderConfig[],
+  now = Date.now(),
+  environment: Record<string, unknown> = runtimeEnv(),
+): CanonicalActivationReadiness {
+  const targetProvider = parseCanonicalTargetProvider(environment);
+  const canonicalRaw = environment.MARKET_DATA_API_KEY;
+  const canonicalSecretSet =
+    typeof canonicalRaw === "string" && canonicalRaw !== "demo" && /^\S{8,2048}$/.test(canonicalRaw);
+  const matchingConfig = targetProvider ? configs.find((c) => c.provider === targetProvider) ?? null : null;
+  const rightsOk = matchingConfig ? sharedRightsMode(matchingConfig, now) !== "NONE" : false;
+  const missingInputs: string[] = [];
+  if (!targetProvider) {
+    missingInputs.push("Set Worker variable MARKET_DATA_PROVIDER to BHARATSTOCK, TRUEDATA, EODHD, or INDIANAPI.");
   }
-  return { configured: false, source: "MISSING", envVar: specificKey };
+  if (!canonicalSecretSet) {
+    missingInputs.push("Set Worker secret MARKET_DATA_API_KEY (or the provider-specific secret).");
+  }
+  if (targetProvider && !matchingConfig) {
+    missingInputs.push(`Save verified license metadata and instrument mappings for ${targetProvider} in Data Connections.`);
+  } else if (targetProvider && matchingConfig && !rightsOk) {
+    missingInputs.push(`Verify active, unexpired commercial analysis/storage/derived-display rights for ${targetProvider}.`);
+  }
+  return {
+    targetProvider,
+    canonicalSecretSet,
+    providerConfigPresent: !!matchingConfig,
+    rightsActive: rightsOk,
+    missingInputs,
+    ready: Boolean(targetProvider && canonicalSecretSet && matchingConfig && rightsOk),
+  };
 }
 
 export async function getGatewayCapabilities(
@@ -133,9 +255,8 @@ export async function getGatewayCapabilities(
   environment: Record<string, unknown> = runtimeEnv(),
 ): Promise<GatewayCapabilities> {
   const configs: ProviderConfig[] = await providerConfigs();
-  const canonicalRaw = environment.MARKET_DATA_API_KEY;
-  const canonicalSecretSet =
-    typeof canonicalRaw === "string" && canonicalRaw !== "demo" && /^\S{8,2048}$/.test(canonicalRaw);
+  const activationReadiness = inspectCanonicalActivationReadiness(configs, now, environment);
+  const canonicalSecretSet = activationReadiness.canonicalSecretSet;
 
   const configuredProviders = configs.map((cfg) => {
     const sec = inspectProviderSecretStatus(cfg.provider, environment);
@@ -168,6 +289,8 @@ export async function getGatewayCapabilities(
     activeScanIntervals: ACTIVE_SCAN_INTERVALS,
     officialReferenceActive: true,
     canonicalSecretSet,
+    canonicalProviderTarget: activationReadiness.targetProvider,
+    activationReadiness,
   };
 }
 

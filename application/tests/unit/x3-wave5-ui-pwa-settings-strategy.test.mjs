@@ -110,3 +110,46 @@ test("X3-001–017: Section accents (Global Green, Strategy Blue, Community Lave
   const x51Css = readFileSync(resolve("frontend/styles/x51.css"), "utf8");
   assert.match(x51Css, /\.x53-globe-stage canvas\s*\{\s*touch-action:\s*pan-y;/);
 });
+
+test("X3 Flagship Refinement (R26–R34, R36–R40 & Mandatory Exclusion): header cluster, footer wrapping, nav neutrality, Chats/Souls/Rooms order, lookback preserved & motion tokens", () => {
+  const workspaceSrc = readFileSync(resolve("frontend/components/workspace/workspace.tsx"), "utf8");
+  const x51Css = readFileSync(resolve("frontend/styles/x51.css"), "utf8");
+  const ssV3Css = readFileSync(resolve("frontend/styles/ss-v3.css"), "utf8");
+  const commSrc = readFileSync(resolve("frontend/features/community/research-network-shell.tsx"), "utf8");
+  const scopeSrc = readFileSync(resolve("frontend/features/strategy/strategy-scope-bar.tsx"), "utf8");
+  const gridSrc = readFileSync(resolve("frontend/features/global/market-grid.tsx"), "utf8");
+
+  // R28/R29: Unified utility actions cluster prevents orphan bell row on mobile & desktop
+  assert.match(workspaceSrc, /className="x11-header-actions"/);
+  assert.match(x51Css, /grid-template-areas:\s*"identity search actions"/);
+  assert.match(x51Css, /grid-template-areas:\s*"identity actions" "search search"/);
+
+  // R26/R27: Footer wrapping, non-breaking link integrity & mobile bottom clearance
+  assert.match(ssV3Css, /\.x1-app \.x1-footer > div\s*\{[\s\S]*?flex-wrap:\s*wrap/);
+  assert.match(ssV3Css, /\.x1-app \.x1-footer > div a\s*\{[\s\S]*?white-space:\s*nowrap/);
+  assert.match(ssV3Css, /padding-bottom:\s*calc\(96px \+ env\(safe-area-inset-bottom/);
+
+  // R14/R31: Strictly neutral inactive nav items; Community link tint scoped to main only
+  assert.match(ssV3Css, /\.x1-app \.x1-mobile-nav a:not\(\[aria-current="page"\]\)/);
+  assert.doesNotMatch(ssV3Css, /\.x1-app\[data-section="community"\] a:not\(\.x1-secondary\)/);
+
+  // R32: Community tab order strictly Chats -> Souls -> Rooms with sliding indicator
+  assert.match(commSrc, /COMM_TAB_ORDER[\s\S]*?\["chats",\s*"web",\s*"groups"\]/);
+  const chatsIdx = commSrc.indexOf(">Chats<");
+  const soulsIdx = commSrc.indexOf(">Souls<");
+  const roomsIdx = commSrc.indexOf(">Rooms<");
+  assert.ok(chatsIdx > 0 && soulsIdx > chatsIdx && roomsIdx > soulsIdx);
+  assert.match(commSrc, /ss-x3-comm-tab-indicator/);
+
+  // Mandatory Exclusion: Existing lookback durations MUST remain preserved in Strategy timeframe UI
+  for (const hint of ["7 days", "14 days", "1 month", "2 months", "12 months"]) {
+    assert.ok(scopeSrc.includes(hint), `Mandatory exclusion violated: missing lookback hint "${hint}"`);
+  }
+
+  // R36–R40: Shared motion tokens, fine-pointer tilt, and reduced-motion fallbacks
+  assert.match(ssV3Css, /--ss-ease-enter:/);
+  assert.match(ssV3Css, /@media \(hover: hover\) and \(pointer: fine\)/);
+  assert.match(gridSrc, /ss-x3-tilt-card/);
+  assert.match(gridSrc, /GLOBAL:CL"/);
+  assert.doesNotMatch(gridSrc, /GLOBAL:CLF27/);
+});

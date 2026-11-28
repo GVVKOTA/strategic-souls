@@ -52,7 +52,7 @@ const SocialWorkspace = lazy(() =>
 
 type PrimaryCommunityTab = "web" | "chats" | "groups";
 
-const COMM_TAB_ORDER: PrimaryCommunityTab[] = ["web", "chats", "groups"];
+const COMM_TAB_ORDER: PrimaryCommunityTab[] = ["chats", "web", "groups"];
 
 function formatFeedTimeframe(tf: string): string {
   const lower = tf.toLowerCase();
@@ -944,9 +944,9 @@ export default function ResearchNetworkShell({
   return (
     <div className="x51-global-stack" style={{ gap: 12 }}>
       <header className="ss-v3-comm-header">
-        <h1>{tab === "web" ? "Soul Feed" : tab === "chats" ? "Chats" : "Research rooms"}</h1>
+        <h1>{tab === "chats" ? "Chats" : tab === "web" ? "Souls" : "Rooms"}</h1>
         <span className="x1-caption">
-          Published Souls, direct chats, and private research rooms
+          Direct chats, published Souls, and private research rooms
         </span>
       </header>
 
@@ -1079,12 +1079,17 @@ export default function ResearchNetworkShell({
         </section>
       )}
 
-      {/* 3. ENLARGED, IMMEDIATELY DISCOVERABLE COMMUNITY TABS: SOUL FEED | CHATS | ROOMS (Sec 08.1) */}
+      {/* 3. REFINED COMMUNITY TABS: CHATS | SOULS | ROOMS (R32, M26) */}
       <div className="ss-v3-comm-tabs-wrap">
         <div
           className="ss-v3-comm-tabs"
           role="tablist"
           aria-label="Community sections"
+          style={
+            {
+              "--comm-tab-index": Math.max(0, COMM_TAB_ORDER.indexOf(tab)),
+            } as React.CSSProperties
+          }
           onKeyDown={(e) => {
             const idx = COMM_TAB_ORDER.indexOf(tab);
             if (idx < 0) return;
@@ -1101,22 +1106,7 @@ export default function ResearchNetworkShell({
             tabRefs.current[nextTab]?.focus();
           }}
         >
-          <button
-            ref={(el) => {
-              tabRefs.current.web = el;
-            }}
-            type="button"
-            role="tab"
-            className={"ss-v3-comm-tab" + (tab === "web" ? " is-active" : "")}
-            aria-selected={tab === "web"}
-            tabIndex={tab === "web" ? 0 : -1}
-            onClick={() => selectCommunityTab("web")}
-          >
-            <span className="ss-v3-comm-tab-icon">
-              <IconSoulFeed size={24} />
-            </span>
-            <span>Feed</span>
-          </button>
+          <span className="ss-x3-comm-tab-indicator" aria-hidden="true" />
           <button
             ref={(el) => {
               tabRefs.current.chats = el;
@@ -1129,7 +1119,7 @@ export default function ResearchNetworkShell({
             onClick={() => selectCommunityTab("chats")}
           >
             <span className="ss-v3-comm-tab-icon">
-              <IconChats size={24} />
+              <IconChats size={20} />
               {chatUnreadCount > 0 && (
                 <span
                   className="ss-v3-comm-badge"
@@ -1143,6 +1133,22 @@ export default function ResearchNetworkShell({
           </button>
           <button
             ref={(el) => {
+              tabRefs.current.web = el;
+            }}
+            type="button"
+            role="tab"
+            className={"ss-v3-comm-tab" + (tab === "web" ? " is-active" : "")}
+            aria-selected={tab === "web"}
+            tabIndex={tab === "web" ? 0 : -1}
+            onClick={() => selectCommunityTab("web")}
+          >
+            <span className="ss-v3-comm-tab-icon">
+              <IconSoulFeed size={20} />
+            </span>
+            <span>Souls</span>
+          </button>
+          <button
+            ref={(el) => {
               tabRefs.current.groups = el;
             }}
             type="button"
@@ -1153,7 +1159,7 @@ export default function ResearchNetworkShell({
             onClick={() => selectCommunityTab("groups")}
           >
             <span className="ss-v3-comm-tab-icon">
-              <IconRooms size={24} />
+              <IconRooms size={20} />
             </span>
             <span>Rooms</span>
           </button>
@@ -1199,8 +1205,8 @@ export default function ResearchNetworkShell({
               {pullOffset >= 52 ? "Release to refresh Soul Feed" : "Pull down to refresh"}
             </div>
           )}
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-            <details className="x11-feed-filters" style={{ flex: 1 }}>
+          <div className="ss-x3-feed-toolbar">
+            <details className="x11-feed-filters">
               <summary>Filter</summary>
               <div className="x51-cal-toolbar x55-feed-toolbar">
                 <div className="x51-chip-row" role="group" aria-label="Feed mode">
@@ -1254,13 +1260,12 @@ export default function ResearchNetworkShell({
             </details>
             <button
               type="button"
-              className="x1-secondary"
+              className={"x1-secondary ss-x3-refresh-btn" + (refreshingFeed ? " is-spinning" : "")}
               aria-label="Refresh Soul Feed"
               disabled={loadingFeed || refreshingFeed}
               onClick={() => void loadWebFeed({ silent: posts.length > 0 })}
-              style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}
             >
-              <RefreshCw size={14} aria-hidden="true" />
+              <RefreshCw size={14} aria-hidden="true" className="ss-x3-spin-icon" />
               <span>{refreshingFeed ? "Refreshing…" : "Refresh"}</span>
             </button>
           </div>
@@ -1324,9 +1329,13 @@ export default function ResearchNetworkShell({
               </Empty>
             );
           })() : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {posts.map((post) => (
-                <article key={post.id} className="x51-soul-card">
+            <div className="ss-x3-feed-list">
+              {posts.map((post, postIdx) => (
+                <article
+                  key={post.id}
+                  className="x51-soul-card ss-x3-stagger-item"
+                  style={{ "--stagger-i": Math.min(postIdx, 10) } as React.CSSProperties}
+                >
                   <PostViewObserver
                     postId={post.id}
                     isMine={post.isMine}
