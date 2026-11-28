@@ -175,10 +175,10 @@ test('/api/profile rejects unauthenticated and cross-origin requests', async () 
   );
 });
 
-test('/api/profile persists avatar selection from 50 presets, rejects invalid IDs, and resists IDOR', async () => {
+test('/api/profile persists avatar selection from 60 presets, rejects invalid IDs, and resists IDOR', async () => {
   const initial = await callProfile();
   assert.equal(initial.status, 200);
-  assert.match(initial.data.profile.avatarId, /^[a-e](?:0[1-9]|10)$/);
+  assert.match(initial.data.profile.avatarId, /^[a-f](?:0[1-9]|10)$/);
   assert.equal(initial.headers.get('cache-control'), 'private, no-store');
 
   // Idempotent one-time backfill: second read returns the exact same assigned avatar
@@ -191,7 +191,7 @@ test('/api/profile persists avatar selection from 50 presets, rejects invalid ID
     displayName: 'Bob Analyst',
     authProvider: 'password',
   });
-  assert.match(bobInitial.data.profile.avatarId, /^[a-e](?:0[1-9]|10)$/);
+  assert.match(bobInitial.data.profile.avatarId, /^[a-f](?:0[1-9]|10)$/);
 
   // Invalid external URL or arbitrary preset ID rejected with 400
   const bad1 = await callProfile({ action: 'update-avatar', avatarId: 'https://evil.invalid/a.svg' });
@@ -226,6 +226,9 @@ test('/api/profile persists avatar selection from 50 presets, rejects invalid ID
 });
 
 test('/api/profile updates handle, displayName, bio, preferences and syncs x1_bodies', async () => {
+  const before = await callProfile();
+  assert.equal(before.status, 200);
+  const avatar = before.data.profile.avatarId;
   const updated = await callProfile({
     action: 'update-profile',
     displayName: 'Alice Quant',
@@ -235,12 +238,12 @@ test('/api/profile updates handle, displayName, bio, preferences and syncs x1_bo
   assert.equal(updated.status, 200);
   assert.equal(updated.data.profile.displayName, 'Alice Quant');
   assert.equal(updated.data.profile.handle, 'alice_quant');
-  assert.equal(updated.data.profile.avatarId, 'e07');
+  assert.equal(updated.data.profile.avatarId, avatar);
 
-  // Verify x1_bodies synced with avatarId e07
+  // Updating profile details preserves the chosen avatar across both views.
   const bodyRow = sql.prepare('SELECT handle, avatar, display_name FROM x1_bodies WHERE subject=?').get('user_alice');
   assert.equal(bodyRow.handle, 'alice_quant');
-  assert.equal(bodyRow.avatar, 'e07');
+  assert.equal(bodyRow.avatar, avatar);
   assert.equal(bodyRow.display_name, 'Alice Quant');
 
   // Handle collision from Bob returns 409

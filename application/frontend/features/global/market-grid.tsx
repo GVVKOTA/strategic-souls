@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowDown,
@@ -445,7 +446,7 @@ export default function MarketOverviewGrid({
             Strategic Dashboard
           </h1>
           <a className="ss-market-atlas" href="#x53-globe-heading">
-            <img src="/data/strategic-atlas.webp" width="420" height="252" alt="" />
+            <Image src="/data/strategic-atlas.webp" width={420} height={252} alt="" unoptimized />
             <span>Strategic Globe <ArrowUpRight size={14} aria-hidden="true" /></span>
           </a>
         </div>
