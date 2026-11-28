@@ -2,25 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { Sparkles } from "lucide-react";
-import type { FrozenSoulMemorySnapshot, SoulMemoryStatus } from "../../../backend/services/research/soul-memory";
 import { api } from "../../components/workspace/shared";
 
-type SoulMemorySummaryView = Pick<
-  FrozenSoulMemorySnapshot,
-  "istDay" | "status" | "scansAnalyzed" | "distinctSignals" | "evaluatedOutcomes" | "asOfCutoff" | "resetsAtUtc"
->;
-
-const labels: Record<SoulMemoryStatus, string> = {
-  BASELINE: "Baseline",
-  LEARNING: "Gathering evidence",
-  ACTIVE: "Active today",
-  INSUFFICIENT: "Insufficient evidence",
-  UNAVAILABLE: "Unavailable",
+export type SoulMemorySummaryView = {
+  istDay: string;
+  status: "IDLE" | "BASELINE" | "ACTIVE";
+  scansAnalyzed: number;
+  distinctSignals: number;
+  evaluatedOutcomes: number;
+  confirmedOutcomes?: number;
+  resetLabel?: string;
+  note?: string;
 };
 
-const istTime = new Intl.DateTimeFormat("en-GB", {
-  timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-});
+const DEFAULT_RESET_LABEL = "Resets 00:00 IST";
+const DEFAULT_MEMORY_NOTE =
+  "Point-in-time bounded 0–100 daily research ranking (no look-ahead). Resets at 00:00 IST without modifying your GRAVEYARD archive.";
 
 type Props = {
   authenticated: boolean;
@@ -40,10 +37,7 @@ export default function SoulMemoryStrip({
 
   useEffect(() => {
     if (!authenticated) {
-      queueMicrotask(() => {
-        setSummary(null);
-        setUnavailable(false);
-      });
+      queueMicrotask(() => setSummary(null));
       return;
     }
     const ctrl = new AbortController();
@@ -69,26 +63,41 @@ export default function SoulMemoryStrip({
 
   if (!authenticated) return null;
 
-  const evidence = summary?.status === "UNAVAILABLE" ? null : summary;
-  const statusLabel = summary ? labels[summary.status] : unavailable ? "Unavailable" : "Loading";
+  const statusLabel =
+    summary?.status === "ACTIVE"
+      ? "Active Today"
+      : summary?.status === "BASELINE"
+        ? "Baseline"
+        : summary
+          ? "Awaiting evidence"
+          : unavailable
+            ? "Unavailable"
+            : "Loading";
 
   return (
-    <div className="ss-x3-soul-memory-strip" role="region" aria-label="SOUL MEMORY daily research ranking">
+    <div
+      className="ss-x3-soul-memory-strip"
+      role="region"
+      aria-label="SOUL MEMORY daily research ranking"
+    >
       <div className="ss-x3-soul-memory-meta">
         <strong style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <Sparkles size={14} aria-hidden="true" className="ss-research-evidence-mark" />
+          <Sparkles size={14} aria-hidden="true" style={{ color: "#76C0FF" }} />
           <span>SOUL MEMORY · {statusLabel}</span>
         </strong>
         <span>
-          {evidence
-            ? `${evidence.scansAnalyzed} scan${evidence.scansAnalyzed === 1 ? "" : "s"} · ${evidence.evaluatedOutcomes} evaluated today · Resets ${istTime.format(new Date(evidence.resetsAtUtc))} IST`
-            : "Private daily research ranking"}
+          {summary
+            ? `${summary.scansAnalyzed} scan${summary.scansAnalyzed === 1 ? "" : "s"} · ${summary.evaluatedOutcomes} evaluated today · ${summary.resetLabel || DEFAULT_RESET_LABEL}`
+            : `Private daily research ranking · ${DEFAULT_RESET_LABEL}`}
         </span>
-        {evidence && (
+        {summary && (
           <details className="ss-research-evidence">
             <summary>Inspect evidence</summary>
-            <p>As of {evidence.istDay}, {istTime.format(new Date(evidence.asOfCutoff))} IST · {evidence.distinctSignals} distinct signals</p>
-            <p>Adaptive ranking changes the order of original formula matches when there is enough comparable evidence.</p>
+            <p>
+              {summary.istDay} (IST) · {summary.distinctSignals} distinct signals ·{" "}
+              {summary.evaluatedOutcomes} evaluated outcomes
+            </p>
+            <p>{summary.note || DEFAULT_MEMORY_NOTE}</p>
           </details>
         )}
       </div>

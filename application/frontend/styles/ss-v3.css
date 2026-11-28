@@ -2923,3 +2923,22 @@ html[data-motion="minimal"] .ss-v3-pw-card-watchlist {
   .x1-app .x11-reference-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .x1-app .x11-reference-card { padding: 12px; }
 }
+
+
+/* X3-005 & X3-007: Guarantee zero accidental Strategy brand-blue (#76c0ff) leakage inside Global, Community & Settings headings */
+.x1-app[data-section="community"] main :is(h1, h2, h3),
+.x1-app[data-section="global"] main :is(h2, h3) {
+  color: var(--x1-text-primary);
+}
+.x1-app[data-section="community"] .x1-empty h3 {
+  color: var(--ss-section-accent);
+}
+.x11-settings-sheet .ss-x3-settings-group-label,
+.x11-settings-sheet h3.ss-x3-settings-group-label {
+  color: var(--x1-text-secondary);
+}
+@media (max-width: 440px) {
+  .x51-topbar-title {
+    font-size: clamp(1rem, 4.4vw, 1.25rem);
+  }
+}

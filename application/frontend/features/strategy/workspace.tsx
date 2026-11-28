@@ -995,12 +995,16 @@ export default function Strategy({
   }, [scans, graveyardFilter, graveyardQuery]);
 
   const quota = workspace?.scanQuota;
-  const classicAllowance = quota
-    ? `${quota.classic.remaining} of ${quota.classic.limit} scans left today`
-    : "Scan allowance unavailable";
-  const advancedAllowance = quota
-    ? `${quota.advanced.remaining} of ${quota.advanced.limit} Advanced scans available this hour`
-    : "Scan allowance unavailable";
+  const classicAllowance = !authenticated
+    ? "20 Classic scans per IST day · Sign in to run"
+    : quota
+      ? `${quota.classic.remaining} of ${quota.classic.limit} scans left today`
+      : "Scan allowance unavailable";
+  const advancedAllowance = !authenticated
+    ? "1 Advanced scan per rolling 60 minutes · Sign in to run"
+    : quota
+      ? `${quota.advanced.remaining} of ${quota.advanced.limit} Advanced scans available this hour`
+      : "Scan allowance unavailable";
   const isDrawMode = scanTier === "ADVANCED" && advancedEntry === "DRAW";
 
   const scopeAndTimeframeControls = (

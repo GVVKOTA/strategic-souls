@@ -87,6 +87,11 @@ test("X3-027–041 & X3-131: Strategy exposes exactly 2 sources (Markets/Watchli
   assert.match(stratSrc, /Sign in to run this scan/);
   assert.match(stratSrc, /STRATEGY_DRAFT_STORAGE_KEY/);
   assert.match(stratSrc, /<SoulMemoryStrip/);
+
+  const scanRouteSrc = readFileSync(resolve("app/api/strategy/scan/route.ts"), "utf8");
+  assert.match(scanRouteSrc, /resetLabel:\s*"Resets 00:00 IST"/);
+  const smStripSrc = readFileSync(resolve("frontend/features/strategy/soul-memory-strip.tsx"), "utf8");
+  assert.match(smStripSrc, /DEFAULT_RESET_LABEL/);
 });
 
 test("X3-001–017: Section accents (Global Green, Strategy Blue, Community Lavender) & Globe freeze fixes wired", () => {
@@ -94,6 +99,7 @@ test("X3-001–017: Section accents (Global Green, Strategy Blue, Community Lave
   assert.match(css, /\[data-section="global"\]\s*\{\s*--ss-section-accent:\s*var\(--x51-green\)/);
   assert.match(css, /\[data-section="strategy"\]\s*\{\s*--ss-section-accent:\s*var\(--x1-title-blue\)/);
   assert.match(css, /\[data-section="community"\][\s\S]*?#c4b5fd/i);
+  assert.match(css, /\.x1-app\[data-section="community"\] main :is\(h1, h2, h3\)/);
 
   const globeSrc = readFileSync(resolve("frontend/features/global/globe-canvas.tsx"), "utf8");
   assert.match(globeSrc, /cachedCssW/);
